@@ -1,0 +1,4 @@
+.idea
+dd-opentelemetry-profiler
+.env
+*.pprof
