@@ -76,6 +76,10 @@ type traceFramesCounts struct {
 
 }
 
+type processMetadata struct {
+	execPath string
+}
+
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
 type DatadogReporter struct {
 	// name is the ScopeProfile's name.
@@ -107,7 +111,7 @@ type DatadogReporter struct {
 	traceEvents xsync.RWMutex[map[traceAndMetaKey]*traceFramesCounts]
 
 	// execPathes stores the last known execPath for a PID.
-	execPathes *lru.SyncedLRU[libpf.PID, string]
+	processes *lru.SyncedLRU[libpf.PID, processMetadata]
 
 	// samplesPerSecond is the number of samples per second.
 	samplesPerSecond int
@@ -136,6 +140,13 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 	traceEvents := r.traceEvents.WLock()
 	defer r.traceEvents.WUnlock(&traceEvents)
 
+	if _, ok := r.processes.Get(meta.PID); !ok {
+		processMeta, err := processMetadataFromPID(meta.PID)
+		if err != nil {
+			log.Debugf("Failed to get process metadata for PID %d: %v", meta.PID, err)
+		}
+		r.processes.Add(meta.PID, processMeta)
+	}
 	// FIXME{DD}
 	// containerID, err := r.lookupCgroupv2(meta.PID)
 	// if err != nil {
@@ -205,10 +216,6 @@ func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, fileName, buil
 		fileName: fileName,
 		buildID:  buildID,
 	})
-}
-
-func (r *DatadogReporter) ProcessMetadata(_ context.Context, pid libpf.PID, execPath string) {
-	r.execPathes.Add(pid, execPath)
 }
 
 // FrameMetadata accepts metadata associated with a frame and caches this information.
@@ -297,7 +304,7 @@ func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
 		return nil, err
 	}
 
-	execPathes, err := lru.NewSynced[libpf.PID, string](cfg.CacheSize, libpf.PID.Hash32)
+	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.CacheSize, libpf.PID.Hash32)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +331,7 @@ func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
 		frames:           frames,
 		hostmetadata:     hostmetadata,
 		traceEvents:      xsync.NewRWMutex(map[traceAndMetaKey]*traceFramesCounts{}),
-		execPathes:       execPathes,
+		processes:        processes,
 		agentAddr:        cfg.CollAgentAddr,
 		saveCPUProfile:   cfg.SaveCPUProfile,
 		tags:             cfg.Tags,
@@ -559,7 +566,8 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			sample.Location = append(sample.Location, loc)
 		}
 
-		execPath, _ := r.execPathes.Get(traceAndMetaKey.pid)
+		processMeta, _ := r.processes.Get(traceAndMetaKey.pid)
+		execPath := processMeta.execPath
 
 		// Check if the last frame is a kernel frame.
 		if len(traceInfo.frameTypes) > 0 &&
@@ -690,4 +698,12 @@ func createPprofMapping(profile *pprofile.Profile, offset uint64,
 	}
 	profile.Mapping = append(profile.Mapping, mapping)
 	return mapping
+}
+
+func processMetadataFromPID(pid libpf.PID) (processMetadata, error) {
+	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		return processMetadata{}, err
+	}
+	return processMetadata{execPath: execPath}, nil
 }
