@@ -43,4 +43,6 @@ type Config struct {
 	SaveCPUProfile bool
 	// Tags is a list of tags to be sent to the collection agent.
 	Tags Tags
+	// SymbolUpload defines whether the agent should upload debug symbols to the backend.
+	UploadSymbols bool
 }

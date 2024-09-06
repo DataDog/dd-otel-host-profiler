@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	cebpf "github.com/cilium/ebpf"
@@ -91,6 +92,7 @@ type arguments struct {
 	saveCPUProfile         bool
 	sendErrorFrames        bool
 	serviceName            string
+	symbolUpload           bool
 	tags                   string
 	tracers                string
 	verboseMode            bool
@@ -161,6 +163,9 @@ func parseArgs() (*arguments, error) {
 	}
 
 	args.fs = fs
+
+	symbolUpload := os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD")
+	args.symbolUpload, _ = strconv.ParseBool(symbolUpload)
 
 	return &args, ff.Parse(fs, os.Args[1:],
 		ff.WithEnvVarPrefix("OTEL_PROFILING_AGENT"),
