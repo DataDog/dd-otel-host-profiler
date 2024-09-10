@@ -171,6 +171,7 @@ func mainWithExitCode() exitCode {
 		IPAddress:        sourceIP,
 		SaveCPUProfile:   args.saveCPUProfile,
 		Tags:             validatedTags,
+		Timeline:         args.timeline,
 		UploadSymbols:    args.symbolUpload,
 	})
 	if err != nil {
