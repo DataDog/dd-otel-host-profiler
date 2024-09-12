@@ -75,6 +75,8 @@ var (
 	saveCPUProfileHelp  = "Save CPU pprof profile to `cpu.pprof`."
 	tagsHelp            = "User-specified tags separated by ';'."
 	serviceHelp         = "Service name."
+	nodeHelp            = "The name of the node that the profiler is running on. " +
+		"If on Kubernetes, this must match the Kubernetes node name."
 )
 
 type arguments struct {
@@ -85,6 +87,7 @@ type arguments struct {
 	monitorInterval        time.Duration
 	clockSyncInterval      time.Duration
 	noKernelVersionCheck   bool
+	node                   string
 	pprofAddr              string
 	probabilisticInterval  time.Duration
 	probabilisticThreshold uint
@@ -160,6 +163,8 @@ func parseArgs() (*arguments, error) {
 	fs.BoolVar(&args.saveCPUProfile, "save-cpuprofile", false,
 		saveCPUProfileHelp)
 	fs.StringVar(&args.serviceName, "service", "dd-opentelemetry-porfiler", serviceHelp)
+
+	fs.StringVar(&args.node, "node", "", nodeHelp)
 
 	fs.Usage = func() {
 		fs.PrintDefaults()
