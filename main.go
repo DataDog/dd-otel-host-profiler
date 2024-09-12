@@ -40,6 +40,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	"github.com/DataDog/dd-opentelemetry-profiler/containermetadata"
 	"github.com/DataDog/dd-opentelemetry-profiler/reporter"
 )
 
@@ -159,6 +160,12 @@ func mainWithExitCode() exitCode {
 	validatedTags := ValidateTags(args.tags)
 	log.Debugf("Validated tags: %s", validatedTags)
 
+	containerMetadataProvider, err :=
+		containermetadata.NewContainerMetadataProvider(mainCtx, args.node, intervals.MonitorInterval())
+	if err != nil {
+		return failure("Failed to create container metadata provider: %v", err)
+	}
+
 	rep, err := reporter.Start(mainCtx, &reporter.Config{
 		CollAgentAddr:    args.collAgentAddr,
 		Name:             args.serviceName,
@@ -173,7 +180,7 @@ func mainWithExitCode() exitCode {
 		Tags:             validatedTags,
 		Timeline:         args.timeline,
 		UploadSymbols:    args.symbolUpload,
-	})
+	}, containerMetadataProvider)
 	if err != nil {
 		return failure("Failed to start reporting: %v", err)
 	}

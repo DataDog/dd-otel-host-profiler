@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/DataDog/dd-opentelemetry-profiler/containermetadata"
 	"github.com/DataDog/zstd"
 	lru "github.com/elastic/go-freelru"
 	pprofile "github.com/google/pprof/profile"
@@ -63,10 +64,8 @@ type traceAndMetaKey struct {
 	// comm and apmServiceName are provided by the eBPF programs
 	comm           string
 	apmServiceName string
-	// containerID is annotated based on PID information
-	containerID string
-	pid         libpf.PID
-	tid         libpf.PID
+	pid            libpf.PID
+	tid            libpf.PID
 }
 
 // traceFramesCounts holds known information about a trace.
@@ -82,7 +81,8 @@ type traceFramesCounts struct {
 }
 
 type processMetadata struct {
-	execPath string
+	execPath          string
+	containerMetadata containermetadata.ContainerMetadata
 }
 
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
@@ -142,10 +142,12 @@ type DatadogReporter struct {
 	// tags is a list of tags alongside the profile.
 	tags Tags
 
-	symbolUploader *DatadogSymbolUploader
-
 	// timeline is a flag to include timestamps on samples for the timeline feature.
 	timeline bool
+
+	symbolUploader *DatadogSymbolUploader
+
+	containerMetadataProvider containermetadata.Provider
 }
 
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
@@ -154,20 +156,15 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 	defer r.traceEvents.WUnlock(&traceEvents)
 
 	if _, ok := r.processes.Get(meta.PID); !ok {
-		processMeta, err := processMetadataFromPID(meta.PID)
-		if err != nil {
-			log.Debugf("Failed to get process metadata for PID %d: %v", meta.PID, err)
-		}
-		r.processes.Add(meta.PID, processMeta)
+		r.addProcessMetadata(meta.PID)
 	}
-
-	containerID := ""
 
 	key := traceAndMetaKey{
 		hash:           trace.Hash,
 		comm:           meta.Comm,
 		apmServiceName: meta.APMServiceName,
-		containerID:    containerID,
+		pid:            meta.PID,
+		tid:            meta.TID,
 	}
 
 	if tr, exists := (*traceEvents)[key]; exists {
@@ -298,7 +295,7 @@ func (r *DatadogReporter) GetMetrics() reporter.Metrics {
 }
 
 // StartDatadog sets up and manages the reporting connection to the Datadog Backend.
-func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
+func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (reporter.Reporter, error) {
 	fallbackSymbols, err := lru.NewSynced[libpf.FrameID, string](cfg.CacheSize, libpf.FrameID.Hash32)
 	if err != nil {
 		return nil, err
@@ -340,25 +337,26 @@ func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
 	}
 
 	r := &DatadogReporter{
-		name:             cfg.Name,
-		version:          cfg.Version,
-		kernelVersion:    cfg.KernelVersion,
-		hostName:         cfg.HostName,
-		ipAddress:        cfg.IPAddress,
-		samplesPerSecond: cfg.SamplesPerSecond,
-		hostID:           strconv.FormatUint(cfg.HostID, 10),
-		stopSignal:       make(chan libpf.Void),
-		fallbackSymbols:  fallbackSymbols,
-		executables:      executables,
-		frames:           frames,
-		hostmetadata:     hostmetadata,
-		traceEvents:      xsync.NewRWMutex(map[traceAndMetaKey]*traceFramesCounts{}),
-		processes:        processes,
-		agentAddr:        cfg.CollAgentAddr,
-		saveCPUProfile:   cfg.SaveCPUProfile,
-		symbolUploader:   symbolUploader,
-		tags:             cfg.Tags,
-		timeline:         cfg.Timeline,
+		name:                      cfg.Name,
+		version:                   cfg.Version,
+		kernelVersion:             cfg.KernelVersion,
+		hostName:                  cfg.HostName,
+		ipAddress:                 cfg.IPAddress,
+		samplesPerSecond:          cfg.SamplesPerSecond,
+		hostID:                    strconv.FormatUint(cfg.HostID, 10),
+		stopSignal:                make(chan libpf.Void),
+		fallbackSymbols:           fallbackSymbols,
+		executables:               executables,
+		frames:                    frames,
+		hostmetadata:              hostmetadata,
+		containerMetadataProvider: p,
+		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceFramesCounts{}),
+		processes:                 processes,
+		agentAddr:                 cfg.CollAgentAddr,
+		saveCPUProfile:            cfg.SaveCPUProfile,
+		symbolUploader:            symbolUploader,
+		tags:                      cfg.Tags,
+		timeline:                  cfg.Timeline,
 	}
 
 	// Create a child context for reporting features
@@ -619,7 +617,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 		if r.timeline {
 			timestamps = traceInfo.timestamps
 		}
-		addTraceLabels(sample.Label, traceAndMetaKey, baseExec, timestamps)
+		addTraceLabels(sample.Label, traceAndMetaKey, processMeta, baseExec, timestamps)
 
 		count := int64(len(traceInfo.timestamps))
 		sample.Value = append(sample.Value, count, count*samplingPeriod)
@@ -661,14 +659,22 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 	return function
 }
 
-func addTraceLabels(labels map[string][]string, i traceAndMetaKey,
+func addTraceLabels(labels map[string][]string, i traceAndMetaKey, processMeta processMetadata,
 	baseExec string, timestamps []uint64) {
 	if i.comm != "" {
 		labels["thread_name"] = append(labels["thread_name"], i.comm)
 	}
 
-	if i.containerID != "" {
-		labels["container_id"] = append(labels["container_id"], i.containerID)
+	if processMeta.containerMetadata.PodName != "" {
+		labels["pod_name"] = append(labels["pod_name"], processMeta.containerMetadata.PodName)
+	}
+
+	if processMeta.containerMetadata.ContainerID != "" {
+		labels["container_id"] = append(labels["container_id"], processMeta.containerMetadata.ContainerID)
+	}
+
+	if processMeta.containerMetadata.ContainerName != "" {
+		labels["container_name"] = append(labels["container_name"], processMeta.containerMetadata.ContainerName)
 	}
 
 	if i.apmServiceName != "" {
@@ -737,10 +743,17 @@ func createPprofMapping(profile *pprofile.Profile, offset uint64,
 	return mapping
 }
 
-func processMetadataFromPID(pid libpf.PID) (processMetadata, error) {
+func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
-		return processMetadata{}, err
+		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
+		return
 	}
-	return processMetadata{execPath: execPath}, nil
+	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
+	if err != nil {
+		log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)
+		// Even upon failure, we might still have managed to get the containerID
+	}
+
+	r.processes.Add(pid, processMetadata{execPath, containerMetadata})
 }
