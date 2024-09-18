@@ -24,7 +24,7 @@ jobs:
       uses: reviewdog/action-golangci-lint@v2
       with:
         go_version: ${{ inputs.go-version }}
-        golangci_lint_version: v1.59.1
+        golangci_lint_version: v1.61.0
         fail_on_error: true
         reporter: github-pr-review
 
