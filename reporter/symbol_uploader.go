@@ -179,7 +179,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 func (d *DatadogSymbolUploader) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 
-	for i := 0; i < d.workerCount; i++ {
+	for range d.workerCount {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -214,11 +214,11 @@ type executableMetadata struct {
 	filePath string
 }
 
-func newExecutableMetadata(fileName string, elf *pfelf.File,
+func newExecutableMetadata(fileName string, elfFile *pfelf.File,
 	fileID libpf.FileID, profilerVersion string) *executableMetadata {
-	isGolang := elf.IsGolang()
+	isGolang := elfFile.IsGolang()
 
-	buildID, err := elf.GetBuildID()
+	buildID, err := elfFile.GetBuildID()
 	if err != nil {
 		log.Debugf(
 			"Unable to get GNU build ID for executable %s: %s", fileName, err)
@@ -226,7 +226,7 @@ func newExecutableMetadata(fileName string, elf *pfelf.File,
 
 	goBuildID := ""
 	if isGolang {
-		goBuildID, err = elf.GetGoBuildID()
+		goBuildID, err = elfFile.GetGoBuildID()
 		if err != nil {
 			log.Debugf(
 				"Unable to get Go build ID for executable %s: %s", fileName, err)

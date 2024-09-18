@@ -15,11 +15,6 @@ jobs:
     steps:
     - name: Check out
       uses: actions/checkout@v4
-    - name: Set up Go ${{ inputs.go-version }}
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ inputs.go-version }}
-        check-latest: true
     - name: golangci-lint
       uses: reviewdog/action-golangci-lint@v2
       with:

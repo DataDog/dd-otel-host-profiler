@@ -31,6 +31,10 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       go-version: ${{ needs.go-version.outputs.go-version }}
+    secrets: inherit
+    permissions:
+      contents: read
+      pull-requests: write
 
   publish:
     env:

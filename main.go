@@ -30,8 +30,6 @@ import (
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
 
 	log "github.com/sirupsen/logrus"
-	// "github.com/elastic/otel-profiling-agent/containermetadata"
-	// "github.com/elastic/otel-profiling-agent/symbolication"
 
 	"github.com/DataDog/dd-opentelemetry-profiler/reporter"
 )
@@ -77,14 +75,6 @@ func startTraceHandling(ctx context.Context, rep otelreporter.TraceReporter,
 	_, err := tracehandler.Start(ctx, rep, trc.TraceProcessor(),
 		traceCh, intervals, cacheSize)
 
-	// FIXME{DD}: add container metadata
-	// containerMetadataHandler, err := containermetadata.GetHandler(ctx, times.MonitorInterval())
-	// if err != nil {
-	// 	return fmt.Errorf("failed to create container metadata handler: %v", err)
-	// }
-
-	// _, err = tracehandler.Start(ctx, containerMetadataHandler, rep,
-	// 	trc.TraceProcessor(), traceCh, times)
 	return err
 }
 
@@ -252,7 +242,6 @@ func mainWithExitCode() exitCode {
 
 	if err := trc.AttachSchedMonitor(); err != nil {
 		return failure("Failed to attach scheduler monitor: %v", err)
-
 	}
 	// This log line is used in our system tests to verify if that the agent has started. So if you
 	// change this log line update also the system test.
@@ -270,21 +259,6 @@ func mainWithExitCode() exitCode {
 
 	log.Info("Exiting ...")
 	return exitSuccess
-
-	// uploader := symbolication.NewNoopUploader()
-
-	// ddSymbolUpload := os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD")
-	// if ddSymbolUpload == "true" {
-	// 	log.Infof("Enabling Datadog local symbol upload")
-	// 	uploader, err = symbolication.NewDatadogUploader()
-	// 	if err != nil {
-	// 		log.Errorf(
-	// 			"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
-	// 			err,
-	// 		)
-	// 		uploader = symbolication.NewNoopUploader()
-	// 	}
-	// }
 }
 
 // traceCacheSize defines the maximum number of elements for the caches in tracehandler.

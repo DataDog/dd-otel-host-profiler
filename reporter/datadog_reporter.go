@@ -150,12 +150,6 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 		}
 		r.processes.Add(meta.PID, processMeta)
 	}
-	// FIXME{DD}
-	// containerID, err := r.lookupCgroupv2(meta.PID)
-	// if err != nil {
-	// 	log.Debugf("Failed to get a cgroupv2 ID as container ID for PID %d: %v",
-	// 		meta.PID, err)
-	// }
 
 	containerID := ""
 
@@ -657,19 +651,9 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey) {
 		labels["thread_name"] = append(labels["thread_name"], i.comm)
 	}
 
-	// FIXME{DD}
-	// if i.podName != "" {
-	// 	labels["pod_name"] = append(labels["pod_name"], i.podName)
-	// }
-
 	if i.containerID != "" {
 		labels["container_id"] = append(labels["container_id"], i.containerID)
 	}
-
-	// FIXME{DD}
-	// if i.containerName != "" {
-	// 	labels["container_name"] = append(labels["container_name"], i.containerName)
-	// }
 
 	if i.apmServiceName != "" {
 		labels["apmServiceName"] = append(labels["apmServiceName"], i.apmServiceName)
@@ -713,9 +697,9 @@ func createPProfLocation(profile *pprofile.Profile,
 
 func createPprofMapping(profile *pprofile.Profile, offset uint64,
 	fileName string, buildID string) *pprofile.Mapping {
-	idx := len(profile.Mapping) + 1
+	idx := uint64(len(profile.Mapping)) + 1
 	mapping := &pprofile.Mapping{
-		ID:      uint64(idx),
+		ID:      idx,
 		File:    fileName,
 		Offset:  offset,
 		BuildID: buildID,
