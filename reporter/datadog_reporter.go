@@ -361,9 +361,7 @@ func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
 
 	if r.symbolUploader != nil {
 		go func() {
-			if err := r.symbolUploader.Run(ctx); err != nil {
-				log.Errorf("Failed to run symbol uploader: %v", err)
-			}
+			r.symbolUploader.Run(ctx)
 		}()
 	}
 

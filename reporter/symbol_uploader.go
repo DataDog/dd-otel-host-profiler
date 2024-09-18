@@ -19,12 +19,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DataDog/zstd"
 	lru "github.com/elastic/go-freelru"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf/pfelf"
@@ -64,14 +64,6 @@ type DatadogSymbolUploader struct {
 	uploadCache *lru.SyncedLRU[libpf.FileID, struct{}]
 	client      *http.Client
 	uploadQueue chan uploadData
-}
-
-type elfWrapper struct {
-	reader         process.ReadAtCloser
-	elfFile        *pfelf.File
-	fileName       string
-	actualFileName string
-	opener         process.FileOpener
 }
 
 func NewDatadogSymbolUploader() (*DatadogSymbolUploader, error) {
@@ -147,7 +139,6 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	}
 	defer elfWrapper.Close()
 
-	// This needs to be done synchronously before the process manager closes the elfRef
 	debugElf := elfWrapper.findDebugSymbols()
 	if debugElf == nil {
 		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", fileName)
@@ -166,7 +157,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 		return
 	}
 
-	err = d.handleSymbols(symbolPath, e)
+	err = d.handleSymbols(ctx, symbolPath, e)
 	if err != nil {
 		// Upload failure, remove from cache to retry
 		d.uploadCache.Remove(fileID)
@@ -176,23 +167,25 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	}
 }
 
-func (d *DatadogSymbolUploader) Run(ctx context.Context) error {
-	var g errgroup.Group
+func (d *DatadogSymbolUploader) Run(ctx context.Context) {
+	var wg sync.WaitGroup
 
 	for i := 0; i < d.workerCount; i++ {
-		g.Go(func() error {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for {
 				select {
 				case <-ctx.Done():
-					return nil
+					return
 				case uploadData := <-d.uploadQueue:
 					d.upload(ctx, uploadData)
 				}
 			}
-		})
+		}()
 	}
 
-	return g.Wait()
+	wg.Wait()
 }
 
 type executableMetadata struct {
@@ -251,7 +244,7 @@ func (e *executableMetadata) String() string {
 	)
 }
 
-func (d *DatadogSymbolUploader) handleSymbols(symbolPath string,
+func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath string,
 	e *executableMetadata) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
@@ -260,7 +253,7 @@ func (d *DatadogSymbolUploader) handleSymbols(symbolPath string,
 	defer os.Remove(symbolFile.Name())
 	defer symbolFile.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), symbolCopyTimeout)
+	ctx, cancel := context.WithTimeout(ctx, symbolCopyTimeout)
 	defer cancel()
 	err = d.copySymbols(ctx, symbolPath, symbolFile.Name())
 	if err != nil {
@@ -289,13 +282,14 @@ func (d *DatadogSymbolUploader) copySymbols(ctx context.Context, inputPath, outp
 	return nil
 }
 
-func (d *DatadogSymbolUploader) uploadSymbols(symbolFile *os.File,
+func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *os.File,
 	e *executableMetadata) error {
 	req, err := d.buildSymbolUploadRequest(symbolFile, e)
 	if err != nil {
 		return fmt.Errorf("failed to build symbol upload request: %w", err)
 	}
 
+	req = req.WithContext(ctx)
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return err
@@ -423,6 +417,14 @@ func HasDWARFData(f *pfelf.File) bool {
 	return len(f.Progs) == 0 && hasBuildID && hasDebugStr
 }
 
+type elfWrapper struct {
+	reader         process.ReadAtCloser
+	elfFile        *pfelf.File
+	fileName       string
+	actualFileName string
+	opener         process.FileOpener
+}
+
 func (e *elfWrapper) Close() {
 	e.reader.Close()
 }
@@ -446,7 +448,7 @@ func openELF(filename string, opener process.FileOpener) (*elfWrapper, error) {
 		r.Close()
 		return nil, err
 	}
-	return &elfWrapper{r, ef, filename, actualFilename, opener}, nil
+	return &elfWrapper{reader: r, elfFile: ef, fileName: filename, actualFileName: actualFilename, opener: opener}, nil
 }
 
 // findDebugSymbols returns the path to the local debug symbols for the given ELF file.
@@ -531,7 +533,7 @@ func (e *elfWrapper) findDebugSymbolsWithDebugLink() *elfWrapper {
 			filepath.Join(dir, executablePath))
 	}
 
-	for _, debugPath := range []string{"/usr/lib/debug/"} {
+	for _, debugPath := range debugDirectories {
 		debugFile := filepath.Join(debugPath, executablePath, linkName)
 		debugELF, err := e.openELF(debugFile)
 		if err != nil {
