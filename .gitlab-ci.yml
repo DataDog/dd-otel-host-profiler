@@ -1,0 +1,24 @@
+stages:
+  - deploy
+
+
+variables:
+  DOWNSTREAM_BRANCH:
+    value: "master"
+    description: "Run a specific datadog-reliability-env branch downstream"
+
+deploy_to_reliability_env:
+  stage: deploy
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: on_success
+    - when: manual
+      allow_failure: true
+  trigger:
+    project: DataDog/apm-reliability/datadog-reliability-env
+    branch: $DOWNSTREAM_BRANCH
+  variables:
+    UPSTREAM_BRANCH: $CI_COMMIT_REF_NAME
+    UPSTREAM_PROJECT_ID: $CI_PROJECT_ID
+    UPSTREAM_PROJECT_NAME: $CI_PROJECT_NAME
+    UPSTREAM_COMMIT_SHA: $CI_COMMIT_SHA
