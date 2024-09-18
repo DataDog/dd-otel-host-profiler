@@ -1,0 +1,78 @@
+name: Common build
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        required: true
+        type: string
+        description: "Go version to use for the build"
+        
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Check out
+      uses: actions/checkout@v4
+    - name: Set up Go ${{ inputs.go-version }}
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        check-latest: true
+    - name: golangci-lint
+      uses: reviewdog/action-golangci-lint@v2
+      with:
+        go_version: ${{ inputs.go-version }}
+        golangci_lint_version: v1.59.1
+        fail_on_error: true
+        reporter: github-pr-review
+
+  test:
+    name: Test
+    strategy:
+      fail-fast: true
+      max-parallel: 2
+      matrix:
+        os: ["arm-4core-linux-ubuntu24.04", "ubuntu-24.04"]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Check out
+      uses: actions/checkout@v4
+    - name: Set up Go ${{ inputs.go-version }}
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        check-latest: true
+    - name: Install gotestsum
+      shell: bash
+      run: |
+        go install gotest.tools/gotestsum@latest          
+    - name: Tests
+      run: |
+        gotestsum --junitfile gotestsum-report.xml -- ./... -v -race -coverprofile=coverage.txt -covermode=atomic
+
+  build:
+    name: Build
+    strategy:
+      fail-fast: true
+      max-parallel: 2
+      matrix:
+        os: ["arm-4core-linux-ubuntu24.04", "ubuntu-24.04"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+      - name: Set up Go ${{ inputs.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          check-latest: true
+      - name: Build
+        run: |
+          go build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.os == 'arm-4core-linux-ubuntu24.04' && 'aarch64' || 'x86_64' }}
+          path: dd-opentelemetry-profiler
