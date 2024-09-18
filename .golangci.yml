@@ -20,7 +20,6 @@ linters:
     - errorlint # might be worth fixing
     - exhaustive
     - exhaustruct
-    - exportloopref
     - forbidigo
     - forcetypeassert # might be worth fixing
     - funlen
@@ -62,9 +61,7 @@ linters:
     - wrapcheck
     # the following linters are deprecated
     - execinquery
-    # we don't want to change code to Go 1.22+ yet
-    - intrange
-    - copyloopvar
+    - exportloopref
 
 linters-settings:
   goconst:
@@ -96,9 +93,11 @@ linters-settings:
           - warn,warnf,warnln
           - print,printf,println,sprint,sprintf,sprintln,fprint,fprintf,fprintln
   lll:
-    line-length: 100
     tab-width: 4
   misspell:
     locale: US
     ignore-words:
       - rela
+  gosec:
+    excludes:
+      - G115 # integer overflow, too many false positives
