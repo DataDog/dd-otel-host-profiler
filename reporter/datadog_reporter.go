@@ -327,7 +327,7 @@ func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
 	var symbolUploader *DatadogSymbolUploader
 	if cfg.UploadSymbols {
 		log.Infof("Enabling Datadog local symbol upload")
-		symbolUploader, err = NewDatadogSymbolUploader()
+		symbolUploader, err = NewDatadogSymbolUploader(cfg.Version)
 		if err != nil {
 			log.Errorf(
 				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",

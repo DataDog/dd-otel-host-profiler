@@ -30,10 +30,9 @@ import (
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf/pfelf"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf/readatbuf"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/process"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/vc"
 )
 
-const uploadCacheSize = 1000
+const uploadCacheSize = 16384
 const uploadQueueSize = 1000
 const uploadWorkerCount = 10
 
@@ -58,6 +57,7 @@ type uploadData struct {
 type DatadogSymbolUploader struct {
 	ddAPIKey    string
 	intakeURL   string
+	version     string
 	dryRun      bool
 	workerCount int
 
@@ -66,7 +66,7 @@ type DatadogSymbolUploader struct {
 	uploadQueue chan uploadData
 }
 
-func NewDatadogSymbolUploader() (*DatadogSymbolUploader, error) {
+func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
 	err := exec.Command("objcopy", "--version").Run()
 	if err != nil {
 		return nil, fmt.Errorf("objcopy is not available: %w", err)
@@ -97,6 +97,7 @@ func NewDatadogSymbolUploader() (*DatadogSymbolUploader, error) {
 	return &DatadogSymbolUploader{
 		ddAPIKey:    ddAPIKey,
 		intakeURL:   intakeURL,
+		version:     version,
 		dryRun:      dryRun,
 		workerCount: uploadWorkerCount,
 		client:      &http.Client{Timeout: uploadTimeout},
@@ -124,7 +125,7 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, fileName, bui
 	}
 }
 
-func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadData) {
+func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadData) bool {
 	fileName := uploadData.fileName
 	fileID := uploadData.fileID
 
@@ -135,26 +136,26 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	if err != nil {
 		log.Debugf("Skipping symbol upload for executable %s: %v",
 			uploadData.fileName, err)
-		return
+		return false
 	}
 	defer elfWrapper.Close()
 
 	debugElf := elfWrapper.findDebugSymbols()
 	if debugElf == nil {
 		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", fileName)
-		return
+		return false
 	}
 	if debugElf != elfWrapper {
 		defer debugElf.Close()
 	}
 
-	e := newExecutableMetadata(fileName, elfWrapper.elfFile, fileID)
+	e := newExecutableMetadata(fileName, elfWrapper.elfFile, fileID, d.version)
 
 	symbolPath := debugElf.actualFileName
 
 	if d.dryRun {
 		log.Infof("Dry run: would upload symbols %s for executable: %s", debugElf.fileName, e)
-		return
+		return true
 	}
 
 	err = d.handleSymbols(ctx, symbolPath, e)
@@ -162,9 +163,11 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 		// Upload failure, remove from cache to retry
 		d.uploadCache.Remove(fileID)
 		log.Errorf("Failed to handle symbols: %v for executable: %s", err, e)
-	} else {
-		log.Infof("Symbols uploaded successfully for executable: %s", e)
+		return false
 	}
+
+	log.Infof("Symbols uploaded successfully for executable: %s", e)
+	return true
 }
 
 func (d *DatadogSymbolUploader) Run(ctx context.Context) {
@@ -179,7 +182,10 @@ func (d *DatadogSymbolUploader) Run(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case uploadData := <-d.uploadQueue:
-					d.upload(ctx, uploadData)
+					if !d.upload(ctx, uploadData) {
+						// Remove from cache to retry later
+						d.uploadCache.Remove(uploadData.fileID)
+					}
 				}
 			}
 		}()
@@ -203,7 +209,7 @@ type executableMetadata struct {
 }
 
 func newExecutableMetadata(fileName string, elf *pfelf.File,
-	fileID libpf.FileID) *executableMetadata {
+	fileID libpf.FileID, profilerVersion string) *executableMetadata {
 	isGolang := elf.IsGolang()
 
 	buildID, err := elf.GetBuildID()
@@ -227,8 +233,8 @@ func newExecutableMetadata(fileName string, elf *pfelf.File,
 		GoBuildID:     goBuildID,
 		FileHash:      fileID.StringNoQuotes(),
 		Type:          "elf_symbol_file",
-		Origin:        "otel-profiling-agent",
-		OriginVersion: strings.TrimLeft(vc.Version(), "v"),
+		Origin:        "dd-opentelemetry-profiler",
+		OriginVersion: profilerVersion,
 		SymbolSource:  "debug_info",
 		FileName:      filepath.Base(fileName),
 		filePath:      fileName,
@@ -260,7 +266,7 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 		return fmt.Errorf("failed to copy symbols: %w", err)
 	}
 
-	err = d.uploadSymbols(symbolFile, e)
+	err = d.uploadSymbols(ctx, symbolFile, e)
 	if err != nil {
 		return fmt.Errorf("failed to upload symbols: %w", err)
 	}
@@ -357,7 +363,7 @@ func (d *DatadogSymbolUploader) buildSymbolUploadRequest(symbolFile *os.File,
 
 	r.Header.Set("Dd-Api-Key", d.ddAPIKey)
 	r.Header.Set("Dd-Evp-Origin", "otel-profiling-agent")
-	r.Header.Set("Dd-Evp-Origin-Version", vc.Version())
+	r.Header.Set("Dd-Evp-Origin-Version", d.version)
 	r.Header.Set("Content-Type", mw.FormDataContentType())
 	r.Header.Set("Content-Encoding", "zstd")
 	return r, nil
