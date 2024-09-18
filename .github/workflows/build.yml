@@ -9,6 +9,19 @@ on:
         description: "Go version to use for the build"
         
 jobs:
+  copyright:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+      - name: Copyright
+        run: |
+          go run checkcopyright.go
+
   lint:
     name: Lint
     runs-on: ubuntu-24.04
