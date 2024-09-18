@@ -1,6 +1,6 @@
 module github.com/DataDog/dd-opentelemetry-profiler
 
-go 1.22.5
+go 1.23.1
 
 require (
 	github.com/DataDog/zstd v1.5.6

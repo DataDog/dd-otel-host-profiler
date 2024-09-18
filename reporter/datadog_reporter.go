@@ -28,7 +28,7 @@ import (
 // Assert that we implement the full Reporter interface.
 var _ reporter.Reporter = (*DatadogReporter)(nil)
 
-const profilerName = "dd-otel-profiling-agent"
+const profilerName = "dd-opentelemetry-profiler"
 const profilingEndPoint = "/profiling/v1/input"
 
 // execInfo enriches an executable with additional metadata.

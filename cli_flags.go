@@ -108,7 +108,7 @@ func parseArgs() (*arguments, error) {
 	var args arguments
 	var err error
 
-	fs := flag.NewFlagSet("otel-profiling-agent", flag.ExitOnError)
+	fs := flag.NewFlagSet("dd-opentelemetry-profiler", flag.ExitOnError)
 
 	// Please keep the parameters ordered alphabetically in the source-code.
 	fs.UintVar(&args.bpfVerifierLogLevel, "bpf-log-level", 0, bpfVerifierLogLevelHelp)
