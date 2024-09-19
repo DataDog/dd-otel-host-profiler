@@ -117,7 +117,7 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, fileName, bui
 
 	// For short-lived processes, executable file might disappear from under our feet by the time we
 	// try to upload symbols. It would be better to open the file here and enqueue the opened file.
-	// We still need the file to existlater when we extract the debug symbols with objcopy though.
+	// We still need the file to exist later when we extract the debug symbols with objcopy though.
 	// The alternative would be to dump the file to a temporary file through the opened reader and use
 	// objcopy on that temporary file. The downside would be more disk I/O and more disk space used, and
 	// do not seem to be worth it.
