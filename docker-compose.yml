@@ -1,0 +1,31 @@
+name: "dd-opentelemetry-profiler"
+
+services:
+  agent:
+    build:
+      context: .
+    privileged: true
+    pid: "host"
+    volumes:
+      - .:/app
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    secrets:
+      - dd-api-key
+    command: ['/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key); sudo mount -t debugfs none /sys/kernel/debug && cd /app && go build && sudo -E /app/dd-opentelemetry-profiler -service "${OTEL_PROFILING_AGENT_SERVICE:-dd-opentelemetry-profiler-dev}" -collection-agent "http://datadog-agent:8126" -reporter-interval ${OTEL_PROFILING_AGENT_REPORTER_INTERVAL:-60s} -samples-per-second 20 -save-cpuprofile']
+
+  datadog-agent:
+    image: gcr.io/datadoghq/agent:7
+    cgroup: host
+    environment:
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+    secrets:
+      - dd-api-key
+    entrypoint: [ '/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key) ; /bin/entrypoint.sh' ]
+
+secrets:
+  dd-api-key:
+    environment: DD_API_KEY
