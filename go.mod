@@ -8,12 +8,11 @@ require (
 	github.com/elastic/go-freelru v0.13.0
 	github.com/google/pprof v0.0.0-20240829160300-da1f7e9f2b25
 	github.com/jsimonetti/rtnetlink v1.4.2
-	github.com/open-telemetry/opentelemetry-ebpf-profiler v0.0.0-20240904113416-6270dc817b1a
+	github.com/open-telemetry/opentelemetry-ebpf-profiler v0.0.0-20240918090752-0a8979a41728
 	github.com/peterbourgon/ff/v3 v3.4.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/tklauser/numcpus v0.8.0
 	github.com/zeebo/xxh3 v1.0.2
-	golang.org/x/sync v0.7.0
 	golang.org/x/sys v0.21.0
 )
 
@@ -33,6 +32,7 @@ require (
 	golang.org/x/arch v0.8.0 // indirect
 	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8 // indirect
 	golang.org/x/net v0.26.0 // indirect
+	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240513163218-0867130af1f8 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240513163218-0867130af1f8 // indirect
@@ -40,4 +40,7 @@ require (
 	google.golang.org/protobuf v1.34.1 // indirect
 )
 
-replace github.com/open-telemetry/opentelemetry-ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20240904113416-6270dc817b1a
+// To update the Datadog/opentelemetry-ebpf-profiler dependency on latest commit on datadog branch, change the following line to:
+// replace github.com/open-telemetry/opentelemetry-ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler datadog
+// and run `GOPRIVATE=github.com/Datadog/* go mod tidy`
+replace github.com/open-telemetry/opentelemetry-ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20240919140712-bacfde8003b0
