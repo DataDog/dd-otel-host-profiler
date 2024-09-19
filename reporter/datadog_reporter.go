@@ -220,7 +220,7 @@ func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, fileName, buil
 		buildID:  buildID,
 	})
 
-	if interp == libpf.Native {
+	if r.symbolUploader != nil && interp == libpf.Native {
 		r.symbolUploader.UploadSymbols(fileID, fileName, buildID, opener)
 	}
 }

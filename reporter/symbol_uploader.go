@@ -115,6 +115,13 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, fileName, bui
 		return
 	}
 
+	// For short-lived processes, executable file might disappear from under our feet by the time we
+	// try to upload symbols. It would be better to open the file here and enqueue the opened file.
+	// We still need the file to existlater when we extract the debug symbols with objcopy though.
+	// The alternative would be to dump the file to a temporary file through the opened reader and use
+	// objcopy on that temporary file. The downside would be more disk I/O and more disk space used, and
+	// do not seem to be worth it.
+	// We can revisit this choice later if we switch to a different symbol extraction method.
 	select {
 	case d.uploadQueue <- uploadData{fileName, fileID, buildID, opener}:
 		// Record immediately to avoid duplicate uploads
@@ -125,6 +132,7 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, fileName, bui
 	}
 }
 
+// Returns true if the upload was successful, false otherwise
 func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadData) bool {
 	fileName := uploadData.fileName
 	fileID := uploadData.fileID
@@ -160,8 +168,6 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 
 	err = d.handleSymbols(ctx, symbolPath, e)
 	if err != nil {
-		// Upload failure, remove from cache to retry
-		d.uploadCache.Remove(fileID)
 		log.Errorf("Failed to handle symbols: %v for executable: %s", err, e)
 		return false
 	}
