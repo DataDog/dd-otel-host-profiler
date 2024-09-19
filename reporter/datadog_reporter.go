@@ -20,6 +20,7 @@ import (
 
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf/xsync"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/process"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/reporter"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/util"
 )
@@ -110,7 +111,7 @@ type DatadogReporter struct {
 	// traceEvents stores reported trace events (trace metadata with frames and counts)
 	traceEvents xsync.RWMutex[map[traceAndMetaKey]*traceFramesCounts]
 
-	// execPathes stores the last known execPath for a PID.
+	// processes stores the metadata associated to a PID.
 	processes *lru.SyncedLRU[libpf.PID, processMetadata]
 
 	// samplesPerSecond is the number of samples per second.
@@ -133,6 +134,8 @@ type DatadogReporter struct {
 	saveCPUProfile bool
 
 	tags Tags
+
+	symbolUploader *DatadogSymbolUploader
 }
 
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
@@ -211,11 +214,15 @@ func (r *DatadogReporter) ReportFallbackSymbol(frameID libpf.FrameID, symbol str
 // ExecutableMetadata accepts a fileID with the corresponding filename
 // and caches this information.
 func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, fileName, buildID string,
-	interp libpf.InterpreterType, open reporter.ExecutableOpener) {
+	interp libpf.InterpreterType, opener process.FileOpener) {
 	r.executables.Add(fileID, execInfo{
 		fileName: fileName,
 		buildID:  buildID,
 	})
+
+	if r.symbolUploader != nil && interp == libpf.Native {
+		r.symbolUploader.UploadSymbols(fileID, fileName, buildID, opener)
+	}
 }
 
 // FrameMetadata accepts metadata associated with a frame and caches this information.
@@ -317,6 +324,17 @@ func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
 		return nil, err
 	}
 
+	var symbolUploader *DatadogSymbolUploader
+	if cfg.UploadSymbols {
+		log.Infof("Enabling Datadog local symbol upload")
+		symbolUploader, err = NewDatadogSymbolUploader(cfg.Version)
+		if err != nil {
+			log.Errorf(
+				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
+				err)
+		}
+	}
+
 	r := &DatadogReporter{
 		name:             cfg.Name,
 		version:          cfg.Version,
@@ -335,10 +353,17 @@ func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
 		agentAddr:        cfg.CollAgentAddr,
 		saveCPUProfile:   cfg.SaveCPUProfile,
 		tags:             cfg.Tags,
+		symbolUploader:   symbolUploader,
 	}
 
 	// Create a child context for reporting features
 	ctx, cancelReporting := context.WithCancel(mainCtx)
+
+	if r.symbolUploader != nil {
+		go func() {
+			r.symbolUploader.Run(ctx)
+		}()
+	}
 
 	go func() {
 		tick := time.NewTicker(cfg.ReportInterval)
@@ -360,7 +385,6 @@ func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
 
 	// When Stop() is called and a signal to 'stop' is received, then:
 	// - cancel the reporting functions currently running (using context)
-	// - close the gRPC connection with collection-agent
 	go func() {
 		<-r.stopSignal
 		cancelReporting()

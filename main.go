@@ -196,6 +196,7 @@ func mainWithExitCode() exitCode {
 		IPAddress:        sourceIP,
 		SaveCPUProfile:   args.saveCPUProfile,
 		Tags:             validatedTags,
+		UploadSymbols:    args.symbolUpload,
 	})
 	if err != nil {
 		return failure("Failed to start reporting: %v", err)
