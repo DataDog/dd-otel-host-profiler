@@ -48,6 +48,8 @@ type Config struct {
 	SaveCPUProfile bool
 	// Tags is a list of tags to be sent to the collection agent.
 	Tags Tags
+	// Whether to include timestamps on samples for the timeline feature
+	Timeline bool
 	// SymbolUpload defines whether the agent should upload debug symbols to the backend.
 	UploadSymbols bool
 }

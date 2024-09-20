@@ -95,6 +95,7 @@ type arguments struct {
 	serviceName            string
 	symbolUpload           bool
 	tags                   string
+	timeline               bool
 	tracers                string
 	verboseMode            bool
 	version                bool
@@ -143,6 +144,7 @@ func parseArgs() (*arguments, error) {
 
 	fs.IntVar(&args.samplesPerSecond, "samples-per-second", defaultArgSamplesPerSecond,
 		samplesPerSecondHelp)
+	fs.BoolVar(&args.timeline, "timeline", false, "Enable timeline feature.")
 
 	fs.BoolVar(&args.sendErrorFrames, "send-error-frames", defaultArgSendErrorFrames,
 		sendErrorFramesHelp)

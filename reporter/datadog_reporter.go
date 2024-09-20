@@ -133,13 +133,19 @@ type DatadogReporter struct {
 	// ipAddress is the IP address of the host.
 	ipAddress string
 
+	// agentAddr is the address of the Datadog agent.
 	agentAddr string
 
+	// saveCPUProfile defines whether the agent should dump a pprof CPU profile on disk.
 	saveCPUProfile bool
 
+	// tags is a list of tags alongside the profile.
 	tags Tags
 
 	symbolUploader *DatadogSymbolUploader
+
+	// timeline is a flag to include timestamps on samples for the timeline feature.
+	timeline bool
 }
 
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
@@ -350,8 +356,9 @@ func Start(mainCtx context.Context, cfg *Config) (reporter.Reporter, error) {
 		processes:        processes,
 		agentAddr:        cfg.CollAgentAddr,
 		saveCPUProfile:   cfg.SaveCPUProfile,
-		tags:             cfg.Tags,
 		symbolUploader:   symbolUploader,
+		tags:             cfg.Tags,
+		timeline:         cfg.Timeline,
 	}
 
 	// Create a child context for reporting features
@@ -598,17 +605,21 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			// location with the kernel as the function name.
 			execPath = "kernel"
 		}
+		baseExec := path.Base(execPath)
 
 		if execPath != "" {
-			base := path.Base(execPath)
 			loc := createPProfLocation(profile, 0)
-			m := createPprofFunctionEntry(funcMap, profile, base, execPath)
+			m := createPprofFunctionEntry(funcMap, profile, baseExec, execPath)
 			loc.Line = append(loc.Line, pprofile.Line{Function: m})
 			sample.Location = append(sample.Location, loc)
 		}
 
 		sample.Label = make(map[string][]string)
-		addTraceLabels(sample.Label, traceAndMetaKey)
+		var timestamps []uint64
+		if r.timeline {
+			timestamps = traceInfo.timestamps
+		}
+		addTraceLabels(sample.Label, traceAndMetaKey, baseExec, timestamps)
 
 		count := int64(len(traceInfo.timestamps))
 		sample.Value = append(sample.Value, count, count*samplingPeriod)
@@ -650,7 +661,8 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 	return function
 }
 
-func addTraceLabels(labels map[string][]string, i traceAndMetaKey) {
+func addTraceLabels(labels map[string][]string, i traceAndMetaKey,
+	baseExec string, timestamps []uint64) {
 	if i.comm != "" {
 		labels["thread_name"] = append(labels["thread_name"], i.comm)
 	}
@@ -672,6 +684,19 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey) {
 		// this is why we use "thread id" instead of "thread_id"
 		// This is also consistent with ddprof.
 		labels["thread id"] = append(labels["thread id"], fmt.Sprintf("%d", i.tid))
+	}
+
+	if baseExec != "" {
+		labels["process_name"] = append(labels["process_name"], baseExec)
+	}
+
+	if len(timestamps) > 0 {
+		timestampStrs := make([]string, 0, len(timestamps))
+		for _, ts := range timestamps {
+			timestampStrs = append(timestampStrs, strconv.FormatUint(ts, 10))
+		}
+		// Assign all timestamps as a single label entry
+		labels["end_timestamp_ns"] = timestampStrs
 	}
 }
 
