@@ -28,11 +28,14 @@ jobs:
     steps:
     - name: Check out
       uses: actions/checkout@v4
+    - name: Get linter version
+      id: linter-version
+      run: (echo -n "version="; make linter-version) >> "$GITHUB_OUTPUT"
     - name: golangci-lint
       uses: reviewdog/action-golangci-lint@v2
       with:
         go_version: ${{ inputs.go-version }}
-        golangci_lint_version: v1.61.0
+        golangci_lint_version: ${{ steps.linter-version.outputs.version }}
         fail_on_error: true
         reporter: github-pr-review
 
