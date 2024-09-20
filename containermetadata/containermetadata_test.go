@@ -3,6 +3,8 @@
  * or more contributor license agreements. Licensed under the Apache License 2.0.
  * See the file "LICENSE" for details.
  */
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
 
 package containermetadata
 
@@ -163,7 +165,6 @@ func TestExtractContainerIDFromFile(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			h := defaultHandler
 			if test.customHandler != nil {
@@ -274,7 +275,6 @@ func TestGetKubernetesPodMetadata(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			containerMetadataCache, err := lru.NewSynced[string, ContainerMetadata](
 				containerMetadataCacheSize, hashString)

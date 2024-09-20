@@ -3,6 +3,8 @@
  * or more contributor license agreements. Licensed under the Apache License 2.0.
  * See the file "LICENSE" for details.
  */
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
 
 // containermetadata provides functionality for retrieving the kubernetes pod and container
 // metadata or the docker container metadata for a particular PID.
@@ -41,11 +43,10 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/elastic/otel-profiling-agent/libpf"
-	"github.com/elastic/otel-profiling-agent/metrics"
-	"github.com/elastic/otel-profiling-agent/periodiccaller"
-	"github.com/elastic/otel-profiling-agent/stringutil"
-	"github.com/elastic/otel-profiling-agent/util"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/metrics"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/periodiccaller"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/stringutil"
 )
 
 const (
@@ -97,15 +98,13 @@ var (
 	ErrDeferred = errors.New("lookup deferred due to previous failure")
 )
 
-// Handler implementations support retrieving container metadata for a particular PID.
-type Handler interface {
-	// GetContainerMetadata returns the pod name and container name metadata associated with the
-	// provided pid. Returns an empty object if no container metadata exists.
-	GetContainerMetadata(pid util.PID) (ContainerMetadata, error)
+// Provider implementations support retrieving container metadata for a particular PID.
+type Provider interface {
+	GetContainerMetadata(pid libpf.PID) (ContainerMetadata, error)
 }
 
-// handler does the retrieval of container metadata for a particular pid.
-type handler struct {
+// containerMetadataProvider does the retrieval of container metadata for a particular pid.
+type containerMetadataProvider struct {
 	// Counters to keep track how often external APIs are called.
 	kubernetesClientQueryCount atomic.Uint64
 	dockerClientQueryCount     atomic.Uint64
@@ -118,7 +117,7 @@ type handler struct {
 	containerMetadataCache *lru.SyncedLRU[string, ContainerMetadata]
 
 	// containerIDCache stores per process container ID information.
-	containerIDCache *lru.SyncedLRU[util.PID, containerIDEntry]
+	containerIDCache *lru.SyncedLRU[libpf.PID, containerIDEntry]
 
 	kubeClientSet kubernetes.Interface
 	dockerClient  *client.Client
@@ -126,7 +125,7 @@ type handler struct {
 	containerdClient *containerd.Client
 
 	// deferredPID prevents busy loops for PIDs where the cgroup extraction fails.
-	deferredPID *lru.SyncedLRU[util.PID, libpf.Void]
+	deferredPID *lru.SyncedLRU[libpf.PID, libpf.Void]
 }
 
 // ContainerMetadata contains the container and/or pod metadata.
@@ -167,78 +166,80 @@ type containerIDEntry struct {
 	env         containerEnvironment
 }
 
-// GetHandler returns a new Handler instance used for retrieving container metadata.
-func GetHandler(ctx context.Context, monitorInterval time.Duration) (Handler, error) {
-	containerIDCache, err := lru.NewSynced[util.PID, containerIDEntry](
-		containerIDCacheSize, util.PID.Hash32)
+// NewContainerMetadataProvider returns a new ContainerMetadataProvider instance used for retrieving container metadata.
+func NewContainerMetadataProvider(ctx context.Context, nodeName string, monitorInterval time.Duration) (
+	Provider, error) {
+	containerIDCache, err := lru.NewSynced[libpf.PID, containerIDEntry](
+		containerIDCacheSize, libpf.PID.Hash32)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create container id cache: %v", err)
 	}
 	containerIDCache.SetLifetime(containerIDCacheTimeout)
 
-	instance := &handler{
+	p := &containerMetadataProvider{
 		containerIDCache: containerIDCache,
 		dockerClient:     getDockerClient(),
 		containerdClient: getContainerdClient(),
+		nodeName:         nodeName,
 	}
 
-	instance.deferredPID, err = lru.NewSynced[util.PID, libpf.Void](deferredLRUSize,
-		util.PID.Hash32)
+	p.deferredPID, err = lru.NewSynced[libpf.PID, libpf.Void](deferredLRUSize,
+		libpf.PID.Hash32)
 	if err != nil {
 		return nil, err
 	}
-	instance.deferredPID.SetLifetime(deferredTimeout)
+	p.deferredPID.SetLifetime(deferredTimeout)
 
 	if os.Getenv(kubernetesServiceHost) != "" {
-		err = createKubernetesClient(ctx, instance)
+		err = createKubernetesClient(ctx, p)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create kubernetes client %v", err)
 		}
 	} else {
 		log.Infof("Environment variable %s not set", kubernetesServiceHost)
-		instance.containerMetadataCache, err = lru.NewSynced[string, ContainerMetadata](
+		p.containerMetadataCache, err = lru.NewSynced[string, ContainerMetadata](
 			containerMetadataCacheSize, hashString)
 		if err != nil {
 			return nil, fmt.Errorf("unable to create container metadata cache: %v", err)
 		}
 	}
 
-	log.Debugf("Container metadata handler: %v", instance)
+	log.Debugf("Container metadata handler: %v", p)
 
 	periodiccaller.Start(ctx, monitorInterval, func() {
 		metrics.AddSlice([]metrics.Metric{
 			{
 				ID: metrics.IDKubernetesClientQuery,
 				Value: metrics.MetricValue(
-					instance.kubernetesClientQueryCount.Swap(0)),
+					p.kubernetesClientQueryCount.Swap(0)),
 			},
 			{
 				ID: metrics.IDDockerClientQuery,
 				Value: metrics.MetricValue(
-					instance.dockerClientQueryCount.Swap(0)),
+					p.dockerClientQueryCount.Swap(0)),
 			},
 			{
 				ID: metrics.IDContainerdClientQuery,
 				Value: metrics.MetricValue(
-					instance.containerdClientQueryCount.Swap(0)),
+					p.containerdClientQueryCount.Swap(0)),
 			},
 		})
 	})
 
-	return instance, nil
+	return p, nil
 }
 
 // getPodsPerNode returns the number of pods per node.
 // Depending on the configuration of the kubernetes environment, we may not be allowed to query
 // for the allocatable information of the nodes.
-func getPodsPerNode(ctx context.Context, instance *handler) (int, error) {
-	instance.kubernetesClientQueryCount.Add(1)
-	nodeList, err := instance.kubeClientSet.CoreV1().Nodes().List(ctx, v1.ListOptions{
-		FieldSelector: "spec.nodeName=" + instance.nodeName,
+func getPodsPerNode(ctx context.Context, h *containerMetadataProvider) (int, error) {
+	h.kubernetesClientQueryCount.Add(1)
+	nodeList, err := h.kubeClientSet.CoreV1().Nodes().List(ctx, v1.ListOptions{
+		FieldSelector: "spec.nodeName=" + h.nodeName,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to get kubernetes nodes for '%s': %v",
-			instance.nodeName, err)
+			h.nodeName, err)
 	}
 
 	if len(nodeList.Items) == 0 {
@@ -256,11 +257,11 @@ func getPodsPerNode(ctx context.Context, instance *handler) (int, error) {
 	return int(quantity.Value()), nil
 }
 
-func getContainerMetadataCache(ctx context.Context, instance *handler) (
+func getContainerMetadataCache(ctx context.Context, h *containerMetadataProvider) (
 	*lru.SyncedLRU[string, ContainerMetadata], error) {
 	cacheSize := containerMetadataCacheSize
 
-	podsPerNode, err := getPodsPerNode(ctx, instance)
+	podsPerNode, err := getPodsPerNode(ctx, h)
 	if err != nil {
 		log.Infof("Failed to size cache based on pods per node: %v", err)
 	} else {
@@ -271,30 +272,31 @@ func getContainerMetadataCache(ctx context.Context, instance *handler) (
 		uint32(cacheSize), hashString)
 }
 
-func createKubernetesClient(ctx context.Context, instance *handler) error {
+func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) error {
 	log.Debugf("Create Kubernetes client")
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return fmt.Errorf("failed to create in cluster configuration for Kubernetes: %v", err)
 	}
-	instance.kubeClientSet, err = kubernetes.NewForConfig(config)
+	p.kubeClientSet, err = kubernetes.NewForConfig(config)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes client: %v", err)
 	}
 
-	k, ok := instance.kubeClientSet.(*kubernetes.Clientset)
+	k, ok := p.kubeClientSet.(*kubernetes.Clientset)
 	if !ok {
 		return fmt.Errorf("failed to create Kubernetes client: %v", err)
 	}
 
-	instance.nodeName, err = getNodeName()
-	if err != nil {
-		log.Errorf("failed to get kubernetes node name; %v", err)
-		instance.nodeName = "UNKNOWN"
+	if p.nodeName == "" {
+		p.nodeName, err = getNodeName()
+		if err != nil {
+			return fmt.Errorf("failed to get kubernetes node name; %v", err)
+		}
 	}
 
-	instance.containerMetadataCache, err = getContainerMetadataCache(ctx, instance)
+	p.containerMetadataCache, err = getContainerMetadataCache(ctx, p)
 	if err != nil {
 		return fmt.Errorf("failed to create container metadata cache: %v", err)
 	}
@@ -303,7 +305,7 @@ func createKubernetesClient(ctx context.Context, instance *handler) error {
 	// Kubernetes and get notified of new pods that are created in the specified node.
 	factory := informers.NewSharedInformerFactoryWithOptions(k, 0,
 		informers.WithTweakListOptions(func(options *v1.ListOptions) {
-			options.FieldSelector = "spec.nodeName=" + instance.nodeName
+			options.FieldSelector = "spec.nodeName=" + p.nodeName
 		}))
 	informer := factory.Core().V1().Pods().Informer()
 
@@ -317,7 +319,7 @@ func createKubernetesClient(ctx context.Context, instance *handler) error {
 				log.Errorf("Received unknown object in AddFunc handler: %#v", obj)
 				return
 			}
-			instance.putCache(pod)
+			p.putCache(pod)
 		},
 		UpdateFunc: func(_ any, newObj any) {
 			pod, ok := newObj.(*corev1.Pod)
@@ -326,7 +328,7 @@ func createKubernetesClient(ctx context.Context, instance *handler) error {
 					newObj)
 				return
 			}
-			instance.putCache(pod)
+			p.putCache(pod)
 		},
 	})
 	if err != nil {
@@ -392,7 +394,7 @@ func getDockerClient() *client.Client {
 }
 
 // putCache updates the container id metadata cache for the provided pod.
-func (h *handler) putCache(pod *corev1.Pod) {
+func (p *containerMetadataProvider) putCache(pod *corev1.Pod) {
 	log.Debugf("Update container metadata cache for pod %s", pod.Name)
 	podName := getPodName(pod)
 
@@ -405,7 +407,7 @@ func (h *handler) putCache(pod *corev1.Pod) {
 			continue
 		}
 
-		h.containerMetadataCache.Add(containerID, ContainerMetadata{
+		p.containerMetadataCache.Add(containerID, ContainerMetadata{
 			ContainerID:   containerID,
 			PodName:       podName,
 			ContainerName: pod.Status.ContainerStatuses[i].Name,
@@ -466,11 +468,11 @@ func getNodeName() (string, error) {
 }
 
 // GetContainerMetadata implements the Handler interface.
-func (h *handler) GetContainerMetadata(pid util.PID) (ContainerMetadata, error) {
+func (p *containerMetadataProvider) GetContainerMetadata(pid libpf.PID) (ContainerMetadata, error) {
 	// Fast path, check container metadata has been cached
 	// For kubernetes pods, the shared informer may have updated
 	// the container id to container metadata cache, so retrieve the container ID for this pid.
-	pidContainerID, env, err := h.lookupContainerID(pid)
+	pidContainerID, env, err := p.lookupContainerID(pid)
 	if err != nil {
 		return ContainerMetadata{}, fmt.Errorf("failed to get container id for pid %d", pid)
 	}
@@ -482,54 +484,69 @@ func (h *handler) GetContainerMetadata(pid util.PID) (ContainerMetadata, error) 
 	}
 
 	// Fast path, check if the containerID metadata has been cached
-	if data, ok := h.containerMetadataCache.Get(pidContainerID); ok {
+	if data, ok := p.containerMetadataCache.Get(pidContainerID); ok {
 		return data, nil
 	}
+
+	var data ContainerMetadata
 
 	// For kubernetes pods this route should happen rarely, this means that we are processing a
 	// trace but the shared informer has been delayed in updating the container id metadata cache.
 	// If it is not a kubernetes pod then we need to look up the container id in the configured
 	// client.
 	switch {
-	case isContainerEnvironment(env, envKubernetes) && h.kubeClientSet != nil:
-		return h.getKubernetesPodMetadata(pidContainerID)
-	case isContainerEnvironment(env, envDocker) && h.dockerClient != nil:
-		return h.getDockerContainerMetadata(pidContainerID)
-	case isContainerEnvironment(env, envContainerd) && h.containerdClient != nil:
-		return h.getContainerdContainerMetadata(pidContainerID)
+	case isContainerEnvironment(env, envKubernetes) && p.kubeClientSet != nil:
+		data, err = p.getKubernetesPodMetadata(pidContainerID)
+	case isContainerEnvironment(env, envDocker) && p.dockerClient != nil:
+		data, err = p.getDockerContainerMetadata(pidContainerID)
+	case isContainerEnvironment(env, envContainerd) && p.containerdClient != nil:
+		data, err = p.getContainerdContainerMetadata(pidContainerID)
 	case isContainerEnvironment(env, envDockerBuildkit):
 		// If DOCKER_BUILDKIT is set we can not retrieve information about this container
 		// from the docker socket. Therefore, we populate container ID and container name
 		// with the information we have.
-		return ContainerMetadata{
+		data = ContainerMetadata{
 			ContainerID:   pidContainerID,
 			ContainerName: pidContainerID,
-		}, nil
+		}
 	case isContainerEnvironment(env, envLxc):
 		// As lxc does not use different identifiers we populate container ID and container
 		// name of metadata with the same information.
-		return ContainerMetadata{
+		data = ContainerMetadata{
 			ContainerID:   pidContainerID,
 			ContainerName: pidContainerID,
-		}, nil
+		}
 	default:
-		return ContainerMetadata{},
-			fmt.Errorf("failed to handle unknown container technology %d", env)
+		err = fmt.Errorf("failed to handle unknown container technology %d", env)
 	}
+
+	if err != nil {
+		log.Debugf("Failed to get container metadata for container id %v: %v", pidContainerID, err)
+
+		// If we failed to get the container metadata, still return the container ID
+		data = ContainerMetadata{
+			ContainerID: pidContainerID,
+		}
+		// Cache the failure for a limited time to allow retry later
+		p.containerMetadataCache.AddWithLifetime(pidContainerID, data, deferredTimeout)
+	} else {
+		// Cache success without lifetime
+		p.containerMetadataCache.Add(pidContainerID, data)
+	}
+
+	return data, err
 }
 
-func (h *handler) getKubernetesPodMetadata(pidContainerID string) (
+func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID string) (
 	ContainerMetadata, error) {
 	log.Debugf("Get kubernetes pod metadata for container id %v", pidContainerID)
 
-	h.kubernetesClientQueryCount.Add(1)
-	pods, err := h.kubeClientSet.CoreV1().Pods("").List(context.TODO(), v1.ListOptions{
-		FieldSelector: "spec.nodeName=" + h.nodeName,
+	p.kubernetesClientQueryCount.Add(1)
+	pods, err := p.kubeClientSet.CoreV1().Pods("").List(context.TODO(), v1.ListOptions{
+		FieldSelector: "spec.nodeName=" + p.nodeName,
 	})
 	if err != nil {
-		containerMetadata := ContainerMetadata{}
-		h.containerMetadataCache.Add(pidContainerID, containerMetadata)
-		return containerMetadata, fmt.Errorf("failed to retrieve kubernetes pods, %v", err)
+		return ContainerMetadata{}, fmt.Errorf("failed to retrieve kubernetes pods, %v", err)
 	}
 
 	for j := range pods.Items {
@@ -550,26 +567,44 @@ func (h *handler) getKubernetesPodMetadata(pidContainerID string) (
 					PodName:       podName,
 					ContainerName: containers[i].Name,
 				}
-				h.containerMetadataCache.Add(containerID, containerMetadata)
+
+				return containerMetadata, nil
+			}
+		}
+
+		initContainers := pods.Items[j].Status.InitContainerStatuses
+		for i := range initContainers {
+			var containerID string
+			if initContainers[i].ContainerID == "" {
+				continue
+			}
+			if containerID, err = matchContainerID(initContainers[i].ContainerID); err != nil {
+				log.Error(err)
+				continue
+			}
+			if containerID == pidContainerID {
+				containerMetadata := ContainerMetadata{
+					ContainerID:   containerID,
+					PodName:       podName,
+					ContainerName: pods.Items[j].Spec.InitContainers[i].Name,
+				}
 
 				return containerMetadata, nil
 			}
 		}
 	}
 
-	containerMetadata := ContainerMetadata{}
-	h.containerMetadataCache.Add(pidContainerID, containerMetadata)
-	return containerMetadata,
+	return ContainerMetadata{},
 		fmt.Errorf("failed to find matching kubernetes pod/container metadata for "+
 			"containerID '%v' in %d pods", pidContainerID, len(pods.Items))
 }
 
-func (h *handler) getDockerContainerMetadata(pidContainerID string) (
+func (p *containerMetadataProvider) getDockerContainerMetadata(pidContainerID string) (
 	ContainerMetadata, error) {
 	log.Debugf("Get docker container metadata for container id %v", pidContainerID)
 
-	h.dockerClientQueryCount.Add(1)
-	containers, err := h.dockerClient.ContainerList(context.Background(),
+	p.dockerClientQueryCount.Add(1)
+	containers, err := p.dockerClient.ContainerList(context.Background(),
 		container.ListOptions{})
 	if err != nil {
 		return ContainerMetadata{}, fmt.Errorf("failed to list docker containers, %v", err)
@@ -583,7 +618,6 @@ func (h *handler) getDockerContainerMetadata(pidContainerID string) (
 				ContainerID:   containers[i].ID,
 				ContainerName: containerName,
 			}
-			h.containerMetadataCache.Add(pidContainerID, metadata)
 			return metadata, nil
 		}
 	}
@@ -593,7 +627,7 @@ func (h *handler) getDockerContainerMetadata(pidContainerID string) (
 			pidContainerID)
 }
 
-func (h *handler) getContainerdContainerMetadata(pidContainerID string) (
+func (p *containerMetadataProvider) getContainerdContainerMetadata(pidContainerID string) (
 	ContainerMetadata, error) {
 	log.Debugf("Get containerd container metadata for container id %v", pidContainerID)
 
@@ -607,9 +641,9 @@ func (h *handler) getContainerdContainerMetadata(pidContainerID string) (
 				pidContainerID)
 	}
 
-	h.containerdClientQueryCount.Add(1)
+	p.containerdClientQueryCount.Add(1)
 	ctx := namespaces.WithNamespace(context.Background(), fields[1])
-	containers, err := h.containerdClient.Containers(ctx)
+	containers, err := p.containerdClient.Containers(ctx)
 	if err != nil {
 		return ContainerMetadata{},
 			fmt.Errorf("failed to get containerd containers in namespace '%s': %v",
@@ -620,11 +654,13 @@ func (h *handler) getContainerdContainerMetadata(pidContainerID string) (
 		if container.ID() == fields[2] {
 			// Containerd does not differentiate between the name and the ID of a
 			// container. So we both options to the same value.
-			return ContainerMetadata{
+
+			metadata := ContainerMetadata{
 				ContainerID:   fields[2],
 				ContainerName: fields[2],
 				PodName:       fields[1],
-			}, nil
+			}
+			return metadata, nil
 		}
 	}
 
@@ -635,24 +671,24 @@ func (h *handler) getContainerdContainerMetadata(pidContainerID string) (
 
 // lookupContainerID looks up a process ID from the host PID namespace,
 // returning its container ID and the used container technology.
-func (h *handler) lookupContainerID(pid util.PID) (containerID string, env containerEnvironment,
+func (p *containerMetadataProvider) lookupContainerID(pid libpf.PID) (containerID string, env containerEnvironment,
 	err error) {
-	if entry, exists := h.containerIDCache.Get(pid); exists {
+	if entry, exists := p.containerIDCache.Get(pid); exists {
 		return entry.containerID, entry.env, nil
 	}
 
-	if _, exists := h.deferredPID.Get(pid); exists {
+	if _, exists := p.deferredPID.Get(pid); exists {
 		return "", envUndefined, ErrDeferred
 	}
 
-	containerID, env, err = h.extractContainerIDFromFile(fmt.Sprintf(cgroup, pid))
+	containerID, env, err = p.extractContainerIDFromFile(fmt.Sprintf(cgroup, pid))
 	if err != nil {
-		h.deferredPID.Add(pid, libpf.Void{})
+		p.deferredPID.Add(pid, libpf.Void{})
 		return "", envUndefined, err
 	}
 
 	// Store the result in the cache.
-	h.containerIDCache.Add(pid, containerIDEntry{
+	p.containerIDCache.Add(pid, containerIDEntry{
 		containerID: containerID,
 		env:         env,
 	})
@@ -660,7 +696,7 @@ func (h *handler) lookupContainerID(pid util.PID) (containerID string, env conta
 	return containerID, env, nil
 }
 
-func (h *handler) extractContainerIDFromFile(cgroupFilePath string) (
+func (p *containerMetadataProvider) extractContainerIDFromFile(cgroupFilePath string) (
 	containerID string, env containerEnvironment, err error) {
 	f, err := os.Open(cgroupFilePath)
 	if err != nil {
@@ -689,59 +725,68 @@ func (h *handler) extractContainerIDFromFile(cgroupFilePath string) (
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		if h.kubeClientSet != nil {
-			parts = dockerKubePattern.FindStringSubmatch(line)
-			if parts != nil {
-				containerID = parts[1]
-				env |= (envKubernetes | envDocker)
-				break
-			}
-			parts = kubePattern.FindStringSubmatch(line)
-			if parts != nil {
-				containerID = parts[1]
-				env |= envKubernetes
-				break
-			}
-			parts = altKubePattern.FindStringSubmatch(line)
-			if parts != nil {
-				containerID = parts[1]
-				env |= envKubernetes
-				break
-			}
-			parts = systemdKubePattern.FindStringSubmatch(line)
-			if parts != nil {
-				containerID = parts[1]
-				env |= envKubernetes
-				break
-			}
-		}
-
-		if h.dockerClient != nil {
+		// In minikube, a new docker instance is run inside a docker container,
+		// and kube containers are run in this instance.
+		// Therefore there are two different container IDs in cgroup:
+		// - container ID of the outer docker container running the inner docker instance
+		// - container ID of the kube container running in the inner docker instance
+		// If k8 client is not available, profiler is probably running outside k8s and it
+		// should use the outer docker container ID.
+		if p.kubeClientSet == nil {
 			if parts = dockerPattern.FindStringSubmatch(line); parts != nil {
 				containerID = parts[1]
 				env |= envDocker
 				break
 			}
-			if parts = dockerBuildkitPattern.FindStringSubmatch(line); parts != nil {
-				containerID = parts[1]
-				env |= envDockerBuildkit
-				break
-			}
 		}
 
-		if h.containerdClient != nil {
-			if parts = containerdPattern.FindStringSubmatch(line); parts != nil {
-				// Forward the complete match as containerID so, we can extract later
-				// the exact containerd namespace and container ID from it.
-				containerID = parts[0]
-				env |= envContainerd
-				break
-			}
+		if parts = dockerKubePattern.FindStringSubmatch(line); parts != nil {
+			containerID = parts[1]
+			env |= (envKubernetes | envDocker)
+			break
+		}
+
+		if parts = kubePattern.FindStringSubmatch(line); parts != nil {
+			containerID = parts[1]
+			env |= envKubernetes
+			break
+		}
+
+		if parts = altKubePattern.FindStringSubmatch(line); parts != nil {
+			containerID = parts[1]
+			env |= envKubernetes
+			break
+		}
+
+		if parts = systemdKubePattern.FindStringSubmatch(line); parts != nil {
+			containerID = parts[1]
+			env |= envKubernetes
+			break
+		}
+
+		if parts = dockerBuildkitPattern.FindStringSubmatch(line); parts != nil {
+			containerID = parts[1]
+			env |= envDockerBuildkit
+			break
+		}
+
+		if parts = dockerPattern.FindStringSubmatch(line); parts != nil {
+			containerID = parts[1]
+			env |= envDocker
+			break
 		}
 
 		if parts = lxcPattern.FindStringSubmatch(line); parts != nil {
 			containerID = parts[2]
 			env |= envLxc
+			break
+		}
+
+		if parts = containerdPattern.FindStringSubmatch(line); parts != nil {
+			// Forward the complete match as containerID so, we can extract later
+			// the exact containerd namespace and container ID from it.
+			containerID = parts[0]
+			env |= envContainerd
 			break
 		}
 
