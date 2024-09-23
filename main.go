@@ -40,8 +40,8 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/DataDog/dd-opentelemetry-profiler/containermetadata"
-	"github.com/DataDog/dd-opentelemetry-profiler/reporter"
+	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
+	"github.com/DataDog/dd-otel-host-profiler/reporter"
 )
 
 type exitCode int
@@ -169,7 +169,7 @@ func mainWithExitCode() exitCode {
 	rep, err := reporter.Start(mainCtx, &reporter.Config{
 		CollAgentAddr:    args.collAgentAddr,
 		Name:             args.serviceName,
-		Version:          vc.Version(), // FIXME{DD}: use version from dd-opentelemetry-profiler
+		Version:          vc.Version(), // FIXME{DD}: use version from dd-otel-host-profiler
 		ReportInterval:   intervals.ReportInterval(),
 		CacheSize:        traceHandlerCacheSize,
 		SamplesPerSecond: args.samplesPerSecond,

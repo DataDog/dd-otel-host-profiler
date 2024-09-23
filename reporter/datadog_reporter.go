@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/DataDog/dd-opentelemetry-profiler/containermetadata"
+	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/zstd"
 	lru "github.com/elastic/go-freelru"
 	pprofile "github.com/google/pprof/profile"
@@ -33,7 +33,7 @@ import (
 // Assert that we implement the full Reporter interface.
 var _ reporter.Reporter = (*DatadogReporter)(nil)
 
-const profilerName = "dd-opentelemetry-profiler"
+const profilerName = "dd-otel-host-profiler"
 const profilingEndPoint = "/profiling/v1/input"
 
 // execInfo enriches an executable with additional metadata.

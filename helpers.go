@@ -20,7 +20,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/DataDog/dd-opentelemetry-profiler/reporter"
+	"github.com/DataDog/dd-otel-host-profiler/reporter"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
 	log "github.com/sirupsen/logrus"
 
