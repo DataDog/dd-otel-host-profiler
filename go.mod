@@ -1,4 +1,4 @@
-module github.com/DataDog/dd-opentelemetry-profiler
+module github.com/DataDog/dd-otel-host-profiler
 
 go 1.23.1
 

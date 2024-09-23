@@ -113,7 +113,7 @@ func parseArgs() (*arguments, error) {
 	var args arguments
 	var err error
 
-	fs := flag.NewFlagSet("dd-opentelemetry-profiler", flag.ExitOnError)
+	fs := flag.NewFlagSet("dd-otel-host-profiler", flag.ExitOnError)
 
 	// Please keep the parameters ordered alphabetically in the source-code.
 	fs.UintVar(&args.bpfVerifierLogLevel, "bpf-log-level", 0, bpfVerifierLogLevelHelp)
@@ -162,7 +162,7 @@ func parseArgs() (*arguments, error) {
 	fs.StringVar(&args.tags, "tags", "", tagsHelp)
 	fs.BoolVar(&args.saveCPUProfile, "save-cpuprofile", false,
 		saveCPUProfileHelp)
-	fs.StringVar(&args.serviceName, "service", "dd-opentelemetry-porfiler", serviceHelp)
+	fs.StringVar(&args.serviceName, "service", "dd-otel-host-profiler", serviceHelp)
 
 	fs.StringVar(&args.node, "node", "", nodeHelp)
 

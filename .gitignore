@@ -1,4 +1,4 @@
 .idea
-dd-opentelemetry-profiler
+dd-otel-host-profiler
 .env
 *.pprof
