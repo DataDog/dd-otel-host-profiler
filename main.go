@@ -42,6 +42,7 @@ import (
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
+	"github.com/DataDog/dd-otel-host-profiler/version"
 )
 
 type exitCode int
@@ -79,8 +80,10 @@ func mainWithExitCode() exitCode {
 		return parseError("Failure to parse arguments: %v", err)
 	}
 
+	versionInfo := version.GetVersionInfo()
 	if args.version {
-		fmt.Printf("%s\n", vc.Version())
+		fmt.Printf("dd-host-profiler, version %s (revision: %s, date: %s), arch: %v\n",
+			versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 		return exitSuccess
 	}
 
@@ -108,8 +111,8 @@ func mainWithExitCode() exitCode {
 		}()
 	}
 
-	log.Infof("Starting OTEL profiling agent %s (revision %s, build timestamp %s)",
-		vc.Version(), vc.Revision(), vc.BuildTimestamp())
+	log.Infof("Starting DataDog OTEL host profiler %s (revision: %s, date: %s), arch: %v",
+		versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 
 	if err = tracer.ProbeBPFSyscall(); err != nil {
 		return failure("Failed to probe eBPF syscall: %v", err)

@@ -12,25 +12,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  go-version:
-    name: Determine Go version
+  versions:
+    name: Determine versions
     runs-on: ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ (github.ref_name == 'main' && 'dev') || (github.event_name != 'pull_request' && github.ref_name) || github.head_ref }}    
     outputs:
       go-version: ${{ steps.go-version.outputs.version }}
+      profiler-version: ${{ steps.profiler-version.outputs.version }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
       - name: Get Go version from go.mod file
         id: go-version
         run: echo "version=$(go mod edit -json | jq -r .Go)" >> "${GITHUB_OUTPUT}"
+      - name: Compute profiler version
+        id: profiler-version
+        run: echo "version=${RELEASE_VERSION}-${GITHUB_SHA::7}.${{ github.run_id }}" >> "${GITHUB_OUTPUT}"
 
   build:
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'publish-dev-test' }}
     name: Build
-    needs: [go-version]
+    needs: [versions]
     uses: ./.github/workflows/build.yml
     with:
-      go-version: ${{ needs.go-version.outputs.go-version }}
+      go-version: ${{ needs.versions.outputs.go-version }}
+      profiler-version: ${{ needs.versions.outputs.profiler-version }}
     secrets: inherit
     permissions:
       contents: read
