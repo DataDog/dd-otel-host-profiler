@@ -173,10 +173,12 @@ func parseArgs() (*arguments, error) {
 	args.fs = fs
 
 	symbolUpload := os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD")
-	args.symbolUpload, err = strconv.ParseBool(symbolUpload)
-	if err != nil {
-		args.symbolUpload = false
-		log.Warnf("Failed to parse DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD=%v: %v", symbolUpload, err)
+	if symbolUpload != "" {
+		args.symbolUpload, err = strconv.ParseBool(symbolUpload)
+		if err != nil {
+			args.symbolUpload = false
+			log.Warnf("Failed to parse DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD=%v: %v", symbolUpload, err)
+		}
 	}
 
 	return &args, ff.Parse(fs, os.Args[1:],
