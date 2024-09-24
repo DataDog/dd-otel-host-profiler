@@ -182,7 +182,7 @@ func parseArgs() (*arguments, error) {
 	}
 
 	return &args, ff.Parse(fs, os.Args[1:],
-		ff.WithEnvVarPrefix("OTEL_PROFILING_AGENT"),
+		ff.WithEnvVarPrefix("DD_OTEL_HOST_PROFILER"),
 		ff.WithConfigFileFlag("config"),
 		ff.WithConfigFileParser(ff.PlainParser),
 		// This will ignore configuration file (only) options that the current HA

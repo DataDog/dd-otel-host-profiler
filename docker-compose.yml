@@ -11,7 +11,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     secrets:
       - dd-api-key
-    command: ['/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key); sudo mount -t debugfs none /sys/kernel/debug && cd /app && make && sudo -E /app/dd-otel-host-profiler -service "${OTEL_PROFILING_AGENT_SERVICE:-dd-otel-host-profiler-dev}" -collection-agent "http://datadog-agent:8126" -reporter-interval ${OTEL_PROFILING_AGENT_REPORTER_INTERVAL:-60s} -samples-per-second 20 -save-cpuprofile']
+    command: ['/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key); sudo mount -t debugfs none /sys/kernel/debug && cd /app && make && sudo -E /app/dd-otel-host-profiler -service "$DD_OTEL_HOST_PROFILER_SERVICE:-dd-otel-host-profiler-dev}" -collection-agent "http://datadog-agent:8126" -reporter-interval ${DD_OTEL_HOST_PROFILER_REPORTER_INTERVAL:-60s} -samples-per-second 20 -save-cpuprofile']
 
   datadog-agent:
     image: gcr.io/datadoghq/agent:7
