@@ -1,8 +1,10 @@
 .PHONY: all build build-debug
 
-all: build
+VERSION ?= v0.0.0
+VERSION_LD_FLAGS := -X github.com/DataDog/dd-otel-host-profiler/version.version=$(VERSION)
+GO_FLAGS := -ldflags="${VERSION_LD_FLAGS} -extldflags=-static" -tags osusergo,netgo 
 
-GO_FLAGS := -buildvcs=false -ldflags="-extldflags=-static" -tags osusergo,netgo
+all: build
 
 build:
 	go build $(GO_FLAGS)
