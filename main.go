@@ -24,7 +24,6 @@ import (
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/times"
 	tracertypes "github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer/types"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/util"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/vc"
 	"github.com/tklauser/numcpus"
 	"golang.org/x/sys/unix"
 
@@ -42,6 +41,7 @@ import (
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
+	"github.com/DataDog/dd-otel-host-profiler/version"
 )
 
 type exitCode int
@@ -79,8 +79,10 @@ func mainWithExitCode() exitCode {
 		return parseError("Failure to parse arguments: %v", err)
 	}
 
+	versionInfo := version.GetVersionInfo()
 	if args.version {
-		fmt.Printf("%s\n", vc.Version())
+		fmt.Printf("dd-otel-host-profiler, version %s (revision: %s, date: %s), arch: %v\n",
+			versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 		return exitSuccess
 	}
 
@@ -108,8 +110,8 @@ func mainWithExitCode() exitCode {
 		}()
 	}
 
-	log.Infof("Starting OTEL profiling agent %s (revision %s, build timestamp %s)",
-		vc.Version(), vc.Revision(), vc.BuildTimestamp())
+	log.Infof("Starting DataDog OTEL host profiler %s (revision: %s, date: %s), arch: %v",
+		versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 
 	if err = tracer.ProbeBPFSyscall(); err != nil {
 		return failure("Failed to probe eBPF syscall: %v", err)
@@ -169,7 +171,7 @@ func mainWithExitCode() exitCode {
 	rep, err := reporter.Start(mainCtx, &reporter.Config{
 		CollAgentAddr:    args.collAgentAddr,
 		Name:             args.serviceName,
-		Version:          vc.Version(), // FIXME{DD}: use version from dd-otel-host-profiler
+		Version:          versionInfo.Version,
 		ReportInterval:   intervals.ReportInterval(),
 		CacheSize:        traceHandlerCacheSize,
 		SamplesPerSecond: args.samplesPerSecond,
