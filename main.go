@@ -24,7 +24,6 @@ import (
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/times"
 	tracertypes "github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer/types"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/util"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/vc"
 	"github.com/tklauser/numcpus"
 	"golang.org/x/sys/unix"
 
@@ -82,7 +81,7 @@ func mainWithExitCode() exitCode {
 
 	versionInfo := version.GetVersionInfo()
 	if args.version {
-		fmt.Printf("dd-host-profiler, version %s (revision: %s, date: %s), arch: %v\n",
+		fmt.Printf("dd-otel-host-profiler, version %s (revision: %s, date: %s), arch: %v\n",
 			versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 		return exitSuccess
 	}
@@ -172,7 +171,7 @@ func mainWithExitCode() exitCode {
 	rep, err := reporter.Start(mainCtx, &reporter.Config{
 		CollAgentAddr:    args.collAgentAddr,
 		Name:             args.serviceName,
-		Version:          vc.Version(), // FIXME{DD}: use version from dd-otel-host-profiler
+		Version:          versionInfo.Version,
 		ReportInterval:   intervals.ReportInterval(),
 		CacheSize:        traceHandlerCacheSize,
 		SamplesPerSecond: args.samplesPerSecond,
