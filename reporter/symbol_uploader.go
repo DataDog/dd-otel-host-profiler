@@ -60,15 +60,18 @@ type uploadData struct {
 }
 
 type DatadogSymbolUploader struct {
-	ddAPIKey    string
-	intakeURL   string
-	version     string
-	dryRun      bool
-	workerCount int
+	ddAPIKey             string
+	ddAPPKey             string
+	intakeURL            string
+	version              string
+	dryRun               bool
+	uploadDynamicSymbols bool
+	workerCount          int
 
-	uploadCache *lru.SyncedLRU[libpf.FileID, struct{}]
-	client      *http.Client
-	uploadQueue chan uploadData
+	uploadCache   *lru.SyncedLRU[libpf.FileID, struct{}]
+	client        *http.Client
+	uploadQueue   chan uploadData
+	symbolQuerier *DatadogSymbolQuerier
 }
 
 func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
@@ -80,6 +83,11 @@ func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
 	ddAPIKey := os.Getenv("DD_API_KEY")
 	if ddAPIKey == "" {
 		return nil, errors.New("DD_API_KEY is not set")
+	}
+
+	ddAPPKey := os.Getenv("DD_APP_KEY")
+	if ddAPPKey == "" {
+		return nil, errors.New("DD_APP_KEY is not set")
 	}
 
 	ddSite := os.Getenv("DD_SITE")
@@ -94,20 +102,30 @@ func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
 
 	dryRun, _ := strconv.ParseBool(os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD_DRY_RUN"))
 
+	uploadDynamicSymbols, _ := strconv.ParseBool(os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD_DYNAMIC_SYMBOLS"))
+
 	uploadCache, err := lru.NewSynced[libpf.FileID, struct{}](uploadCacheSize, libpf.FileID.Hash32)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
+	symbolQuerier, err := NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
+	}
+
 	return &DatadogSymbolUploader{
-		ddAPIKey:    ddAPIKey,
-		intakeURL:   intakeURL,
-		version:     version,
-		dryRun:      dryRun,
-		workerCount: uploadWorkerCount,
-		client:      &http.Client{Timeout: uploadTimeout},
-		uploadCache: uploadCache,
-		uploadQueue: make(chan uploadData, uploadQueueSize),
+		ddAPIKey:             ddAPIKey,
+		ddAPPKey:             ddAPPKey,
+		intakeURL:            intakeURL,
+		version:              version,
+		dryRun:               dryRun,
+		uploadDynamicSymbols: uploadDynamicSymbols,
+		workerCount:          uploadWorkerCount,
+		client:               &http.Client{Timeout: uploadTimeout},
+		uploadCache:          uploadCache,
+		uploadQueue:          make(chan uploadData, uploadQueueSize),
+		symbolQuerier:        symbolQuerier,
 	}, nil
 }
 
@@ -137,6 +155,35 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, fileName, bui
 	}
 }
 
+func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
+	e *executableMetadata) (SymbolSource, error) {
+	// FIXME: orgId is hardcoded to 2 for now but should not be needed
+	buildIDs := []string{e.FileHash}
+	if e.GNUBuildID != "" {
+		buildIDs = append(buildIDs, e.GNUBuildID)
+	}
+	if e.GoBuildID != "" {
+		buildIDs = append(buildIDs, e.GoBuildID)
+	}
+
+	symbolFiles, err := d.symbolQuerier.QuerySymbols(ctx, 2, buildIDs, e.Arch)
+	if err != nil {
+		return None, fmt.Errorf("failed to query symbols: %w", err)
+	}
+	symbolSource := None
+	for _, symbolFile := range symbolFiles {
+		src, err := NewSymbolSource(symbolFile.SymbolSource)
+		if err != nil {
+			return None, fmt.Errorf("failed to parse symbol source: %w", err)
+		}
+		if src > symbolSource {
+			symbolSource = src
+		}
+	}
+
+	return symbolSource, nil
+}
+
 // Returns true if the upload was successful, false otherwise
 func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadData) bool {
 	fileName := uploadData.fileName
@@ -153,7 +200,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	}
 	defer elfWrapper.Close()
 
-	debugElf := elfWrapper.findDebugSymbols()
+	debugElf, symbolSource := elfWrapper.findSymbols()
 	if debugElf == nil {
 		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", fileName)
 		return false
@@ -161,8 +208,23 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	if debugElf != elfWrapper {
 		defer debugElf.Close()
 	}
+	if symbolSource == DynamicSymbolTable && !d.uploadDynamicSymbols {
+		log.Debugf("Skipping symbol upload for executable %s: dynamic symbol table upload not allowed", fileName)
+		return false
+	}
 
-	e := newExecutableMetadata(fileName, elfWrapper.elfFile, fileID, d.version)
+	e := newExecutableMetadata(fileName, elfWrapper.elfFile, fileID, symbolSource, d.version)
+
+	existingSymbolSource, err := d.GetExistingSymbolsOnBackend(ctx, e)
+	if err != nil {
+		log.Debugf("Failed to get existing symbols for executable %s: %v", fileName, err)
+		return false
+	}
+
+	if existingSymbolSource >= symbolSource {
+		log.Debugf("Skipping symbol upload for executable %s: existing symbols with source %v", fileName,
+			existingSymbolSource.String())
+	}
 
 	symbolPath := debugElf.actualFileName
 
@@ -219,8 +281,8 @@ type executableMetadata struct {
 	filePath string
 }
 
-func newExecutableMetadata(fileName string, elfFile *pfelf.File,
-	fileID libpf.FileID, profilerVersion string) *executableMetadata {
+func newExecutableMetadata(fileName string, elfFile *pfelf.File, fileID libpf.FileID,
+	symbolSource SymbolSource, profilerVersion string) *executableMetadata {
 	isGolang := elfFile.IsGolang()
 
 	buildID, err := elfFile.GetBuildID()
@@ -246,7 +308,7 @@ func newExecutableMetadata(fileName string, elfFile *pfelf.File,
 		Type:          "elf_symbol_file",
 		Origin:        "dd-otel-host-profiler",
 		OriginVersion: profilerVersion,
-		SymbolSource:  "debug_info",
+		SymbolSource:  symbolSource.String(),
 		FileName:      filepath.Base(fileName),
 		filePath:      fileName,
 	}
@@ -468,10 +530,11 @@ func openELF(filename string, opener process.FileOpener) (*elfWrapper, error) {
 	return &elfWrapper{reader: r, elfFile: ef, fileName: filename, actualFileName: actualFilename, opener: opener}, nil
 }
 
-// findDebugSymbols returns the path to the local debug symbols for the given ELF file.
-func (e *elfWrapper) findDebugSymbols() *elfWrapper {
+// findSymbols attempts to find a symbol source for the elf file, it returns an elfWrapper around the elf file
+// with symbols if found, or nil if no symbols were found.
+func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 	if HasDWARFData(e.elfFile) {
-		return e
+		return e, DebugInfo
 	}
 
 	log.Debugf("No debug symbols found in %s", e.fileName)
@@ -484,7 +547,7 @@ func (e *elfWrapper) findDebugSymbols() *elfWrapper {
 	debugElf := e.findDebugSymbolsWithBuildID()
 	if debugElf != nil {
 		if HasDWARFData(debugElf.elfFile) {
-			return debugElf
+			return debugElf, DebugInfo
 		}
 		debugElf.Close()
 		log.Debugf("No debug symbols found in buildID link file %s", debugElf.fileName)
@@ -494,13 +557,23 @@ func (e *elfWrapper) findDebugSymbols() *elfWrapper {
 	debugElf = e.findDebugSymbolsWithDebugLink()
 	if debugElf != nil {
 		if HasDWARFData(debugElf.elfFile) {
-			return debugElf
+			return debugElf, DebugInfo
 		}
 		log.Debugf("No debug symbols found in debug link file %s", debugElf.fileName)
 		debugElf.Close()
 	}
 
-	return nil
+	// Check if initial elf file has a symbol table
+	if e.elfFile.Section(".symtab") != nil {
+		return e, SymbolTable
+	}
+
+	// Check if initial elf file has a dynamic symbol table
+	if e.elfFile.Section(".dynsym") != nil {
+		return e, DynamicSymbolTable
+	}
+
+	return nil, None
 }
 
 func (e *elfWrapper) findDebugSymbolsWithBuildID() *elfWrapper {

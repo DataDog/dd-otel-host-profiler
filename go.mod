@@ -3,6 +3,7 @@ module github.com/DataDog/dd-otel-host-profiler
 go 1.23.1
 
 require (
+	github.com/DataDog/jsonapi v0.10.0
 	github.com/DataDog/zstd v1.5.6
 	github.com/cilium/ebpf v0.15.0
 	github.com/containerd/containerd v1.7.22
