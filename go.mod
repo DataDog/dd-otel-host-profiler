@@ -122,4 +122,4 @@ require (
 // To update the Datadog/opentelemetry-ebpf-profiler dependency on latest commit on datadog branch, change the following line to:
 // replace github.com/open-telemetry/opentelemetry-ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler datadog
 // and run `GOPRIVATE=github.com/Datadog/* go mod tidy`
-replace github.com/open-telemetry/opentelemetry-ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20240919140712-bacfde8003b0
+replace github.com/open-telemetry/opentelemetry-ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20240923191704-f29cae5f1ff3

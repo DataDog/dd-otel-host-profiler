@@ -6,8 +6,8 @@ github.com/AdamKorcz/go-118-fuzz-build v0.0.0-20230306123547-8075edf89bb0/go.mod
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 h1:UQHMgLO+TxOElx5B5HZ4hJQsoJ/PvUvKRhJHDQXO8P8=
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20240919140712-bacfde8003b0 h1:YpIPEZVH7JaUSkXJIrHGZe/UTKe9NyF1NTFftmFXeeM=
-github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20240919140712-bacfde8003b0/go.mod h1:GQVu1MAtVCPc3mW4Atj8YVUEPdXoC/vo/kp0lNpQZhw=
+github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20240923191704-f29cae5f1ff3 h1:NDp4//eOtBNK4FQ5HwzCrJdWOqX8soz0wQkx4jTbS6k=
+github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20240923191704-f29cae5f1ff3/go.mod h1:GQVu1MAtVCPc3mW4Atj8YVUEPdXoC/vo/kp0lNpQZhw=
 github.com/DataDog/zstd v1.5.6 h1:LbEglqepa/ipmmQJUDnSsfvA8e8IStVcGaFWDuxvGOY=
 github.com/DataDog/zstd v1.5.6/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwSAmyw=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
