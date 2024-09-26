@@ -157,7 +157,6 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, fileName, bui
 
 func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 	e *executableMetadata) (SymbolSource, error) {
-	// FIXME: orgId is hardcoded to 2 for now but should not be needed
 	buildIDs := []string{e.FileHash}
 	if e.GNUBuildID != "" {
 		buildIDs = append(buildIDs, e.GNUBuildID)
@@ -166,7 +165,7 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 		buildIDs = append(buildIDs, e.GoBuildID)
 	}
 
-	symbolFiles, err := d.symbolQuerier.QuerySymbols(ctx, 2, buildIDs, e.Arch)
+	symbolFiles, err := d.symbolQuerier.QuerySymbols(ctx, buildIDs, e.Arch)
 	if err != nil {
 		return None, fmt.Errorf("failed to query symbols: %w", err)
 	}

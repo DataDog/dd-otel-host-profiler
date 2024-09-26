@@ -27,7 +27,6 @@ type SymbolFile struct {
 
 type SymbolsQueryRequest struct {
 	ID       string   `jsonapi:"primary,symbols-query-request"`
-	OrgID    int64    `json:"orgId" jsonapi:"attribute" validate:"required"`
 	BuildIDs []string `json:"buildIds" jsonapi:"attribute" validate:"required"`
 	Arch     string   `json:"arch" jsonapi:"attribute" validate:"required"`
 }
@@ -54,11 +53,10 @@ func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (*DatadogSymbolQ
 	}, nil
 }
 
-func (d *DatadogSymbolQuerier) QuerySymbols(ctx context.Context, orgID int64, buildIDs []string,
+func (d *DatadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string,
 	arch string) ([]SymbolFile, error) {
 	symbolsQueryRequest := &SymbolsQueryRequest{
 		ID:       "symbols-query-request",
-		OrgID:    orgID,
 		BuildIDs: buildIDs,
 		Arch:     arch,
 	}
