@@ -10,13 +10,23 @@ build:
 	go build $(GO_FLAGS)
 
 GOLANGCI_LINT_VERSION = "v1.61.0"
+GO = $(shell go env GOROOT)/bin/go
+
 lint:
-	go run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) version
-	go run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
-	go run checkcopyrights.go
+	$(GO) run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) version
+	$(GO) run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
 linter-version:
 	@echo $(GOLANGCI_LINT_VERSION)
 
 test:
 	go test -v -race ./...
+
+check-copyrights:
+	$(GO) run tools/checkcopyright.go
+
+licenses:
+	tools/make-licenses.sh
+
+check-licenses:
+	tools/check-licenses.sh

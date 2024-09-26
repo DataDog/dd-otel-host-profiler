@@ -19,19 +19,19 @@ on:
 
 jobs:
   analyze:
-    name: Analyze
-    runs-on: ubuntu-latest
+    name: Analyze (Go)
+    # Runner size impacts CodeQL analysis time. To learn more, please see:
+    #   - https://gh.io/recommended-hardware-resources-for-running-codeql
+    #   - https://gh.io/supported-runners-and-hardware-resources
+    #   - https://gh.io/using-larger-runners (GitHub.com only)
+    # Consider using larger runners or machines with greater resources for possible analysis time improvements.
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 360
     permissions:
-      actions: read
-      contents: read
+      # required for all workflows
       security-events: write
-
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [ 'go' ]
-        # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript', 'python', 'ruby' ]
-        # Learn more about CodeQL language support at https://git.io/codeql-language-support
+      # required to fetch internal or private CodeQL packs
+      packages: read
 
     steps:
     - name: Checkout repository
@@ -41,18 +41,12 @@ jobs:
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: github/codeql-action/init@v3
       with:
-        languages: ${{ matrix.language }}
-        # If you wish to specify custom queries, you can do so here or in a config file.
-        # By default, queries listed here will override any specified in a config file.
-        # Prefix the list here with "+" to use these queries and those in the config file.
-        # queries: ./path/to/local/query, your-org/your-repo/queries@main
-
-    # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
-    # If this step fails, then you should remove it and run the build manually
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v2
+        languages: go
+        build-mode: autobuild
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:go"

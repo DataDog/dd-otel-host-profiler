@@ -1,0 +1,107 @@
+Component,Origin,License,Copyright
+import,github.com/DataDog/dd-otel-host-profiler,Apache-2.0,"Copyright 2017 Datadog, Inc. | Copyright 2024 Datadog, Inc."
+import,github.com/DataDog/zstd,BSD-3-Clause,"Copyright (c) 2016, Datadog <info@datadoghq.com>"
+import,github.com/cespare/xxhash/v2,MIT,Copyright (c) 2016 Caleb Spare
+import,github.com/cilium/ebpf,MIT,"Copyright (c) 2017 Nathan Sweet | Copyright (c) 2018, 2019 Cloudflare | Copyright (c) 2019 Authors of Cilium"
+import,github.com/containerd/containerd,Apache-2.0,"Copyright 2012-2015 Docker, Inc."
+import,github.com/containerd/containerd/api,Apache-2.0,unknown
+import,github.com/containerd/continuity,Apache-2.0,unknown
+import,github.com/containerd/errdefs,Apache-2.0,unknown
+import,github.com/containerd/fifo,Apache-2.0,unknown
+import,github.com/containerd/log,Apache-2.0,unknown
+import,github.com/containerd/platforms,Apache-2.0,unknown
+import,github.com/containerd/ttrpc,Apache-2.0,unknown
+import,github.com/containerd/typeurl/v2,Apache-2.0,unknown
+import,github.com/davecgh/go-spew/spew,ISC,Copyright (c) 2012-2016 Dave Collins <dave@davec.name>
+import,github.com/distribution/reference,Apache-2.0,unknown
+import,github.com/docker/docker,Apache-2.0,"Copyright 2013-2018 Docker, Inc. | Copyright 2012-2017 Docker, Inc."
+import,github.com/docker/go-connections,Apache-2.0,"Copyright 2015 Docker, Inc."
+import,github.com/docker/go-events,Apache-2.0,"Copyright 2016 Docker, Inc."
+import,github.com/docker/go-units,Apache-2.0,"Copyright 2015 Docker, Inc."
+import,github.com/elastic/go-freelru,Apache-2.0,Copyright 2022 Elasticsearch B.V.
+import,github.com/elastic/go-perf,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,github.com/emicklei/go-restful/v3,MIT,"Copyright (c) 2012,2013 Ernest Micklei"
+import,github.com/felixge/httpsnoop,MIT,Copyright (c) 2016 Felix Geisendörfer (felix@debuggable.com)
+import,github.com/fxamacker/cbor/v2,MIT,Copyright (c) 2019-present Faye Amacker
+import,github.com/go-logr/logr,Apache-2.0,unknown
+import,github.com/go-logr/stdr,Apache-2.0,unknown
+import,github.com/go-openapi/jsonpointer,Apache-2.0,unknown
+import,github.com/go-openapi/jsonreference,Apache-2.0,unknown
+import,github.com/go-openapi/swag,Apache-2.0,unknown
+import,github.com/gogo/protobuf,BSD-3-Clause,"Copyright (c) 2013, The GoGo Authors. All rights reserved. | Copyright 2010 The Go Authors.  All rights reserved."
+import,github.com/golang/protobuf,BSD-3-Clause,Copyright 2010 The Go Authors.  All rights reserved.
+import,github.com/google/gnostic-models,Apache-2.0,unknown
+import,github.com/google/go-cmp/cmp,BSD-3-Clause,Copyright (c) 2017 The Go Authors. All rights reserved.
+import,github.com/google/gofuzz,Apache-2.0,unknown
+import,github.com/google/pprof/profile,Apache-2.0,unknown
+import,github.com/google/uuid,BSD-3-Clause,"Copyright (c) 2009,2014 Google Inc. All rights reserved."
+import,github.com/grpc-ecosystem/grpc-gateway/v2,BSD-3-Clause,"Copyright (c) 2015, Gengo, Inc."
+import,github.com/josharian/intern,MIT,Copyright (c) 2019 Josh Bleecher Snyder
+import,github.com/josharian/native,MIT,Copyright 2020 Josh Bleecher Snyder
+import,github.com/jsimonetti/rtnetlink,MIT,Copyright (C) 2016 Jeroen Simonetti
+import,github.com/json-iterator/go,MIT,Copyright (c) 2016 json-iterator
+import,github.com/klauspost/compress,MIT,Copyright (c) 2012 The Go Authors. All rights reserved. | Copyright (c) 2019 Klaus Post. All rights reserved. | Copyright 2016-2017 The New York Times Company | Copyright (c) 2015 Klaus Post | Copyright (c) 2011 The Snappy-Go Authors. All rights reserved. | Copyright 2016 The filepathx Authors
+import,github.com/klauspost/compress/internal/snapref,BSD-3-Clause,Copyright (c) 2011 The Snappy-Go Authors. All rights reserved.
+import,github.com/klauspost/compress/zstd/internal/xxhash,MIT,Copyright (c) 2016 Caleb Spare
+import,github.com/klauspost/cpuid/v2,MIT,Copyright (c) 2015 Klaus Post
+import,github.com/mailru/easyjson,MIT,Copyright (c) 2016 Mail.Ru Group
+import,github.com/mdlayher/netlink,MIT,Copyright (C) 2016-2022 Matt Layher
+import,github.com/mdlayher/socket,MIT,Copyright (C) 2021 Matt Layher
+import,github.com/minio/sha256-simd,Apache-2.0,unknown
+import,github.com/moby/docker-image-spec/specs-go/v1,Apache-2.0,unknown
+import,github.com/moby/locker,Apache-2.0,"Copyright 2013-2018 Docker, Inc."
+import,github.com/moby/sys/mountinfo,Apache-2.0,unknown
+import,github.com/moby/sys/signal,Apache-2.0,unknown
+import,github.com/moby/sys/user,Apache-2.0,unknown
+import,github.com/moby/sys/userns,Apache-2.0,unknown
+import,github.com/modern-go/concurrent,Apache-2.0,unknown
+import,github.com/modern-go/reflect2,Apache-2.0,unknown
+import,github.com/munnerz/goautoneg,BSD-3-Clause,"Copyright (c) 2011, Open Knowledge Foundation Ltd."
+import,github.com/open-telemetry/opentelemetry-ebpf-profiler,Apache-2.0,Copyright The OpenTelemetry Authors.
+import,github.com/opencontainers/go-digest,Apache-2.0,"Copyright 2019, 2020 OCI Contributors | Copyright 2016 Docker, Inc."
+import,github.com/opencontainers/image-spec,Apache-2.0,Copyright 2016 The Linux Foundation.
+import,github.com/opencontainers/runtime-spec/specs-go,Apache-2.0,Copyright 2015 The Linux Foundation.
+import,github.com/opencontainers/selinux,Apache-2.0,unknown
+import,github.com/peterbourgon/ff/v3,Apache-2.0,unknown
+import,github.com/pkg/errors,BSD-2-Clause,"Copyright (c) 2015, Dave Cheney <dave@cheney.net>"
+import,github.com/sirupsen/logrus,MIT,Copyright (c) 2014 Simon Eskildsen
+import,github.com/tklauser/numcpus,Apache-2.0,unknown
+import,github.com/x448/float16,MIT,Copyright (c) 2019 Montgomery Edwards⁴⁴⁸ and Faye Amacker
+import,github.com/zeebo/xxh3,BSD-2-Clause,"Copyright (c) 2012-2014, Yann Collet | Copyright (c) 2019, Jeff Wendling"
+import,go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp,Apache-2.0,unknown
+import,go.opentelemetry.io/otel,Apache-2.0,unknown
+import,go.opentelemetry.io/otel/metric,Apache-2.0,unknown
+import,go.opentelemetry.io/otel/trace,Apache-2.0,unknown
+import,go.opentelemetry.io/proto/otlp,Apache-2.0,unknown
+import,golang.org/x/arch/arm64/arm64asm,BSD-3-Clause,Copyright (c) 2015 The Go Authors. All rights reserved.
+import,golang.org/x/exp/constraints,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,golang.org/x/net,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,golang.org/x/oauth2,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,golang.org/x/sync,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,golang.org/x/sys/unix,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,golang.org/x/term,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,golang.org/x/text,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,golang.org/x/time/rate,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,google.golang.org/genproto/googleapis/api/httpbody,Apache-2.0,unknown
+import,google.golang.org/genproto/googleapis/rpc,Apache-2.0,unknown
+import,google.golang.org/genproto/protobuf/field_mask,Apache-2.0,unknown
+import,google.golang.org/grpc,Apache-2.0,Copyright 2014 gRPC authors.
+import,google.golang.org/protobuf,BSD-3-Clause,Copyright (c) 2018 The Go Authors. All rights reserved.
+import,gopkg.in/inf.v0,BSD-3-Clause,Copyright (c) 2012 Péter Surányi. Portions Copyright (c) 2009 The Go
+import,gopkg.in/yaml.v2,Apache-2.0,Copyright 2011-2016 Canonical Ltd.
+import,gopkg.in/yaml.v3,MIT,Copyright (c) 2006-2010 Kirill Simonov | Copyright (c) 2006-2011 Kirill Simonov | Copyright (c) 2011-2019 Canonical Ltd | Copyright 2011-2016 Canonical Ltd.
+import,k8s.io/api,Apache-2.0,unknown
+import,k8s.io/apimachinery/pkg,Apache-2.0,unknown
+import,k8s.io/apimachinery/third_party/forked/golang/reflect,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,k8s.io/client-go,Apache-2.0,unknown
+import,k8s.io/klog/v2,Apache-2.0,unknown
+import,k8s.io/kube-openapi/pkg,Apache-2.0,unknown
+import,k8s.io/kube-openapi/pkg/internal/third_party/go-json-experiment/json,BSD-3-Clause,Copyright (c) 2020 The Go Authors. All rights reserved.
+import,k8s.io/kube-openapi/pkg/validation/spec,Apache-2.0,unknown
+import,k8s.io/utils,Apache-2.0,unknown
+import,k8s.io/utils/internal/third_party/forked/golang/net,BSD-3-Clause,Copyright (c) 2012 The Go Authors. All rights reserved.
+import,sigs.k8s.io/json,Apache-2.0,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,sigs.k8s.io/structured-merge-diff/v4,Apache-2.0,unknown
+import,sigs.k8s.io/yaml,MIT,Copyright (c) 2014 Sam Ghods | Copyright (c) 2012 The Go Authors. All rights reserved. | Copyright (c) 2006-2010 Kirill Simonov | Copyright (c) 2006-2011 Kirill Simonov | Copyright (c) 2011-2019 Canonical Ltd
+import,sigs.k8s.io/yaml/goyaml.v2,Apache-2.0,Copyright 2011-2016 Canonical Ltd.
+import,zyantific/zydis,MIT,Copyright (c) 2014-2024 Florian Bernd | Copyright (c) 2014-2024 Joel Höner
