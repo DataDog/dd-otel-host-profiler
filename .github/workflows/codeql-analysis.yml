@@ -7,15 +7,12 @@ on:
         description: 'The branch to run the workflow on'
         required: true
         type: string
-  # Disable for now: Advanced Security must be enabled for this repository to use code scanning
-  # but this requires the repository to be public.
-
-  # push:
-  #   branches: [ main ]
-  # pull_request:
-  #   # The branches below must be a subset of the branches above
-  #   branches: [ main ]
-  # merge_group:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '34 1 * * 0'
 
 jobs:
   analyze:
@@ -30,8 +27,13 @@ jobs:
     permissions:
       # required for all workflows
       security-events: write
+
       # required to fetch internal or private CodeQL packs
       packages: read
+
+      # only required for workflows in private repositories
+      actions: read
+      contents: read
 
     steps:
     - name: Checkout repository
