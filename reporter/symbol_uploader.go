@@ -102,7 +102,11 @@ func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
 
 	dryRun, _ := strconv.ParseBool(os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD_DRY_RUN"))
 
-	uploadDynamicSymbols, _ := strconv.ParseBool(os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD_DYNAMIC_SYMBOLS"))
+	uploadDynamicSymbols := true
+	b, err := strconv.ParseBool(os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD_DYNAMIC_SYMBOLS"))
+	if err == nil {
+		uploadDynamicSymbols = b
+	}
 
 	uploadCache, err := lru.NewSynced[libpf.FileID, struct{}](uploadCacheSize, libpf.FileID.Hash32)
 	if err != nil {
