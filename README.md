@@ -9,7 +9,7 @@ DataDog OTEL eBPF profiler.
 
 > [!WARNING]
 > This profiler is currently **experimental** and has not undergone thorough testing. Features and functionality may be unstable or incomplete.  
-> For a more stable and tested alternative, we strongly recommend using [`otel-profiling-agent`](https://github.com/your-organization/otel-profiling-agent) in the meantime.  
+> For a more stable and tested alternative, we strongly recommend using [`otel-profiling-agent`](https://github.com/DataDog/otel-profiling-agent) in the meantime.  
 > Use this repository at your own risk.
 
 # Overview
