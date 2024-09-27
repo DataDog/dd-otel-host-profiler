@@ -45,6 +45,7 @@ var (
 	noKernelVersionCheckHelp = "Disable checking kernel version for eBPF support. " +
 		"Use at your own risk, to run the agent on older kernels with backported eBPF features."
 	collAgentAddrHelp  = "The Datadog agent URL in the format of http://host:port."
+	copyrightHelp      = "Show copyright and short license text."
 	verboseModeHelp    = "Enable verbose logging and debugging capabilities."
 	tracersHelp        = "Comma-separated list of interpreter tracers to include."
 	mapScaleFactorHelp = fmt.Sprintf("Scaling factor for eBPF map sizes. "+
@@ -83,6 +84,7 @@ type arguments struct {
 	bpfVerifierLogLevel    uint
 	bpfVerifierLogSize     int
 	collAgentAddr          string
+	copyright              bool
 	mapScaleFactor         uint
 	monitorInterval        time.Duration
 	clockSyncInterval      time.Duration
@@ -123,6 +125,7 @@ func parseArgs() (*arguments, error) {
 	fs.StringVar(&args.collAgentAddr, "collection-agent", defaultArgCollAgentAddr,
 		collAgentAddrHelp)
 
+	fs.BoolVar(&args.copyright, "copyright", false, copyrightHelp)
 	fs.UintVar(&args.mapScaleFactor, "map-scale-factor",
 		defaultArgMapScaleFactor, mapScaleFactorHelp)
 

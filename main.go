@@ -44,6 +44,25 @@ import (
 	"github.com/DataDog/dd-otel-host-profiler/version"
 )
 
+// Short copyright / license text for eBPF code
+var copyright = `Copyright 2024 Datadog, Inc.
+
+For the eBPF code loaded by Universal Profiling Agent into the kernel,
+the following license applies (GPLv2 only). You can obtain a copy of the GPLv2 code at:
+https://github.com/open-telemetry/opentelemetry-ebpf-profiler/tree/main/support/ebpf
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License version 2 only,
+as published by the Free Software Foundation;
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details:
+
+https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
+`
+
 type exitCode int
 
 const (
@@ -77,6 +96,11 @@ func mainWithExitCode() exitCode {
 	args, err := parseArgs()
 	if err != nil {
 		return parseError("Failure to parse arguments: %v", err)
+	}
+
+	if args.copyright {
+		fmt.Print(copyright)
+		return exitSuccess
 	}
 
 	versionInfo := version.GetVersionInfo()
