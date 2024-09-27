@@ -7,11 +7,16 @@
 
 DataDog OTEL eBPF profiler.
 
+> [!WARNING]
+> This profiler is currently **experimental** and has not undergone thorough testing. Features and functionality may be unstable or incomplete.  
+> For a more stable and tested alternative, we strongly recommend using [`otel-profiling-agent`](https://github.com/your-organization/otel-profiling-agent) in the meantime.  
+> Use this repository at your own risk.
+
 # Overview
 
 dd-otel-host-profiler is based on [open-telemetry/opentelemetry-ebpf-profiler](https://github.com/open-telemetry/opentelemetry-ebpf-profiler). Please refer to our [documentation](https://docs.datadoghq.com/profiler/) for a list of officially supported Datadog profilers.
 
-This profiler has support for sending profiling data to the Datadog backend via the Datadog Agent. We are active members of the OpenTelemetry Profiling SIG that is working on the OpenTelemetry profiling signal. However, the signal is still under active development, so Datadog Agent is required until we release our support for directly ingesting the data using OTLP.
+This profiler has support for sending profiling data to the Datadog backend via the Datadog Agent. We are active members of the OpenTelemetry Profiling SIG that is working on the OpenTelemetry profiling signal. However, the signal is still under active development, so the Datadog Agent is required until we release our support for directly ingesting the data using OTLP.
 
 ## Requirements
 
@@ -64,34 +69,6 @@ docker-compose up
 ```
 
 The profiler will submit profiling data to the Datadog Agent using the value of DD_OTEL_HOST_PROFILER_SERVICE as the service name.
-
-## Probabilistic profiling
-
-Probabilistic profiling allows you to reduce storage costs by collecting a representative
-sample of profiling data. This method decreases storage costs with a visibility trade-off,
-as not all Profiling Host Agents will have profile collection enabled at all times.
-
-Profiling Events linearly correlate with the probabilistic profiling value. The lower the value,
-the fewer events are collected.
-
-### Configure probabilistic profiling
-
-To configure probabilistic profiling, set the `-probabilistic-threshold` and `-probabilistic-interval` options.
-
-Set the `-probabilistic-threshold` option to a unsigned integer between 1 and 99 to enable
- probabilistic profiling. At every probabilistic interval, a random number between 0 and 99 is chosen.
- If the probabilistic threshold that you've set is greater than this random number, the agent collects
- profiles from this system for the duration of the interval. The default value is 100.
-
-Set the `-probabilistic-interval` option to a time duration to define the time interval for which
-probabilistic profiling is either enabled or disabled. The default value is 1 minute.
-
-### Example
-
-The following example shows how to configure the profiling agent with a threshold of 50 and an interval of 2 minutes and 30 seconds:
-```bash
-sudo ./dd-otel-host-profiler -probabilistic-threshold=50 -probabilistic-interval=2m30s
-```
 
 # Legal
 

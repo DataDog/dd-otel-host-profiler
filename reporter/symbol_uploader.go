@@ -438,7 +438,7 @@ func (d *DatadogSymbolUploader) buildSymbolUploadRequest(symbolFile *os.File,
 	}
 
 	r.Header.Set("Dd-Api-Key", d.ddAPIKey)
-	r.Header.Set("Dd-Evp-Origin", "dd-otel-host-profiler")
+	r.Header.Set("Dd-Evp-Origin", profilerName)
 	r.Header.Set("Dd-Evp-Origin-Version", d.version)
 	r.Header.Set("Content-Type", mw.FormDataContentType())
 	r.Header.Set("Content-Encoding", "zstd")
