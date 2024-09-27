@@ -6,6 +6,7 @@ updates:
     schedule:
       interval: daily
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 
   - package-ecosystem: pip
@@ -13,3 +14,5 @@ updates:
     schedule:
       interval: daily
 >>>>>>> 3b149a3 (Prepare repository for opensourcing)
+=======
+>>>>>>> 5e446e9 (Address review comments.)
