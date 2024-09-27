@@ -24,32 +24,41 @@ func MakeTag(key, value string) Tag {
 }
 
 type Config struct {
-	// Name defines the name of the agent.
-	Name string
 	// Version defines the version of the agent.
 	Version string
-	// CollAgentAddr defines the destination of the backend connection.
-	CollAgentAddr string
+	// IntakeURL defines the URL of profiling intake.
+	IntakeURL string
 	// CacheSize defines the size of the reporter caches.
 	CacheSize uint32
 	// samplesPerSecond defines the number of samples per second.
 	SamplesPerSecond int
-	// HostID is the host ID to be sent to the collection agent.
-	HostID uint64
-	// KernelVersion is the kernel version of the host.
-	KernelVersion string
-	// HostName is the name of the host.
-	HostName string
-	// IPAddress is the IP address of the host.
-	IPAddress string
 	// ReportInterval defines the interval at which the agent reports data to the collection agent.
 	ReportInterval time.Duration
-	// SaveCPUProfile defines whether the agent should dump a pprof CPU profile on disk.
-	SaveCPUProfile bool
+	// PprofPrefix defines a file where the agent should dump pprof CPU profile.
+	PprofPrefix string
 	// Tags is a list of tags to be sent to the collection agent.
 	Tags Tags
 	// Whether to include timestamps on samples for the timeline feature
 	Timeline bool
-	// SymbolUpload defines whether the agent should upload debug symbols to the backend.
-	UploadSymbols bool
+	// API key for agentless mode
+	APIKey string
+	// SymbolUploaderConfig defines the configuration for the symbol uploader.
+	SymbolUploaderConfig SymbolUploaderConfig
+}
+
+type SymbolUploaderConfig struct {
+	// Enabled defines whether the agent should upload debug symbols to the backend.
+	Enabled bool
+	// UploadDynamicSymbols defines whether the agent should upload dynamic symbols to the backend.
+	UploadDynamicSymbols bool
+	// DryRun defines whether the agent should upload debug symbols to the backend in dry-run mode.
+	DryRun bool
+	// DataDog API key
+	APIKey string
+	// DataDog APP key
+	APPKey string
+	// Site is the site to upload symbols to.
+	Site string
+	// Version is the version of the profiler.
+	Version string
 }

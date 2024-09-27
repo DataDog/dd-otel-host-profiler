@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,38 +73,27 @@ type DatadogSymbolUploader struct {
 	symbolQuerier *DatadogSymbolQuerier
 }
 
-func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
+func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
 	err := exec.Command("objcopy", "--version").Run()
 	if err != nil {
 		return nil, fmt.Errorf("objcopy is not available: %w", err)
 	}
 
-	ddAPIKey := os.Getenv("DD_API_KEY")
-	if ddAPIKey == "" {
-		return nil, errors.New("DD_API_KEY is not set")
+	if cfg.APIKey == "" {
+		return nil, errors.New("API key is not set")
 	}
 
-	ddAPPKey := os.Getenv("DD_APP_KEY")
-	if ddAPPKey == "" {
-		return nil, errors.New("DD_APP_KEY is not set")
+	if cfg.APPKey == "" {
+		return nil, errors.New("application key is not set")
 	}
 
-	ddSite := os.Getenv("DD_SITE")
-	if ddSite == "" {
-		return nil, errors.New("DD_SITE is not set")
+	if cfg.Site == "" {
+		return nil, errors.New("site is not set")
 	}
 
-	intakeURL, err := url.JoinPath("https://sourcemap-intake."+ddSite, sourceMapEndpoint)
+	intakeURL, err := url.JoinPath("https://sourcemap-intake."+cfg.Site, sourceMapEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
-	}
-
-	dryRun, _ := strconv.ParseBool(os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD_DRY_RUN"))
-
-	uploadDynamicSymbols := true
-	b, err := strconv.ParseBool(os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD_DYNAMIC_SYMBOLS"))
-	if err == nil {
-		uploadDynamicSymbols = b
 	}
 
 	uploadCache, err := lru.NewSynced[libpf.FileID, struct{}](uploadCacheSize, libpf.FileID.Hash32)
@@ -113,18 +101,18 @@ func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
-	symbolQuerier, err := NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey)
+	symbolQuerier, err := NewDatadogSymbolQuerier(cfg.Site, cfg.APIKey, cfg.APPKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
 	}
 
 	return &DatadogSymbolUploader{
-		ddAPIKey:             ddAPIKey,
-		ddAPPKey:             ddAPPKey,
+		ddAPIKey:             cfg.APIKey,
+		ddAPPKey:             cfg.APPKey,
 		intakeURL:            intakeURL,
-		version:              version,
-		dryRun:               dryRun,
-		uploadDynamicSymbols: uploadDynamicSymbols,
+		version:              cfg.Version,
+		dryRun:               cfg.DryRun,
+		uploadDynamicSymbols: cfg.UploadDynamicSymbols,
 		workerCount:          uploadWorkerCount,
 		client:               &http.Client{Timeout: uploadTimeout},
 		uploadCache:          uploadCache,

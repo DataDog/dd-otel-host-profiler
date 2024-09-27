@@ -17,7 +17,7 @@ To run the profiler in a Kubernetes cluster, you should ensure the following req
 2. The container is running in privileged mode.
 3. The `procMount` security context field is set to `Unmasked`.
 4. The container has the `SYS_ADMIN` capability.
-5. The `DD_OTEL_HOST_PROFILER_COLLECTION_AGENT` environment variable is set to the address of the Datadog agent: `http://<agent_address>:8126`.
+5. The `DD_TRACE_AGENT_URL` environment variable is set to the address of the Datadog agent: `http://<agent_address>:8126`.
 
 Additionally, to be able to resolve pod names in Kubernetes, the profiler needs:
 * The `KUBERNETES_NODE_NAME` environment variable set to the name of the node where the profiler is running.
@@ -47,13 +47,13 @@ spec:
             add:
             - SYS_ADMIN # Adding SYS_ADMIN capability (4.)
         env:
-        - name: DD_OTEL_HOST_PROFILER_COLLECTION_AGENT # The address of the Datadog agent (5.)
+        - name: DD_TRACE_AGENT_URL # The address of the Datadog agent (5.)
           value: "http://<agent_address>:8126"
         - name: KUBERNETES_NODE_NAME # this is needed to resolve pod names in Kubernetes
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        - name: DD_OTEL_HOST_PROFILER_SERVICE
+        - name: DD_SERVICE
           value: "$(KUBERNETES_NODE_NAME)" # will inherit the variable set above
         # ...
         volumeMounts:

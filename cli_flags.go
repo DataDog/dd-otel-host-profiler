@@ -1,27 +1,26 @@
-/*
- * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Apache License 2.0.
- * See the file "LICENSE" for details.
- */
-
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
 package main
 
 import (
-	"flag"
+	"context"
+	"errors"
 	"fmt"
 	"os"
-	"strconv"
+	"runtime"
+	"strings"
 	"time"
 
+	"github.com/DataDog/dd-otel-host-profiler/version"
 	cebpf "github.com/cilium/ebpf"
-	"github.com/peterbourgon/ff/v3"
 	log "github.com/sirupsen/logrus"
+	"github.com/urfave/cli/v3"
 
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
 )
+
+type envVarType int
 
 const (
 	// Default values for CLI flags
@@ -40,164 +39,345 @@ const (
 	maxArgMapScaleFactor = 8
 )
 
-// Help strings for command line arguments
-var (
-	noKernelVersionCheckHelp = "Disable checking kernel version for eBPF support. " +
-		"Use at your own risk, to run the agent on older kernels with backported eBPF features."
-	collAgentAddrHelp  = "The Datadog agent URL in the format of http://host:port."
-	copyrightHelp      = "Show copyright and short license text."
-	verboseModeHelp    = "Enable verbose logging and debugging capabilities."
-	tracersHelp        = "Comma-separated list of interpreter tracers to include."
-	mapScaleFactorHelp = fmt.Sprintf("Scaling factor for eBPF map sizes. "+
-		"Every increase by 1 doubles the map size. Increase if you see eBPF map size errors. "+
-		"Default is %d corresponding to 4GB of executable address space, max is %d.",
-		defaultArgMapScaleFactor, maxArgMapScaleFactor)
-	bpfVerifierLogLevelHelp = "Log level of the eBPF verifier output (0,1,2). Default is 0."
-	bpfVerifierLogSizeHelp  = "Size in bytes that will be allocated for the eBPF " +
-		"verifier output. Only takes effect if bpf-log-level > 0."
-	versionHelp                = "Show version."
-	probabilisticThresholdHelp = fmt.Sprintf("If set to a value between 1 and %d will enable "+
-		"probabilistic profiling: "+
-		"every probabilistic-interval a random number between 0 and %d is "+
-		"chosen. If the given probabilistic-threshold is greater than this "+
-		"random number, the agent will collect profiles from this system for "+
-		"the duration of the interval.",
-		tracer.ProbabilisticThresholdMax-1, tracer.ProbabilisticThresholdMax-1)
-	probabilisticIntervalHelp = "Time interval for which probabilistic profiling will be " +
-		"enabled or disabled."
-	pprofHelp             = "Listening address (e.g. localhost:6060) to serve pprof information."
-	samplesPerSecondHelp  = "Set the frequency (in Hz) of stack trace sampling."
-	reporterIntervalHelp  = "Set the reporter's interval in seconds."
-	monitorIntervalHelp   = "Set the monitor interval in seconds."
-	clockSyncIntervalHelp = "Set the sync interval with the realtime clock. " +
-		"If zero, monotonic-realtime clock sync will be performed once, " +
-		"on agent startup, but not periodically."
-	sendErrorFramesHelp = "Send error frames (devfiler only, breaks Kibana)"
-	saveCPUProfileHelp  = "Save CPU pprof profile to `cpu.pprof`."
-	tagsHelp            = "User-specified tags separated by ';'."
-	serviceHelp         = "Service name."
-	nodeHelp            = "The name of the node that the profiler is running on. " +
-		"If on Kubernetes, this must match the Kubernetes node name."
+const (
+	shortEnvVar = envVarType(iota)
+	longEnvVar
+	experimentalEnvVar
 )
 
 type arguments struct {
-	bpfVerifierLogLevel    uint
-	bpfVerifierLogSize     int
+	bpfVerifierLogLevel    uint64
+	bpfVerifierLogSize     uint64
 	collAgentAddr          string
 	copyright              bool
-	mapScaleFactor         uint
+	mapScaleFactor         uint64
 	monitorInterval        time.Duration
 	clockSyncInterval      time.Duration
 	noKernelVersionCheck   bool
 	node                   string
-	pprofAddr              string
 	probabilisticInterval  time.Duration
-	probabilisticThreshold uint
+	probabilisticThreshold uint64
 	reporterInterval       time.Duration
-	samplesPerSecond       int
-	saveCPUProfile         bool
+	samplesPerSecond       uint64
+	pprofPrefix            string
 	sendErrorFrames        bool
 	serviceName            string
-	symbolUpload           bool
+	serviceVersion         string
+	environment            string
+	uploadSymbols          bool
+	uploadDynamicSymbols   bool
+	uploadSymbolsDryRun    bool
 	tags                   string
 	timeline               bool
 	tracers                string
 	verboseMode            bool
-	version                bool
-
-	fs *flag.FlagSet
+	apiKey                 string
+	appKey                 string
+	site                   string
+	agentless              bool
+	cmd                    *cli.Command
 }
 
-// Package-scope variable, so that conditionally compiled other components can refer
-// to the same flagset.
+func addDefaultEnvVarWithName[T any, C any, VC cli.ValueCreator[T, C]](flag *cli.FlagBase[T, C, VC],
+	envVarType envVarType, name string) *cli.FlagBase[T, C, VC] {
+	const otelProfilerPrefix = "DD_HOST_"
+	var prefix string
+	switch envVarType {
+	case shortEnvVar:
+		prefix = ""
+	case longEnvVar:
+		prefix = "PROFILING_"
+	case experimentalEnvVar:
+		prefix = "PROFILING_EXPERIMENTAL_"
+	}
+
+	envVarName := "DD_" + prefix + name
+	prefixedEnvvarName := otelProfilerPrefix + prefix + name
+
+	flag.Sources.Append(cli.EnvVars(prefixedEnvvarName, envVarName))
+	return flag
+}
+
+func addDefaultEnvVar[T any, C any, VC cli.ValueCreator[T, C]](flag *cli.FlagBase[T, C, VC],
+	envVarType envVarType) *cli.FlagBase[T, C, VC] {
+	name := strings.ReplaceAll(strings.ToUpper(flag.Name), "-", "_")
+	return addDefaultEnvVarWithName(flag, envVarType, name)
+}
 
 func parseArgs() (*arguments, error) {
 	var args arguments
-	var err error
+	versionInfo := version.GetVersionInfo()
 
-	fs := flag.NewFlagSet("dd-otel-host-profiler", flag.ExitOnError)
-
-	// Please keep the parameters ordered alphabetically in the source-code.
-	fs.UintVar(&args.bpfVerifierLogLevel, "bpf-log-level", 0, bpfVerifierLogLevelHelp)
-	fs.IntVar(&args.bpfVerifierLogSize, "bpf-log-size", cebpf.DefaultVerifierLogSize,
-		bpfVerifierLogSizeHelp)
-
-	fs.StringVar(&args.collAgentAddr, "collection-agent", defaultArgCollAgentAddr,
-		collAgentAddrHelp)
-
-	fs.BoolVar(&args.copyright, "copyright", false, copyrightHelp)
-	fs.UintVar(&args.mapScaleFactor, "map-scale-factor",
-		defaultArgMapScaleFactor, mapScaleFactorHelp)
-
-	fs.DurationVar(&args.monitorInterval, "monitor-interval", defaultArgMonitorInterval,
-		monitorIntervalHelp)
-
-	fs.DurationVar(&args.clockSyncInterval, "clock-sync-interval", defaultClockSyncInterval,
-		clockSyncIntervalHelp)
-
-	fs.BoolVar(&args.noKernelVersionCheck, "no-kernel-version-check", false,
-		noKernelVersionCheckHelp)
-
-	fs.StringVar(&args.pprofAddr, "pprof", "", pprofHelp)
-
-	fs.DurationVar(&args.probabilisticInterval, "probabilistic-interval",
-		defaultProbabilisticInterval, probabilisticIntervalHelp)
-	fs.UintVar(&args.probabilisticThreshold, "probabilistic-threshold",
-		defaultProbabilisticThreshold, probabilisticThresholdHelp)
-
-	fs.DurationVar(&args.reporterInterval, "reporter-interval", defaultArgReporterInterval,
-		reporterIntervalHelp)
-
-	fs.IntVar(&args.samplesPerSecond, "samples-per-second", defaultArgSamplesPerSecond,
-		samplesPerSecondHelp)
-	fs.BoolVar(&args.timeline, "timeline", false, "Enable timeline feature.")
-
-	fs.BoolVar(&args.sendErrorFrames, "send-error-frames", defaultArgSendErrorFrames,
-		sendErrorFramesHelp)
-
-	fs.StringVar(&args.tracers, "t", "all", "Shorthand for -tracers.")
-	fs.StringVar(&args.tracers, "tracers", "all", tracersHelp)
-
-	fs.BoolVar(&args.verboseMode, "v", false, "Shorthand for -verbose.")
-	fs.BoolVar(&args.verboseMode, "verbose", false, verboseModeHelp)
-	fs.BoolVar(&args.version, "version", false, versionHelp)
-
-	fs.StringVar(&args.tags, "tags", "", tagsHelp)
-	fs.BoolVar(&args.saveCPUProfile, "save-cpuprofile", false,
-		saveCPUProfileHelp)
-	fs.StringVar(&args.serviceName, "service", "dd-otel-host-profiler", serviceHelp)
-
-	fs.StringVar(&args.node, "node", "", nodeHelp)
-
-	fs.Usage = func() {
-		fs.PrintDefaults()
+	cli.VersionPrinter = func(_ *cli.Command) {
+		fmt.Printf("dd-otel-host-profiler, version %s (revision: %s, date: %s), arch: %v\n",
+			versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 	}
 
-	args.fs = fs
-
-	symbolUpload := os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD")
-	if symbolUpload != "" {
-		args.symbolUpload, err = strconv.ParseBool(symbolUpload)
-		if err != nil {
-			args.symbolUpload = false
-			log.Warnf("Failed to parse DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD=%v: %v", symbolUpload, err)
-		}
+	cli.VersionFlag = &cli.BoolFlag{
+		Name:  "version",
+		Usage: "print the version",
 	}
 
-	return &args, ff.Parse(fs, os.Args[1:],
-		ff.WithEnvVarPrefix("DD_OTEL_HOST_PROFILER"),
-		ff.WithConfigFileFlag("config"),
-		ff.WithConfigFileParser(ff.PlainParser),
-		// This will ignore configuration file (only) options that the current HA
-		// does not recognize.
-		ff.WithIgnoreUndefined(true),
-		ff.WithAllowMissingConfigFile(true),
-	)
+	app := cli.Command{
+		Name:      "dd-otel-host-profiler",
+		Usage:     "Datadog OpenTelemetry host profiler",
+		Copyright: copyright,
+		Version:   versionInfo.Version,
+		Flags: []cli.Flag{
+			addDefaultEnvVar(
+				&cli.UintFlag{
+					Name:        "bpf-log-level",
+					Value:       0,
+					Usage:       "Log level of the eBPF verifier output (0,1,2).",
+					Destination: &args.bpfVerifierLogLevel,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.UintFlag{
+					Name:  "bpf-log-size",
+					Value: cebpf.DefaultVerifierLogSize,
+					Usage: "Size in bytes that will be allocated for the eBPF verifier output. " +
+						"Only takes effect if bpf-log-level > 0.",
+					Destination: &args.bpfVerifierLogSize,
+				}, longEnvVar),
+			addDefaultEnvVarWithName(
+				&cli.StringFlag{
+					Name:        "agent-url",
+					Aliases:     []string{"U"},
+					Value:       defaultArgCollAgentAddr,
+					Usage:       "The Datadog agent URL in the format of http://host:port.",
+					Destination: &args.collAgentAddr,
+				}, shortEnvVar, "TRACE_AGENT_URL"),
+			addDefaultEnvVar(
+				&cli.StringFlag{
+					Name:        "service",
+					Aliases:     []string{"S"},
+					Usage:       "Service name.",
+					Destination: &args.serviceName,
+				}, shortEnvVar),
+			addDefaultEnvVarWithName(
+				&cli.StringFlag{
+					Name:        "environment",
+					Aliases:     []string{"E"},
+					Value:       "dd-otel-host-profiler",
+					Usage:       "The name of the environment to use in the Datadog UI.",
+					Destination: &args.environment,
+				}, shortEnvVar, "ENV"),
+			addDefaultEnvVarWithName(
+				&cli.StringFlag{
+					Name:        "service-version",
+					Aliases:     []string{"V"},
+					Usage:       "Version of the service being profiled.",
+					Destination: &args.serviceVersion,
+				}, shortEnvVar, "VERSION"),
+			addDefaultEnvVar(
+				&cli.StringFlag{
+					Name:        "tags",
+					Usage:       "User-specified tags separated by ',': key1:value1,key2:value2.",
+					Destination: &args.tags,
+				}, shortEnvVar),
+			addDefaultEnvVar(
+				&cli.UintFlag{
+					Name:  "map-scale-factor",
+					Value: defaultArgMapScaleFactor,
+					Usage: fmt.Sprintf("Scaling factor for eBPF map sizes. "+
+						"Every increase by 1 doubles the map size. Increase if you see eBPF map size errors. "+
+						"Default is %d corresponding to 4GB of executable address space, max is %d.",
+						defaultArgMapScaleFactor, maxArgMapScaleFactor),
+					Destination: &args.mapScaleFactor,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.DurationFlag{
+					Name:        "monitor-interval",
+					Value:       defaultArgMonitorInterval,
+					Usage:       "Set the monitor interval in seconds.",
+					Destination: &args.monitorInterval,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.DurationFlag{
+					Name:  "clock-sync-interval",
+					Value: defaultClockSyncInterval,
+					Usage: "Set the sync interval with the realtime clock. " +
+						"If zero, monotonic-realtime clock sync will be performed once, " +
+						"on agent startup, but not periodically.",
+					Destination: &args.clockSyncInterval,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.BoolFlag{
+					Name:  "no-kernel-version-check",
+					Value: false,
+					Usage: "Disable checking kernel version for eBPF support. " +
+						"Use at your own risk, to run the agent on older kernels with backported eBPF features.",
+					Destination: &args.noKernelVersionCheck,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.DurationFlag{
+					Name:        "probabilistic-interval",
+					Value:       defaultProbabilisticInterval,
+					Usage:       "Time interval for which probabilistic profiling will be enabled or disabled.",
+					Destination: &args.probabilisticInterval,
+				}, longEnvVar),
+			addDefaultEnvVar(&cli.UintFlag{
+				Name:  "probabilistic-threshold",
+				Value: defaultProbabilisticThreshold,
+				Usage: fmt.Sprintf("If set to a value between 1 and %d will enable probabilistic profiling: "+
+					"every probabilistic-interval a random number between 0 and %d is chosen. "+
+					"If the given probabilistic-threshold is greater than this "+
+					"random number, the agent will collect profiles from this system for the duration of the interval.",
+					tracer.ProbabilisticThresholdMax-1, tracer.ProbabilisticThresholdMax-1),
+				Destination: &args.probabilisticThreshold,
+			}, longEnvVar),
+			addDefaultEnvVar(&cli.DurationFlag{
+				Name:        "upload-period",
+				Value:       defaultArgReporterInterval,
+				Usage:       "Set the reporter's interval in seconds.",
+				Destination: &args.reporterInterval,
+			}, longEnvVar),
+			addDefaultEnvVar(&cli.UintFlag{
+				Name:        "sampling-rate",
+				Value:       defaultArgSamplesPerSecond,
+				Usage:       "Set the frequency (in Hz) of stack trace sampling.",
+				Destination: &args.samplesPerSecond,
+			}, longEnvVar),
+			addDefaultEnvVarWithName(
+				&cli.BoolFlag{
+					Name:        "timeline",
+					Value:       false,
+					Usage:       "Enable timeline feature.",
+					Destination: &args.timeline,
+				}, longEnvVar, "TIMELINE_ENABLED"),
+			addDefaultEnvVar(
+				&cli.BoolFlag{
+					Name:        "send-error-frames",
+					Value:       defaultArgSendErrorFrames,
+					Usage:       "Send error frames",
+					Destination: &args.sendErrorFrames,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.StringFlag{
+					Name:        "tracers",
+					Aliases:     []string{"t"},
+					Value:       "all",
+					Usage:       "Comma-separated list of interpreter tracers to include.",
+					Destination: &args.tracers,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.BoolFlag{
+					Name:        "verbose",
+					Aliases:     []string{"v"},
+					Value:       false,
+					Usage:       "Enable verbose logging and debugging capabilities.",
+					Destination: &args.verboseMode,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.StringFlag{
+					Name:        "pprof-prefix",
+					Usage:       "Dump pprof profile to `FILE`.",
+					Destination: &args.pprofPrefix,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.StringFlag{
+					Name: "node",
+					Usage: "The name of the node that the profiler is running on. " +
+						"If on Kubernetes, this must match the Kubernetes node name.",
+					Destination: &args.node,
+				}, longEnvVar),
+			addDefaultEnvVar(
+				&cli.BoolFlag{
+					Name:        "upload-symbols",
+					Value:       false,
+					Usage:       "Enable local symbol upload.",
+					Hidden:      true,
+					Destination: &args.uploadSymbols,
+				}, longEnvVar),
+			&cli.BoolWithInverseFlag{
+				BoolFlag: addDefaultEnvVar(
+					&cli.BoolFlag{
+						Name:  "upload-dynamic-symbols",
+						Usage: "Enable dynamic symbols upload.",
+						// Cannot set default value to true because it fails at runtime with:
+						//   "Failure to parse arguments: cannot set both flags `--upload-dynamic-symbols`
+						//    and `--no-upload-dynamic-symbols`"
+						// Value:       true,
+						DefaultText: "true",
+						Hidden:      true,
+					}, experimentalEnvVar),
+			},
+			addDefaultEnvVar(
+				&cli.BoolFlag{
+					Name:        "upload-symbols-dry-run",
+					Value:       false,
+					Usage:       "Local symbol upload dry-run.",
+					Hidden:      true,
+					Destination: &args.uploadSymbolsDryRun,
+				}, experimentalEnvVar),
+			addDefaultEnvVar(
+				&cli.StringFlag{
+					Name:        "api-key",
+					Usage:       "Datadog API key.",
+					Hidden:      true,
+					Destination: &args.apiKey,
+					Validator: func(s string) error {
+						if s == "" || isAPIKeyValid(s) {
+							return nil
+						}
+						return errors.New("API key is not valid")
+					},
+				}, shortEnvVar),
+			addDefaultEnvVar(
+				&cli.StringFlag{
+					Name:        "app-key",
+					Usage:       "Datadog APP key.",
+					Hidden:      true,
+					Destination: &args.appKey,
+					Validator: func(s string) error {
+						if s == "" || isAPPKeyValid(s) {
+							return nil
+						}
+						return errors.New("APP key is not valid")
+					},
+				}, shortEnvVar),
+			addDefaultEnvVar(
+				&cli.StringFlag{
+					Name:        "site",
+					Value:       "datadoghq.com",
+					Usage:       "Datadog site.",
+					Hidden:      true,
+					Destination: &args.site,
+				}, shortEnvVar),
+		},
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			// Workaround for the fact that cli.BoolWithInverseFlag does not work with a false default value
+			if cmd.IsSet("upload-dynamic-symbols") {
+				args.uploadDynamicSymbols = cmd.Bool("upload-dynamic-symbols")
+			} else {
+				if cmd.Set("upload-dynamic-symbols", "true") != nil {
+					return errors.New("cannot set flag `--upload-dynamic-symbols`")
+				}
+				args.uploadDynamicSymbols = true
+			}
+			args.cmd = cmd
+			return nil
+		},
+	}
+
+	if err := app.Run(context.Background(), os.Args); err != nil {
+		return nil, err
+	}
+
+	if args.cmd == nil {
+		return nil, nil
+	}
+
+	return &args, nil
 }
 
 func (args *arguments) dump() {
 	log.Debug("Config:")
-	args.fs.VisitAll(func(f *flag.Flag) {
-		log.Debug(fmt.Sprintf("%s: %v", f.Name, f.Value))
-	})
+	for _, f := range args.cmd.Flags {
+		setStr := "default"
+		if args.cmd.IsSet(f.Names()[0]) {
+			setStr = "set"
+		}
+		log.Debugf("%s: \"%v\" [%s]", f.Names()[0], args.cmd.Value(f.Names()[0]), setStr)
+	}
 }
