@@ -134,7 +134,7 @@ func mainWithExitCode() exitCode {
 		}()
 	}
 
-	log.Infof("Starting DataDog OTEL host profiler %s (revision: %s, date: %s), arch: %v",
+	log.Infof("Starting Datadog OTEL host profiler %s (revision: %s, date: %s), arch: %v",
 		versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 
 	if err = tracer.ProbeBPFSyscall(); err != nil {

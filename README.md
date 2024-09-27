@@ -5,7 +5,7 @@
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/datadog/dd-otel-host-profiler)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/DataDog/dd-otel-host-profiler/badge)](https://scorecard.dev/viewer/?uri=github.com/DataDog/dd-otel-host-profiler)
 
-DataDog OTEL eBPF profiler.
+Datadog OTEL eBPF profiler.
 
 > [!WARNING]
 > This profiler is currently **experimental** and has not undergone thorough testing. Features and functionality may be unstable or incomplete.  
