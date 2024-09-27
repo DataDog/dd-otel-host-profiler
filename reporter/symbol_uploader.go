@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,38 +73,27 @@ type DatadogSymbolUploader struct {
 	symbolQuerier *DatadogSymbolQuerier
 }
 
-func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
+func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
 	err := exec.Command("objcopy", "--version").Run()
 	if err != nil {
 		return nil, fmt.Errorf("objcopy is not available: %w", err)
 	}
 
-	ddAPIKey := os.Getenv("DD_API_KEY")
-	if ddAPIKey == "" {
+	if cfg.DDAPIKey == "" {
 		return nil, errors.New("DD_API_KEY is not set")
 	}
 
-	ddAPPKey := os.Getenv("DD_APP_KEY")
-	if ddAPPKey == "" {
+	if cfg.DDAPPKey == "" {
 		return nil, errors.New("DD_APP_KEY is not set")
 	}
 
-	ddSite := os.Getenv("DD_SITE")
-	if ddSite == "" {
+	if cfg.DDSite == "" {
 		return nil, errors.New("DD_SITE is not set")
 	}
 
-	intakeURL, err := url.JoinPath("https://sourcemap-intake."+ddSite, sourceMapEndpoint)
+	intakeURL, err := url.JoinPath("https://sourcemap-intake."+cfg.DDSite, sourceMapEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
-	}
-
-	dryRun, _ := strconv.ParseBool(os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD_DRY_RUN"))
-
-	uploadDynamicSymbols := true
-	b, err := strconv.ParseBool(os.Getenv("DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD_DYNAMIC_SYMBOLS"))
-	if err == nil {
-		uploadDynamicSymbols = b
 	}
 
 	uploadCache, err := lru.NewSynced[libpf.FileID, struct{}](uploadCacheSize, libpf.FileID.Hash32)
@@ -113,18 +101,18 @@ func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
-	symbolQuerier, err := NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey)
+	symbolQuerier, err := NewDatadogSymbolQuerier(cfg.DDSite, cfg.DDAPIKey, cfg.DDAPPKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
 	}
 
 	return &DatadogSymbolUploader{
-		ddAPIKey:             ddAPIKey,
-		ddAPPKey:             ddAPPKey,
+		ddAPIKey:             cfg.DDAPIKey,
+		ddAPPKey:             cfg.DDAPPKey,
 		intakeURL:            intakeURL,
-		version:              version,
-		dryRun:               dryRun,
-		uploadDynamicSymbols: uploadDynamicSymbols,
+		version:              cfg.Version,
+		dryRun:               cfg.DryRun,
+		uploadDynamicSymbols: cfg.UploadDynamicSymbols,
 		workerCount:          uploadWorkerCount,
 		client:               &http.Client{Timeout: uploadTimeout},
 		uploadCache:          uploadCache,

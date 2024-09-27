@@ -12,7 +12,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -45,7 +44,7 @@ import (
 )
 
 // Short copyright / license text for eBPF code
-var copyright = `Copyright 2024 Datadog, Inc.
+const copyright = `Copyright 2024 Datadog, Inc.
 
 For the eBPF code loaded by Universal Profiling Agent into the kernel,
 the following license applies (GPLv2 only). You can obtain a copy of the GPLv2 code at:
@@ -98,17 +97,16 @@ func mainWithExitCode() exitCode {
 		return parseError("Failure to parse arguments: %v", err)
 	}
 
+	if args == nil {
+		return exitSuccess
+	}
+
 	if args.copyright {
 		fmt.Print(copyright)
 		return exitSuccess
 	}
 
 	versionInfo := version.GetVersionInfo()
-	if args.version {
-		fmt.Printf("dd-otel-host-profiler, version %s (revision: %s, date: %s), arch: %v\n",
-			versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
-		return exitSuccess
-	}
 
 	if args.verboseMode {
 		log.SetLevel(log.DebugLevel)
@@ -124,15 +122,6 @@ func mainWithExitCode() exitCode {
 	mainCtx, mainCancel := signal.NotifyContext(context.Background(),
 		unix.SIGINT, unix.SIGTERM, unix.SIGABRT)
 	defer mainCancel()
-
-	if args.pprofAddr != "" {
-		go func() {
-			//nolint:gosec
-			if err = http.ListenAndServe(args.pprofAddr, nil); err != nil {
-				log.Errorf("Serving pprof on %s failed: %s", args.pprofAddr, err)
-			}
-		}()
-	}
 
 	log.Infof("Starting Datadog OTEL host profiler %s (revision: %s, date: %s), arch: %v",
 		versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
@@ -151,7 +140,7 @@ func mainWithExitCode() exitCode {
 	}
 
 	traceHandlerCacheSize :=
-		traceCacheSize(args.monitorInterval, args.samplesPerSecond, uint16(presentCores))
+		traceCacheSize(args.monitorInterval, int(args.samplesPerSecond), uint16(presentCores))
 
 	intervals := times.New(args.reporterInterval, args.monitorInterval,
 		args.probabilisticInterval)
@@ -186,6 +175,9 @@ func mainWithExitCode() exitCode {
 	validatedTags := ValidateTags(args.tags)
 	log.Debugf("Validated tags: %s", validatedTags)
 
+	// Add tags from the arguments
+	AddTagsFromArgs(&validatedTags, *args)
+
 	containerMetadataProvider, err :=
 		containermetadata.NewContainerMetadataProvider(mainCtx, args.node, intervals.MonitorInterval())
 	if err != nil {
@@ -193,19 +185,26 @@ func mainWithExitCode() exitCode {
 	}
 
 	rep, err := reporter.Start(mainCtx, &reporter.Config{
-		CollAgentAddr:    args.collAgentAddr,
-		Name:             args.serviceName,
+		AgentURL:         args.collAgentAddr,
 		Version:          versionInfo.Version,
 		ReportInterval:   intervals.ReportInterval(),
 		CacheSize:        traceHandlerCacheSize,
-		SamplesPerSecond: args.samplesPerSecond,
+		SamplesPerSecond: int(args.samplesPerSecond),
 		KernelVersion:    kernelVersion,
 		HostName:         hostname,
 		IPAddress:        sourceIP,
-		SaveCPUProfile:   args.saveCPUProfile,
+		CPUProfileDump:   args.cpuProfileDump,
 		Tags:             validatedTags,
 		Timeline:         args.timeline,
-		UploadSymbols:    args.symbolUpload,
+		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
+			Enabled:              args.uploadSymbols,
+			UploadDynamicSymbols: args.uploadDynamicSymbols,
+			DryRun:               args.uploadSymbolsDryRun,
+			DDAPIKey:             args.ddAPIKey,
+			DDAPPKey:             args.ddAPPKey,
+			DDSite:               args.ddSite,
+			Version:              args.serviceVersion,
+		},
 	}, containerMetadataProvider)
 	if err != nil {
 		return failure("Failed to start reporting: %v", err)
@@ -222,13 +221,13 @@ func mainWithExitCode() exitCode {
 		Intervals:              intervals,
 		IncludeTracers:         includeTracers,
 		FilterErrorFrames:      !args.sendErrorFrames,
-		SamplesPerSecond:       args.samplesPerSecond,
+		SamplesPerSecond:       int(args.samplesPerSecond),
 		MapScaleFactor:         int(args.mapScaleFactor),
 		KernelVersionCheck:     !args.noKernelVersionCheck,
 		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
-		BPFVerifierLogSize:     args.bpfVerifierLogSize,
+		BPFVerifierLogSize:     int(args.bpfVerifierLogSize),
 		ProbabilisticInterval:  args.probabilisticInterval,
-		ProbabilisticThreshold: args.probabilisticThreshold,
+		ProbabilisticThreshold: uint(args.probabilisticThreshold),
 	})
 	if err != nil {
 		return failure("Failed to load eBPF tracer: %v", err)

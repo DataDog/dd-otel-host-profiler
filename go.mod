@@ -12,10 +12,10 @@ require (
 	github.com/google/pprof v0.0.0-20240829160300-da1f7e9f2b25
 	github.com/jsimonetti/rtnetlink v1.4.2
 	github.com/open-telemetry/opentelemetry-ebpf-profiler v0.0.0-20240918090752-0a8979a41728
-	github.com/peterbourgon/ff/v3 v3.4.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
 	github.com/tklauser/numcpus v0.8.0
+	github.com/urfave/cli/v3 v3.0.0-alpha9
 	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/sys v0.21.0
 	k8s.io/api v0.31.0
@@ -88,6 +88,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.45.0 // indirect
 	go.opentelemetry.io/otel v1.27.0 // indirect

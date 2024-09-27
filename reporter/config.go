@@ -24,12 +24,10 @@ func MakeTag(key, value string) Tag {
 }
 
 type Config struct {
-	// Name defines the name of the agent.
-	Name string
 	// Version defines the version of the agent.
 	Version string
-	// CollAgentAddr defines the destination of the backend connection.
-	CollAgentAddr string
+	// AgentURL defines the destination of the backend connection.
+	AgentURL string
 	// CacheSize defines the size of the reporter caches.
 	CacheSize uint32
 	// samplesPerSecond defines the number of samples per second.
@@ -44,12 +42,29 @@ type Config struct {
 	IPAddress string
 	// ReportInterval defines the interval at which the agent reports data to the collection agent.
 	ReportInterval time.Duration
-	// SaveCPUProfile defines whether the agent should dump a pprof CPU profile on disk.
-	SaveCPUProfile bool
+	// CPUProfileDump defines a file where the agent should dump pprof CPU profile.
+	CPUProfileDump string
 	// Tags is a list of tags to be sent to the collection agent.
 	Tags Tags
 	// Whether to include timestamps on samples for the timeline feature
 	Timeline bool
-	// SymbolUpload defines whether the agent should upload debug symbols to the backend.
-	UploadSymbols bool
+	// SymbolUploaderConfig defines the configuration for the symbol uploader.
+	SymbolUploaderConfig SymbolUploaderConfig
+}
+
+type SymbolUploaderConfig struct {
+	// Enabled defines whether the agent should upload debug symbols to the backend.
+	Enabled bool
+	// UploadDynamicSymbols defines whether the agent should upload dynamic symbols to the backend.
+	UploadDynamicSymbols bool
+	// DryRun defines whether the agent should upload debug symbols to the backend in dry-run mode.
+	DryRun bool
+	// DataDog API key
+	DDAPIKey string
+	// DataDog APP key
+	DDAPPKey string
+	// DDSite is the site to upload symbols to.
+	DDSite string
+	// Version is the version of the profiler.
+	Version string
 }

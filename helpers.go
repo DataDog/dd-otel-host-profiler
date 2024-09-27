@@ -274,7 +274,7 @@ func enterNamespace(pid int, nsType string) (int, error) {
 }
 
 // ValidateTags parses and validates user-specified tags.
-// Each tag must match ValidTagRegex with ';' used as a separator.
+// Each tag must match ValidTagRegex with ',' used as a separator.
 // Tags that can't be validated are dropped.
 // The empty string is returned if no tags can be validated.
 func ValidateTags(tags string) reporter.Tags {
@@ -282,7 +282,7 @@ func ValidateTags(tags string) reporter.Tags {
 		return nil
 	}
 
-	splitTags := strings.Split(tags, ";")
+	splitTags := strings.Split(tags, ",")
 	validatedTags := make(reporter.Tags, 0, len(splitTags))
 
 	for _, tag := range splitTags {
@@ -295,4 +295,16 @@ func ValidateTags(tags string) reporter.Tags {
 	}
 
 	return validatedTags
+}
+
+func AddTagsFromArgs(tags *reporter.Tags, args arguments) {
+	if args.environment != "" {
+		*tags = append(*tags, reporter.MakeTag("env", args.environment))
+	}
+	if args.serviceName != "" {
+		*tags = append(*tags, reporter.MakeTag("service", args.serviceName))
+	}
+	if args.serviceVersion != "" {
+		*tags = append(*tags, reporter.MakeTag("version", args.serviceVersion))
+	}
 }

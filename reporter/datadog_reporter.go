@@ -87,10 +87,7 @@ type processMetadata struct {
 
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
 type DatadogReporter struct {
-	// name is the ScopeProfile's name.
-	name string
-
-	// version is the ScopeProfile's version.
+	// profiler version
 	version string
 
 	// stopSignal is the stop signal for shutting down all background tasks.
@@ -136,8 +133,8 @@ type DatadogReporter struct {
 	// agentAddr is the address of the Datadog agent.
 	agentAddr string
 
-	// saveCPUProfile defines whether the agent should dump a pprof CPU profile on disk.
-	saveCPUProfile bool
+	// cpuProfilerDump defines a file where the agent should dump pprof CPU profile.
+	cpuProfilerDump string
 
 	// tags is a list of tags alongside the profile.
 	tags Tags
@@ -148,6 +145,9 @@ type DatadogReporter struct {
 	symbolUploader *DatadogSymbolUploader
 
 	containerMetadataProvider containermetadata.Provider
+
+	// profileSeq is the sequence number of the profile (ie. number of profiles uploaded until now).
+	profileSeq uint64
 }
 
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
@@ -326,9 +326,9 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 	}
 
 	var symbolUploader *DatadogSymbolUploader
-	if cfg.UploadSymbols {
+	if cfg.SymbolUploaderConfig.Enabled {
 		log.Infof("Enabling Datadog local symbol upload")
-		symbolUploader, err = NewDatadogSymbolUploader(cfg.Version)
+		symbolUploader, err = NewDatadogSymbolUploader(cfg.SymbolUploaderConfig)
 		if err != nil {
 			log.Errorf(
 				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
@@ -337,7 +337,6 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 	}
 
 	r := &DatadogReporter{
-		name:                      cfg.Name,
 		version:                   cfg.Version,
 		kernelVersion:             cfg.KernelVersion,
 		hostName:                  cfg.HostName,
@@ -352,11 +351,12 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 		containerMetadataProvider: p,
 		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceFramesCounts{}),
 		processes:                 processes,
-		agentAddr:                 cfg.CollAgentAddr,
-		saveCPUProfile:            cfg.SaveCPUProfile,
+		agentAddr:                 cfg.AgentURL,
+		cpuProfilerDump:           cfg.CPUProfileDump,
 		symbolUploader:            symbolUploader,
 		tags:                      cfg.Tags,
 		timeline:                  cfg.Timeline,
+		profileSeq:                0,
 	}
 
 	// Create a child context for reporting features
@@ -415,9 +415,9 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		return fmt.Errorf("failed to compress profile: %w", err)
 	}
 
-	if r.saveCPUProfile {
-		// write profile to cpu.pprof
-		f, err := os.Create("cpu.pprof")
+	if r.cpuProfilerDump != "" {
+		// write profile to disk
+		f, err := os.Create(r.cpuProfilerDump)
 		if err != nil {
 			return err
 		}
@@ -433,9 +433,15 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
 	}
 	// The profiler_name tag allows us to differentiate the source of the profiles.
-	tags = append(tags, MakeTag("runtime", "native"), MakeTag("remote_symbols", "yes"),
-		MakeTag("profiler_name", profilerName), MakeTag("profiler_version", r.version),
-		MakeTag("cpu_arch", runtime.GOARCH), MakeTag("service", r.name))
+	tags = append(tags,
+		MakeTag("runtime", "native"),
+		MakeTag("remote_symbols", "yes"),
+		MakeTag("profiler_name", profilerName),
+		MakeTag("profiler_version", r.version),
+		MakeTag("cpu_arch", runtime.GOARCH),
+		MakeTag("profile_seq", fmt.Sprintf("%d", r.profileSeq)))
+
+	r.profileSeq++
 
 	log.Infof("Tags: %v", tags.String())
 	profilingURL, err := url.JoinPath(r.agentAddr, profilingEndPoint)
