@@ -1,5 +1,6 @@
 Component,Origin,License,Copyright
 import,github.com/DataDog/dd-otel-host-profiler,Apache-2.0,"Copyright 2017 Datadog, Inc. | Copyright 2024 Datadog, Inc."
+import,github.com/DataDog/jsonapi,Apache-2.0,"Copyright [2022-Present] Datadog, Inc."
 import,github.com/DataDog/zstd,BSD-3-Clause,"Copyright (c) 2016, Datadog <info@datadoghq.com>"
 import,github.com/cespare/xxhash/v2,MIT,Copyright (c) 2016 Caleb Spare
 import,github.com/cilium/ebpf,MIT,"Copyright (c) 2017 Nathan Sweet | Copyright (c) 2018, 2019 Cloudflare | Copyright (c) 2019 Authors of Cilium"
