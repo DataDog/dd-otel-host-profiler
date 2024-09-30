@@ -184,6 +184,7 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 		}
 	}
 
+	log.Debugf("Existing symbols for executable %s with build: %v", e, symbolSource)
 	return symbolSource, nil
 }
 
@@ -225,8 +226,9 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	}
 
 	if existingSymbolSource >= symbolSource {
-		log.Debugf("Skipping symbol upload for executable %s: existing symbols with source %v", fileName,
+		log.Infof("Skipping symbol upload for executable %s: existing symbols with source %v", fileName,
 			existingSymbolSource.String())
+		return true
 	}
 
 	symbolPath := debugElf.actualFileName
