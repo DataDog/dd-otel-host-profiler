@@ -66,8 +66,6 @@ func (d *DatadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []stri
 		return nil, fmt.Errorf("error marshaling symbols query request: %w", err)
 	}
 
-	fmt.Printf("Querying symbols with request: %s\n", string(body))
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.symbolQueryURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
