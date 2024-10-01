@@ -12,11 +12,6 @@ Datadog OTEL eBPF profiler.
 > For a more stable and tested alternative, we strongly recommend using [`otel-profiling-agent`](https://github.com/DataDog/otel-profiling-agent) in the meantime.  
 > Use this repository at your own risk.
 
-> [!WARNING]
-> This profiler is currently **experimental** and has not undergone thorough testing. Features and functionality may be unstable or incomplete.  
-> For a more stable and tested alternative, we strongly recommend using [`otel-profiling-agent`](https://github.com/your-organization/otel-profiling-agent) in the meantime.  
-> Use this repository at your own risk.
-
 # Overview
 
 dd-otel-host-profiler is based on [open-telemetry/opentelemetry-ebpf-profiler](https://github.com/open-telemetry/opentelemetry-ebpf-profiler). Please refer to our [documentation](https://docs.datadoghq.com/profiler/) for a list of officially supported Datadog profilers.
@@ -48,7 +43,7 @@ For compiled languages (C/C++/Rust/Go), the profiler can upload local symbols (w
 This feature requires being part of our private beta program for the OpenTelemetry profiler. Please reach out to Datadog support to get access.
 
 To enable local symbol upload:
-1. Set the `DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD` environment variable to `true`.
+1. Set the `DD_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS` environment variable to `true`.
 2. Provide a Datadog API key through the `DD_API_KEY` environment variable.
 3. Set the `DD_SITE` environment variable to [your Datadog site](https://docs.datadoghq.com/getting_started/site/#access-the-datadog-site) (e.g. `datadoghq.com`, `datadoghq.eu`, `us5.datadoghq.com`, ...).
 
@@ -62,9 +57,9 @@ First, create a `.env` file with the following content:
 ARCH=amd64 # required
 DD_API_KEY=your-api-key # required
 DD_SITE=datadoghq.com # optional, defaults to "datadoghq.com"
-DD_OTEL_HOST_PROFILER_SERVICE=my-service # optional, defaults to "dd-otel-host-profiler"
-DD_OTEL_HOST_PROFILER_REPORTER_INTERVAL=10s # optional, defaults to 60s
-DD_EXPERIMENTAL_LOCAL_SYMBOL_UPLOAD=true # optional, defaults to false
+DD_SERVICE=my-service # optional, defaults to "dd-otel-host-profiler"
+DD_PROFILING_UPLOAD_PERIOD=10s # optional, defaults to 60s
+DD_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS=true # optional, defaults to false
 ```
 
 Then, you can run the profiler with the following command:

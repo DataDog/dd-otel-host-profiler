@@ -80,15 +80,15 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 	}
 
 	if cfg.APIKey == "" {
-		return nil, errors.New("DD_API_KEY is not set")
+		return nil, errors.New("API key is not set")
 	}
 
 	if cfg.APPKey == "" {
-		return nil, errors.New("DD_APP_KEY is not set")
+		return nil, errors.New("application key is not set")
 	}
 
 	if cfg.Site == "" {
-		return nil, errors.New("DD_SITE is not set")
+		return nil, errors.New("site is not set")
 	}
 
 	intakeURL, err := url.JoinPath("https://sourcemap-intake."+cfg.Site, sourceMapEndpoint)

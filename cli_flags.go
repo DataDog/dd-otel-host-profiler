@@ -204,7 +204,7 @@ func parseArgs() (*arguments, error) {
 				Destination: &args.reporterInterval,
 			}, false),
 			addDefaultEnvVar(&cli.UintFlag{
-				Name:        "rate",
+				Name:        "sampling-rate",
 				Value:       defaultArgSamplesPerSecond,
 				Usage:       "Set the frequency (in Hz) of stack trace sampling.",
 				Destination: &args.samplesPerSecond,
