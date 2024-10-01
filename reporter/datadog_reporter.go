@@ -116,18 +116,6 @@ type DatadogReporter struct {
 	// samplesPerSecond is the number of samples per second.
 	samplesPerSecond int
 
-	// hostID is the unique identifier of the host.
-	hostID string
-
-	// kernelVersion is the version of the kernel.
-	kernelVersion string
-
-	// hostName is the name of the host.
-	hostName string
-
-	// ipAddress is the IP address of the host.
-	ipAddress string
-
 	// intakeURL is the intake URL
 	intakeURL string
 
@@ -339,11 +327,7 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 
 	r := &DatadogReporter{
 		version:                   cfg.Version,
-		kernelVersion:             cfg.KernelVersion,
-		hostName:                  cfg.HostName,
-		ipAddress:                 cfg.IPAddress,
 		samplesPerSecond:          cfg.SamplesPerSecond,
-		hostID:                    strconv.FormatUint(cfg.HostID, 10),
 		stopSignal:                make(chan libpf.Void),
 		fallbackSymbols:           fallbackSymbols,
 		executables:               executables,
