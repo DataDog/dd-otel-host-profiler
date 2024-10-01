@@ -34,8 +34,8 @@ type Config struct {
 	SamplesPerSecond int
 	// ReportInterval defines the interval at which the agent reports data to the collection agent.
 	ReportInterval time.Duration
-	// CPUProfileDump defines a file where the agent should dump pprof CPU profile.
-	CPUProfileDump string
+	// PprofPrefix defines a file where the agent should dump pprof CPU profile.
+	PprofPrefix string
 	// Tags is a list of tags to be sent to the collection agent.
 	Tags Tags
 	// Whether to include timestamps on samples for the timeline feature

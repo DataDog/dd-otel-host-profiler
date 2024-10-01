@@ -51,7 +51,7 @@ type arguments struct {
 	probabilisticThreshold uint64
 	reporterInterval       time.Duration
 	samplesPerSecond       uint64
-	cpuProfileDump         string
+	pprofPrefix            string
 	sendErrorFrames        bool
 	serviceName            string
 	serviceVersion         string
@@ -237,9 +237,9 @@ func parseArgs() (*arguments, error) {
 				Destination: &args.verboseMode,
 			}, false),
 			addDefaultEnvVar(&cli.StringFlag{
-				Name:        "dump-cpuprofile",
-				Usage:       "Dump CPU pprof profile to `FILE`.",
-				Destination: &args.cpuProfileDump,
+				Name:        "pprof-prefix",
+				Usage:       "Dump pprof profile to `FILE`.",
+				Destination: &args.pprofPrefix,
 			}, false),
 			addDefaultEnvVar(&cli.StringFlag{
 				Name: "node",

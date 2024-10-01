@@ -119,8 +119,8 @@ type DatadogReporter struct {
 	// intakeURL is the intake URL
 	intakeURL string
 
-	// cpuProfilerDump defines a file where the agent should dump pprof CPU profile.
-	cpuProfilerDump string
+	// pprofPrefix defines a file where the agent should dump pprof CPU profile.
+	pprofPrefix string
 
 	// tags is a list of tags alongside the profile.
 	tags Tags
@@ -337,7 +337,7 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceFramesCounts{}),
 		processes:                 processes,
 		intakeURL:                 cfg.IntakeURL,
-		cpuProfilerDump:           cfg.CPUProfileDump,
+		pprofPrefix:               cfg.PprofPrefix,
 		apiKey:                    cfg.APIKey,
 		symbolUploader:            symbolUploader,
 		tags:                      cfg.Tags,
@@ -401,9 +401,11 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		return fmt.Errorf("failed to compress profile: %w", err)
 	}
 
-	if r.cpuProfilerDump != "" {
+	if r.pprofPrefix != "" {
 		// write profile to disk
-		f, err := os.Create(r.cpuProfilerDump)
+		endTime := time.Unix(0, int64(endTS))
+		profileName := fmt.Sprintf("%s%s.pprof", r.pprofPrefix, endTime.Format("20060102T150405Z"))
+		f, err := os.Create(profileName)
 		if err != nil {
 			return err
 		}

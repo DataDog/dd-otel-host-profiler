@@ -208,7 +208,7 @@ func mainWithExitCode() exitCode {
 		ReportInterval:   intervals.ReportInterval(),
 		CacheSize:        traceHandlerCacheSize,
 		SamplesPerSecond: int(args.samplesPerSecond),
-		CPUProfileDump:   args.cpuProfileDump,
+		PprofPrefix:      args.pprofPrefix,
 		Tags:             validatedTags,
 		Timeline:         args.timeline,
 		APIKey:           apiKey,
