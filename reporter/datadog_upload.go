@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -39,9 +38,8 @@ func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endT
 	req.Header.Set("Dd-Evp-Origin", profilerName)
 	req.Header.Set("Dd-Evp-Origin-Version", profilerVersion)
 	if apiKey != "" {
-		req.Header.Set("DD-API-KEY", apiKey)
+		req.Header.Set("Dd-Api-Key", apiKey)
 	}
-	fmt.Printf("url: %v, apiKey: %v\n", url, apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

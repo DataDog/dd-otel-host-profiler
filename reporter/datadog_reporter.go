@@ -425,7 +425,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		MakeTag("profiler_name", profilerName),
 		MakeTag("profiler_version", r.version),
 		MakeTag("cpu_arch", runtime.GOARCH),
-		MakeTag("profile_seq", fmt.Sprintf("%d", r.profileSeq)))
+		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)))
 
 	r.profileSeq++
 

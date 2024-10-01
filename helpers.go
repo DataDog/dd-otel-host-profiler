@@ -299,7 +299,7 @@ func ValidateTags(tags string) reporter.Tags {
 	return validatedTags
 }
 
-func AddTagsFromArgs(tags *reporter.Tags, args arguments) {
+func addTagsFromArgs(tags *reporter.Tags, args *arguments) {
 	if args.environment != "" {
 		*tags = append(*tags, reporter.MakeTag("env", args.environment))
 	}

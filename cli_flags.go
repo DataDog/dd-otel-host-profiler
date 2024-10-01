@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -69,12 +70,13 @@ type arguments struct {
 	cmd                    *cli.Command
 }
 
-func AddDefaultEnvVar[T any, C any, VC cli.ValueCreator[T, C]](flag *cli.FlagBase[T, C, VC], experimental bool) *cli.FlagBase[T, C, VC] {
+func addDefaultEnvVar[T any, C any, VC cli.ValueCreator[T, C]](flag *cli.FlagBase[T, C, VC],
+	experimental bool) *cli.FlagBase[T, C, VC] {
 	prefix := "DD_PROFILING_"
 	if experimental {
 		prefix += "EXPERIMENTAL_"
 	}
-	name := strings.Replace(strings.ToUpper(flag.Name), "-", "_", -1)
+	name := strings.ReplaceAll(strings.ToUpper(flag.Name), "-", "_")
 	flag.Sources.Append(cli.EnvVars(prefix + name))
 	return flag
 }
@@ -99,13 +101,13 @@ func parseArgs() (*arguments, error) {
 		Copyright: copyright,
 		Version:   versionInfo.Version,
 		Flags: []cli.Flag{
-			AddDefaultEnvVar(&cli.UintFlag{
+			addDefaultEnvVar(&cli.UintFlag{
 				Name:        "bpf-log-level",
 				Value:       0,
 				Usage:       "Log level of the eBPF verifier output (0,1,2).",
 				Destination: &args.bpfVerifierLogLevel,
 			}, false),
-			AddDefaultEnvVar(&cli.UintFlag{
+			addDefaultEnvVar(&cli.UintFlag{
 				Name:  "bpf-log-size",
 				Value: cebpf.DefaultVerifierLogSize,
 				Usage: "Size in bytes that will be allocated for the eBPF verifier output. " +
@@ -148,7 +150,7 @@ func parseArgs() (*arguments, error) {
 				Sources:     cli.EnvVars("DD_TAGS"),
 				Destination: &args.tags,
 			},
-			AddDefaultEnvVar(
+			addDefaultEnvVar(
 				&cli.UintFlag{
 					Name:  "map-scale-factor",
 					Value: defaultArgMapScaleFactor,
@@ -158,13 +160,13 @@ func parseArgs() (*arguments, error) {
 						defaultArgMapScaleFactor, maxArgMapScaleFactor),
 					Destination: &args.mapScaleFactor,
 				}, false),
-			AddDefaultEnvVar(&cli.DurationFlag{
+			addDefaultEnvVar(&cli.DurationFlag{
 				Name:        "monitor-interval",
 				Value:       defaultArgMonitorInterval,
 				Usage:       "Set the monitor interval in seconds.",
 				Destination: &args.monitorInterval,
 			}, false),
-			AddDefaultEnvVar(&cli.DurationFlag{
+			addDefaultEnvVar(&cli.DurationFlag{
 				Name:  "clock-sync-interval",
 				Value: defaultClockSyncInterval,
 				Usage: "Set the sync interval with the realtime clock. " +
@@ -172,7 +174,7 @@ func parseArgs() (*arguments, error) {
 					"on agent startup, but not periodically.",
 				Destination: &args.clockSyncInterval,
 			}, false),
-			AddDefaultEnvVar(&cli.BoolFlag{
+			addDefaultEnvVar(&cli.BoolFlag{
 				Name:  "no-kernel-version-check",
 				Value: false,
 				Usage: "Disable checking kernel version for eBPF support. " +
@@ -185,7 +187,7 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Time interval for which probabilistic profiling will be enabled or disabled.",
 				Destination: &args.probabilisticInterval,
 			},
-			AddDefaultEnvVar(&cli.UintFlag{
+			addDefaultEnvVar(&cli.UintFlag{
 				Name:  "probabilistic-threshold",
 				Value: defaultProbabilisticThreshold,
 				Usage: fmt.Sprintf("If set to a value between 1 and %d will enable probabilistic profiling: "+
@@ -195,13 +197,13 @@ func parseArgs() (*arguments, error) {
 					tracer.ProbabilisticThresholdMax-1, tracer.ProbabilisticThresholdMax-1),
 				Destination: &args.probabilisticThreshold,
 			}, false),
-			AddDefaultEnvVar(&cli.DurationFlag{
+			addDefaultEnvVar(&cli.DurationFlag{
 				Name:        "upload-period",
 				Value:       defaultArgReporterInterval,
 				Usage:       "Set the reporter's interval in seconds.",
 				Destination: &args.reporterInterval,
 			}, false),
-			AddDefaultEnvVar(&cli.UintFlag{
+			addDefaultEnvVar(&cli.UintFlag{
 				Name:        "rate",
 				Value:       defaultArgSamplesPerSecond,
 				Usage:       "Set the frequency (in Hz) of stack trace sampling.",
@@ -214,38 +216,38 @@ func parseArgs() (*arguments, error) {
 				Destination: &args.timeline,
 				Sources:     cli.EnvVars("DD_PROFILING_TIMELINE_ENABLED"),
 			},
-			AddDefaultEnvVar(&cli.BoolFlag{
+			addDefaultEnvVar(&cli.BoolFlag{
 				Name:        "send-error-frames",
 				Value:       defaultArgSendErrorFrames,
 				Usage:       "Send error frames",
 				Destination: &args.sendErrorFrames,
 			}, false),
-			AddDefaultEnvVar(&cli.StringFlag{
+			addDefaultEnvVar(&cli.StringFlag{
 				Name:        "tracers",
 				Aliases:     []string{"t"},
 				Value:       "all",
 				Usage:       "Comma-separated list of interpreter tracers to include.",
 				Destination: &args.tracers,
 			}, false),
-			AddDefaultEnvVar(&cli.BoolFlag{
+			addDefaultEnvVar(&cli.BoolFlag{
 				Name:        "verbose",
 				Aliases:     []string{"v"},
 				Value:       false,
 				Usage:       "Enable verbose logging and debugging capabilities.",
 				Destination: &args.verboseMode,
 			}, false),
-			AddDefaultEnvVar(&cli.StringFlag{
+			addDefaultEnvVar(&cli.StringFlag{
 				Name:        "dump-cpuprofile",
 				Usage:       "Dump CPU pprof profile to `FILE`.",
 				Destination: &args.cpuProfileDump,
 			}, false),
-			AddDefaultEnvVar(&cli.StringFlag{
+			addDefaultEnvVar(&cli.StringFlag{
 				Name: "node",
 				Usage: "The name of the node that the profiler is running on. " +
 					"If on Kubernetes, this must match the Kubernetes node name.",
 				Destination: &args.node,
 			}, false),
-			AddDefaultEnvVar(&cli.BoolFlag{
+			addDefaultEnvVar(&cli.BoolFlag{
 				Name:        "upload-symbols",
 				Value:       false,
 				Usage:       "Enable local symbol upload.",
@@ -253,17 +255,18 @@ func parseArgs() (*arguments, error) {
 				Destination: &args.uploadSymbols,
 			}, true),
 			&cli.BoolWithInverseFlag{
-				BoolFlag: AddDefaultEnvVar(&cli.BoolFlag{
+				BoolFlag: addDefaultEnvVar(&cli.BoolFlag{
 					Name:  "upload-dynamic-symbols",
 					Usage: "Enable dynamic symbols upload.",
 					// Cannot set default value to true because it fails at runtime with:
-					// "Failure to parse arguments: cannot set both flags `--upload-dynamic-symbols` and `--no-upload-dynamic-symbols`"
+					//   "Failure to parse arguments: cannot set both flags `--upload-dynamic-symbols`
+					//    and `--no-upload-dynamic-symbols`"
 					// Value:       true,
 					DefaultText: "true",
 					Hidden:      true,
 				}, true),
 			},
-			AddDefaultEnvVar(&cli.BoolFlag{
+			addDefaultEnvVar(&cli.BoolFlag{
 				Name:        "upload-symbols-dry-run",
 				Value:       false,
 				Usage:       "Local symbol upload dry-run.",
@@ -280,7 +283,7 @@ func parseArgs() (*arguments, error) {
 					if s == "" || isAPIKeyValid(s) {
 						return nil
 					}
-					return fmt.Errorf("API key is not valid")
+					return errors.New("API key is not valid")
 				},
 			},
 			&cli.StringFlag{
@@ -293,7 +296,7 @@ func parseArgs() (*arguments, error) {
 					if s == "" || isAPPKeyValid(s) {
 						return nil
 					}
-					return fmt.Errorf("APP key is not valid")
+					return errors.New("APP key is not valid")
 				},
 			},
 			&cli.StringFlag{
@@ -304,7 +307,7 @@ func parseArgs() (*arguments, error) {
 				Sources:     cli.EnvVars("DD_SITE"),
 				Destination: &args.site,
 			},
-			AddDefaultEnvVar(&cli.BoolFlag{
+			addDefaultEnvVar(&cli.BoolFlag{
 				Name:        "agentless",
 				Value:       false,
 				Usage:       "Run the profiler in agentless mode.",
@@ -313,10 +316,13 @@ func parseArgs() (*arguments, error) {
 			}, false),
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
+			// Workaround for the fact that cli.BoolWithInverseFlag does not work with a false default value
 			if cmd.IsSet("upload-dynamic-symbols") {
 				args.uploadDynamicSymbols = cmd.Bool("upload-dynamic-symbols")
 			} else {
-				cmd.Set("upload-dynamic-symbols", "true")
+				if cmd.Set("upload-dynamic-symbols", "true") != nil {
+					return errors.New("cannot set flag `--upload-dynamic-symbols`")
+				}
 				args.uploadDynamicSymbols = true
 			}
 			args.cmd = cmd
