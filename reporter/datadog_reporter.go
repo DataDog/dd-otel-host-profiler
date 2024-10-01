@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"net/url"
 	"os"
 	"path"
 	"runtime"
@@ -34,7 +33,6 @@ import (
 var _ reporter.Reporter = (*DatadogReporter)(nil)
 
 const profilerName = "dd-otel-host-profiler"
-const profilingEndPoint = "/profiling/v1/input"
 
 // execInfo enriches an executable with additional metadata.
 type execInfo struct {
@@ -130,8 +128,8 @@ type DatadogReporter struct {
 	// ipAddress is the IP address of the host.
 	ipAddress string
 
-	// agentAddr is the address of the Datadog agent.
-	agentAddr string
+	// intakeURL is the intake URL
+	intakeURL string
 
 	// cpuProfilerDump defines a file where the agent should dump pprof CPU profile.
 	cpuProfilerDump string
@@ -141,6 +139,9 @@ type DatadogReporter struct {
 
 	// timeline is a flag to include timestamps on samples for the timeline feature.
 	timeline bool
+
+	// API key for agentless mode
+	apiKey string
 
 	symbolUploader *DatadogSymbolUploader
 
@@ -351,8 +352,9 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 		containerMetadataProvider: p,
 		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceFramesCounts{}),
 		processes:                 processes,
-		agentAddr:                 cfg.AgentURL,
+		intakeURL:                 cfg.IntakeURL,
 		cpuProfilerDump:           cfg.CPUProfileDump,
+		apiKey:                    cfg.APIKey,
 		symbolUploader:            symbolUploader,
 		tags:                      cfg.Tags,
 		timeline:                  cfg.Timeline,
@@ -444,15 +446,9 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 	r.profileSeq++
 
 	log.Infof("Tags: %v", tags.String())
-	profilingURL, err := url.JoinPath(r.agentAddr, profilingEndPoint)
-	if err != nil {
-		return err
-	}
-	err = uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
-		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), profilingURL,
-		tags, r.version)
-
-	return err
+	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
+		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), r.intakeURL,
+		tags, r.version, r.apiKey)
 }
 
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.

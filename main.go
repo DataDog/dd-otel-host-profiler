@@ -184,8 +184,27 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to create container metadata provider: %v", err)
 	}
 
+	var intakeURL string
+	apiKey := ""
+	if args.agentless {
+		if args.apiKey == "" {
+			return failure("Datadog API key is required when running in agentless mode")
+		}
+		url, err := intakeURLForSite(args.site)
+		if err != nil {
+			return failure("Failed to get agentless URL from site %v: %v", args.site, err)
+		}
+		intakeURL = url
+		apiKey = args.apiKey
+	} else {
+		intakeURL, err = intakeURLForAgent(args.collAgentAddr)
+		if err != nil {
+			return failure("Failed to get intake URL from agent URL %v: %v", args.collAgentAddr, err)
+		}
+	}
+
 	rep, err := reporter.Start(mainCtx, &reporter.Config{
-		AgentURL:         args.collAgentAddr,
+		IntakeURL:        intakeURL,
 		Version:          versionInfo.Version,
 		ReportInterval:   intervals.ReportInterval(),
 		CacheSize:        traceHandlerCacheSize,
@@ -196,13 +215,14 @@ func mainWithExitCode() exitCode {
 		CPUProfileDump:   args.cpuProfileDump,
 		Tags:             validatedTags,
 		Timeline:         args.timeline,
+		APIKey:           apiKey,
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,
 			DryRun:               args.uploadSymbolsDryRun,
-			DDAPIKey:             args.ddAPIKey,
-			DDAPPKey:             args.ddAPPKey,
-			DDSite:               args.ddSite,
+			APIKey:               args.apiKey,
+			APPKey:               args.appKey,
+			Site:                 args.site,
 			Version:              args.serviceVersion,
 		},
 	}, containerMetadataProvider)

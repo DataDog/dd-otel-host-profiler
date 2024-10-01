@@ -13,12 +13,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"syscall"
+	"unicode"
 
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
@@ -307,4 +309,41 @@ func AddTagsFromArgs(tags *reporter.Tags, args arguments) {
 	if args.serviceVersion != "" {
 		*tags = append(*tags, reporter.MakeTag("version", args.serviceVersion))
 	}
+}
+
+// isAPIKeyValid reports whether the given string is a structurally valid API key
+func isAPIKeyValid(key string) bool {
+	if len(key) != 32 {
+		return false
+	}
+	for _, c := range key {
+		if c > unicode.MaxASCII || (!unicode.IsLower(c) && !unicode.IsNumber(c)) {
+			return false
+		}
+	}
+	return true
+}
+
+// isAPPKeyValid reports whether the given string is a structurally valid APP key
+func isAPPKeyValid(key string) bool {
+	if len(key) != 40 {
+		return false
+	}
+	for _, c := range key {
+		if c > unicode.MaxASCII || (!unicode.IsLower(c) && !unicode.IsNumber(c)) {
+			return false
+		}
+	}
+	return true
+}
+
+func intakeURLForSite(site string) (string, error) {
+	u := fmt.Sprintf("https://intake.profile.%s/api/v2/profile", site)
+	_, err := url.Parse(u)
+	return u, err
+}
+
+func intakeURLForAgent(agentURL string) (string, error) {
+	const profilingEndPoint = "/profiling/v1/input"
+	return url.JoinPath(agentURL, profilingEndPoint)
 }

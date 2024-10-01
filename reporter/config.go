@@ -26,8 +26,8 @@ func MakeTag(key, value string) Tag {
 type Config struct {
 	// Version defines the version of the agent.
 	Version string
-	// AgentURL defines the destination of the backend connection.
-	AgentURL string
+	// IntakeURL defines the URL of profiling intake.
+	IntakeURL string
 	// CacheSize defines the size of the reporter caches.
 	CacheSize uint32
 	// samplesPerSecond defines the number of samples per second.
@@ -48,6 +48,8 @@ type Config struct {
 	Tags Tags
 	// Whether to include timestamps on samples for the timeline feature
 	Timeline bool
+	// API key for agentless mode
+	APIKey string
 	// SymbolUploaderConfig defines the configuration for the symbol uploader.
 	SymbolUploaderConfig SymbolUploaderConfig
 }
@@ -60,11 +62,11 @@ type SymbolUploaderConfig struct {
 	// DryRun defines whether the agent should upload debug symbols to the backend in dry-run mode.
 	DryRun bool
 	// DataDog API key
-	DDAPIKey string
+	APIKey string
 	// DataDog APP key
-	DDAPPKey string
-	// DDSite is the site to upload symbols to.
-	DDSite string
+	APPKey string
+	// Site is the site to upload symbols to.
+	Site string
 	// Version is the version of the profiler.
 	Version string
 }

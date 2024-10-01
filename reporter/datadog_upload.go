@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -23,7 +24,7 @@ type profileData struct {
 }
 
 func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endTime time.Time,
-	url string, tags Tags, agentVersion string) error {
+	url string, tags Tags, profilerVersion string, apiKey string) error {
 	contentType, body, err := buildMultipartForm(profiles, startTime, endTime, tags)
 	if err != nil {
 		return err
@@ -36,10 +37,11 @@ func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endT
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Dd-Evp-Origin", profilerName)
-	req.Header.Set("Dd-Evp-Origin-Version", agentVersion)
-
-	// If you're uploading directly to our intake, add the API key here:
-	// req.Header.Set("DD-API-KEY", "xxxx")
+	req.Header.Set("Dd-Evp-Origin-Version", profilerVersion)
+	if apiKey != "" {
+		req.Header.Set("DD-API-KEY", apiKey)
+	}
+	fmt.Printf("url: %v, apiKey: %v\n", url, apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

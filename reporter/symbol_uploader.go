@@ -79,19 +79,19 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		return nil, fmt.Errorf("objcopy is not available: %w", err)
 	}
 
-	if cfg.DDAPIKey == "" {
+	if cfg.APIKey == "" {
 		return nil, errors.New("DD_API_KEY is not set")
 	}
 
-	if cfg.DDAPPKey == "" {
+	if cfg.APPKey == "" {
 		return nil, errors.New("DD_APP_KEY is not set")
 	}
 
-	if cfg.DDSite == "" {
+	if cfg.Site == "" {
 		return nil, errors.New("DD_SITE is not set")
 	}
 
-	intakeURL, err := url.JoinPath("https://sourcemap-intake."+cfg.DDSite, sourceMapEndpoint)
+	intakeURL, err := url.JoinPath("https://sourcemap-intake."+cfg.Site, sourceMapEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
@@ -101,14 +101,14 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
-	symbolQuerier, err := NewDatadogSymbolQuerier(cfg.DDSite, cfg.DDAPIKey, cfg.DDAPPKey)
+	symbolQuerier, err := NewDatadogSymbolQuerier(cfg.Site, cfg.APIKey, cfg.APPKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
 	}
 
 	return &DatadogSymbolUploader{
-		ddAPIKey:             cfg.DDAPIKey,
-		ddAPPKey:             cfg.DDAPPKey,
+		ddAPIKey:             cfg.APIKey,
+		ddAPPKey:             cfg.APPKey,
 		intakeURL:            intakeURL,
 		version:              cfg.Version,
 		dryRun:               cfg.DryRun,
