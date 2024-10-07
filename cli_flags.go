@@ -307,13 +307,6 @@ func parseArgs() (*arguments, error) {
 				Sources:     cli.EnvVars("DD_SITE"),
 				Destination: &args.site,
 			},
-			addDefaultEnvVar(&cli.BoolFlag{
-				Name:        "agentless",
-				Value:       false,
-				Usage:       "Run the profiler in agentless mode.",
-				Hidden:      true,
-				Destination: &args.agentless,
-			}, false),
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			// Workaround for the fact that cli.BoolWithInverseFlag does not work with a false default value
