@@ -214,15 +214,15 @@ func (r *DatadogReporter) ReportFallbackSymbol(frameID libpf.FrameID, symbol str
 
 // ExecutableMetadata accepts a fileID with the corresponding filename
 // and caches this information.
-func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, fileName, buildID string,
+func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, filePath, buildID string,
 	interp libpf.InterpreterType, opener process.FileOpener) {
 	r.executables.Add(fileID, execInfo{
-		fileName: fileName,
+		fileName: path.Base(filePath),
 		buildID:  buildID,
 	})
 
 	if r.symbolUploader != nil && interp == libpf.Native {
-		r.symbolUploader.UploadSymbols(fileID, fileName, buildID, opener)
+		r.symbolUploader.UploadSymbols(fileID, filePath, buildID, opener)
 	}
 }
 
