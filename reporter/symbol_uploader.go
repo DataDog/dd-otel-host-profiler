@@ -53,7 +53,7 @@ var debugInfoSectionNames = []string{".debug_info", ".zdebug_info"}
 var globalDebugDirectories = []string{"/usr/lib/debug"}
 
 type uploadData struct {
-	fileName string
+	filePath string
 	fileID   libpf.FileID
 	buildID  string
 	opener   process.FileOpener
@@ -133,12 +133,12 @@ func NewDatadogSymbolUploader(version string) (*DatadogSymbolUploader, error) {
 	}, nil
 }
 
-func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, fileName, buildID string,
+func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, buildID string,
 	opener process.FileOpener) {
 	_, ok := d.uploadCache.Get(fileID)
 	if ok {
 		log.Debugf("Skipping symbol upload for executable %s: already uploaded",
-			fileName)
+			filePath)
 		return
 	}
 
@@ -150,12 +150,12 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, fileName, bui
 	// do not seem to be worth it.
 	// We can revisit this choice later if we switch to a different symbol extraction method.
 	select {
-	case d.uploadQueue <- uploadData{fileName, fileID, buildID, opener}:
+	case d.uploadQueue <- uploadData{filePath, fileID, buildID, opener}:
 		// Record immediately to avoid duplicate uploads
 		d.uploadCache.Add(fileID, struct{}{})
 	default:
 		log.Warnf("Symbol upload queue is full, skipping symbol upload for file %q with file ID %q and build ID %q",
-			fileName, fileID.StringNoQuotes(), buildID)
+			filePath, fileID.StringNoQuotes(), buildID)
 	}
 }
 
@@ -190,51 +190,51 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 
 // Returns true if the upload was successful, false otherwise
 func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadData) bool {
-	fileName := uploadData.fileName
+	filePath := uploadData.filePath
 	fileID := uploadData.fileID
 
-	elfWrapper, err := openELF(fileName, uploadData.opener)
+	elfWrapper, err := openELF(filePath, uploadData.opener)
 	// If the ELF file is not found, we ignore it
 	// This can happen for short-lived processes that are already gone by the time
 	// we try to upload symbols
 	if err != nil {
 		log.Debugf("Skipping symbol upload for executable %s: %v",
-			uploadData.fileName, err)
+			uploadData.filePath, err)
 		return false
 	}
 	defer elfWrapper.Close()
 
 	debugElf, symbolSource := elfWrapper.findSymbols()
 	if debugElf == nil {
-		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", fileName)
+		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", filePath)
 		return false
 	}
 	if debugElf != elfWrapper {
 		defer debugElf.Close()
 	}
 	if symbolSource == DynamicSymbolTable && !d.uploadDynamicSymbols {
-		log.Debugf("Skipping symbol upload for executable %s: dynamic symbol table upload not allowed", fileName)
+		log.Debugf("Skipping symbol upload for executable %s: dynamic symbol table upload not allowed", filePath)
 		return false
 	}
 
-	e := newExecutableMetadata(fileName, elfWrapper.elfFile, fileID, symbolSource, d.version)
+	e := newExecutableMetadata(filePath, elfWrapper.elfFile, fileID, symbolSource, d.version)
 
 	existingSymbolSource, err := d.GetExistingSymbolsOnBackend(ctx, e)
 	if err != nil {
-		log.Debugf("Failed to get existing symbols for executable %s: %v", fileName, err)
+		log.Debugf("Failed to get existing symbols for executable %s: %v", filePath, err)
 		return false
 	}
 
 	if existingSymbolSource >= symbolSource {
-		log.Infof("Skipping symbol upload for executable %s: existing symbols with source %v", fileName,
+		log.Infof("Skipping symbol upload for executable %s: existing symbols with source %v", filePath,
 			existingSymbolSource.String())
 		return true
 	}
 
-	symbolPath := debugElf.actualFileName
+	symbolPath := debugElf.actualFilePath
 
 	if d.dryRun {
-		log.Infof("Dry run: would upload symbols %s for executable: %s", debugElf.fileName, e)
+		log.Infof("Dry run: would upload symbols %s for executable: %s", debugElf.filePath, e)
 		return true
 	}
 
@@ -504,8 +504,8 @@ func HasDWARFData(f *pfelf.File) bool {
 type elfWrapper struct {
 	reader         process.ReadAtCloser
 	elfFile        *pfelf.File
-	fileName       string
-	actualFileName string
+	filePath       string
+	actualFilePath string
 	opener         process.FileOpener
 }
 
@@ -513,12 +513,12 @@ func (e *elfWrapper) Close() {
 	e.reader.Close()
 }
 
-func (e *elfWrapper) openELF(filename string) (*elfWrapper, error) {
-	return openELF(filename, e.opener)
+func (e *elfWrapper) openELF(filePath string) (*elfWrapper, error) {
+	return openELF(filePath, e.opener)
 }
 
-func openELF(filename string, opener process.FileOpener) (*elfWrapper, error) {
-	r, actualFilename, err := opener.Open(filename)
+func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
+	r, actualFilePath, err := opener.Open(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +532,7 @@ func openELF(filename string, opener process.FileOpener) (*elfWrapper, error) {
 		r.Close()
 		return nil, err
 	}
-	return &elfWrapper{reader: r, elfFile: ef, fileName: filename, actualFileName: actualFilename, opener: opener}, nil
+	return &elfWrapper{reader: r, elfFile: ef, filePath: filePath, actualFilePath: actualFilePath, opener: opener}, nil
 }
 
 // findSymbols attempts to find a symbol source for the elf file, it returns an elfWrapper around the elf file
@@ -542,7 +542,7 @@ func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 		return e, DebugInfo
 	}
 
-	log.Debugf("No debug symbols found in %s", e.fileName)
+	log.Debugf("No debug symbols found in %s", e.filePath)
 
 	// Check if there is a separate debug ELF file for this executable
 	// following the same order as GDB
@@ -555,7 +555,7 @@ func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 			return debugElf, DebugInfo
 		}
 		debugElf.Close()
-		log.Debugf("No debug symbols found in buildID link file %s", debugElf.fileName)
+		log.Debugf("No debug symbols found in buildID link file %s", debugElf.filePath)
 	}
 
 	// Then, check based on the debug link
@@ -564,7 +564,7 @@ func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 		if HasDWARFData(debugElf.elfFile) {
 			return debugElf, DebugInfo
 		}
-		log.Debugf("No debug symbols found in debug link file %s", debugElf.fileName)
+		log.Debugf("No debug symbols found in debug link file %s", debugElf.filePath)
 		debugElf.Close()
 	}
 
@@ -584,7 +584,7 @@ func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 func (e *elfWrapper) findDebugSymbolsWithBuildID() *elfWrapper {
 	buildID, err := e.elfFile.GetBuildID()
 	if err != nil || len(buildID) < 2 {
-		log.Debugf("Failed to get build ID for %s: %v", e.fileName, err)
+		log.Debugf("Failed to get build ID for %s: %v", e.filePath, err)
 		return nil
 	}
 
@@ -617,7 +617,7 @@ func (e *elfWrapper) findDebugSymbolsWithDebugLink() *elfWrapper {
 	}
 
 	// Try to find the debug file
-	executablePath := filepath.Dir(e.fileName)
+	executablePath := filepath.Dir(e.filePath)
 
 	debugDirectories := []string{
 		executablePath,
