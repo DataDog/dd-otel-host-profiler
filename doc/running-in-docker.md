@@ -16,7 +16,7 @@ To run the profiler in Docker, you should ensure the following requirements are 
 1. The container has host PID enabled.
 2. The container is running in privileged mode.
 3. The container has the `SYS_ADMIN` capability.
-4. The `DD_OTEL_HOST_PROFILER_COLLECTION_AGENT` environment variable is set to the address of the Datadog agent: `http://<agent_address>:8126`.
+4. The `DD_TRACE_AGENT_URL` environment variable is set to the address of the Datadog agent: `http://<agent_address>:8126`.
 
 Additionally, to be able to resolve container names, the profiler needs access to the container runtime socket. This is done by mounting the container runtime socket into the profiler container.
 
@@ -27,8 +27,8 @@ docker run \
   --pid=host \
   --privileged \
   --cap-add=SYS_ADMIN \
-  -e DD_OTEL_HOST_PROFILER_COLLECTION_AGENT=http://<agent_address>:8126 \
-  -e DD_OTEL_HOST_PROFILER_SERVICE="$(hostname)" \
+  -e DD_TRACE_AGENT_URL=http://<agent_address>:8126 \
+  -e DD_SERVICE="$(hostname)" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/datadog/dd-otel-host-profiler:latest
 ```
