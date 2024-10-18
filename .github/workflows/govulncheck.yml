@@ -14,8 +14,6 @@ on:
     - cron: '00 00 * * *'
   workflow_dispatch:
 
-permissions: read-all
-
 jobs:
   govulncheck-tests:
     runs-on: ubuntu-latest

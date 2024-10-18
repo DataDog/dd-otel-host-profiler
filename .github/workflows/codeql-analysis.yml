@@ -14,8 +14,6 @@ on:
   schedule:
     - cron: '34 1 * * 0'
 
-permissions: read-all
-
 jobs:
   analyze:
     name: Analyze (Go)
