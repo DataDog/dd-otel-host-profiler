@@ -13,12 +13,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"syscall"
+	"unicode"
 
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
@@ -274,7 +276,7 @@ func enterNamespace(pid int, nsType string) (int, error) {
 }
 
 // ValidateTags parses and validates user-specified tags.
-// Each tag must match ValidTagRegex with ';' used as a separator.
+// Each tag must match ValidTagRegex with ',' used as a separator.
 // Tags that can't be validated are dropped.
 // The empty string is returned if no tags can be validated.
 func ValidateTags(tags string) reporter.Tags {
@@ -282,7 +284,7 @@ func ValidateTags(tags string) reporter.Tags {
 		return nil
 	}
 
-	splitTags := strings.Split(tags, ";")
+	splitTags := strings.Split(tags, ",")
 	validatedTags := make(reporter.Tags, 0, len(splitTags))
 
 	for _, tag := range splitTags {
@@ -295,4 +297,53 @@ func ValidateTags(tags string) reporter.Tags {
 	}
 
 	return validatedTags
+}
+
+func addTagsFromArgs(tags *reporter.Tags, args *arguments) {
+	if args.environment != "" {
+		*tags = append(*tags, reporter.MakeTag("env", args.environment))
+	}
+	if args.serviceName != "" {
+		*tags = append(*tags, reporter.MakeTag("service", args.serviceName))
+	}
+	if args.serviceVersion != "" {
+		*tags = append(*tags, reporter.MakeTag("version", args.serviceVersion))
+	}
+}
+
+// isAPIKeyValid reports whether the given string is a structurally valid API key
+func isAPIKeyValid(key string) bool {
+	if len(key) != 32 {
+		return false
+	}
+	for _, c := range key {
+		if c > unicode.MaxASCII || (!unicode.IsLower(c) && !unicode.IsNumber(c)) {
+			return false
+		}
+	}
+	return true
+}
+
+// isAPPKeyValid reports whether the given string is a structurally valid APP key
+func isAPPKeyValid(key string) bool {
+	if len(key) != 40 {
+		return false
+	}
+	for _, c := range key {
+		if c > unicode.MaxASCII || (!unicode.IsLower(c) && !unicode.IsNumber(c)) {
+			return false
+		}
+	}
+	return true
+}
+
+func intakeURLForSite(site string) (string, error) {
+	u := fmt.Sprintf("https://intake.profile.%s/api/v2/profile", site)
+	_, err := url.Parse(u)
+	return u, err
+}
+
+func intakeURLForAgent(agentURL string) (string, error) {
+	const profilingEndPoint = "/profiling/v1/input"
+	return url.JoinPath(agentURL, profilingEndPoint)
 }
