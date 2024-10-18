@@ -11,7 +11,9 @@ on:
         required: true
         type: string
         description: "Profiler version to use for the build"
-        
+
+permissions: read-all
+
 jobs:
   lint:
     name: Lint
