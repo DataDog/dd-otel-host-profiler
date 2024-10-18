@@ -5,6 +5,8 @@ on:
     tags:
       - 'v*'
 
+permissions: read-all
+
 jobs:
   versions:
     name: Determine versions
