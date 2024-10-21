@@ -18,12 +18,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - name: Check out
-      uses: actions/checkout@v4
+      uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
     - name: Get linter version
       id: linter-version
       run: (echo -n "version="; make linter-version) >> "$GITHUB_OUTPUT"
     - name: golangci-lint
-      uses: reviewdog/action-golangci-lint@v2
+      uses: reviewdog/action-golangci-lint@7708105983c614f7a2725e2172908b7709d1c3e4 # v2.6.2
       with:
         go_version: ${{ inputs.go-version }}
         golangci_lint_version: ${{ steps.linter-version.outputs.version }}
@@ -64,9 +64,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: Check out
-      uses: actions/checkout@v4
+      uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
     - name: Set up Go ${{ inputs.go-version }}
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
       with:
         go-version: ${{ inputs.go-version }}
         check-latest: true
@@ -88,9 +88,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
       - name: Set up Go ${{ inputs.go-version }}
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
         with:
           go-version: ${{ inputs.go-version }}
           check-latest: true
@@ -98,7 +98,7 @@ jobs:
         run: |
           make VERSION=${{ inputs.profiler-version }}
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: agent-${{ matrix.os == 'arm-4core-linux-ubuntu24.04' && 'aarch64' || 'x86_64' }}
           path: dd-otel-host-profiler
