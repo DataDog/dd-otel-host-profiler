@@ -5,3 +5,13 @@ updates:
     directory: /
     schedule:
       interval: daily
+    groups:
+      GitHub Actions:
+        applies-to: version-updates
+
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/docker"
+    schedule:
+      interval: "daily"
