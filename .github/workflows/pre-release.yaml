@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   versions:
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'publish-dev-test' }}
     name: Determine versions
     runs-on: ubuntu-24.04
     env:
