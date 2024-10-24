@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
     branches: ["**"]
+  workflow_call:
 
 permissions:
   contents: read
@@ -34,7 +34,6 @@ jobs:
         run: echo "version=${RELEASE_VERSION}-${GITHUB_SHA::7}.${{ github.run_id }}" >> "${GITHUB_OUTPUT}"
 
   build:
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'publish-dev-test' }}
     name: Build
     needs: [versions]
     uses: ./.github/workflows/build.yml

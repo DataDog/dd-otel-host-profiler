@@ -1,0 +1,19 @@
+name: Labeled
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  build-release:
+    if: ${{ github.event.label.name == 'publish-dev-test' }}
+    name: Build and Release
+    uses: ./.github/workflows/pre-release.yaml
+    secrets: inherit
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
