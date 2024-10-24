@@ -30,7 +30,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var ValidTagKeyRegex = regexp.MustCompile(`^a-zA-Z[a-zA-Z0-9-._/]+$`)
+var ValidTagKeyRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9-._/]+$`)
 var ValidTagValueRegex = regexp.MustCompile(`^[a-zA-Z0-9-:._/]*$`)
 
 func getKernelVersion() (string, error) {
