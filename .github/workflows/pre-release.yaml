@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action != 'labeled' || github.event.label.name == 'publish-dev-test' }
 
 jobs:
   versions:
