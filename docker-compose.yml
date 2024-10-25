@@ -1,17 +1,25 @@
 name: "dd-otel-host-profiler"
 
 services:
-  agent:
+  full-host-profiler:
     build:
       context: .
     privileged: true
     pid: "host"
+    environment:
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      DD_SERVICE: ${DD_SERVICE:-dd-otel-host-profiler-dev}
+      DD_HOST_PROFILING_UPLOAD_PERIOD: ${DD_HOST_PROFILING_UPLOAD_PERIOD:-60s}
+      DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS: ${DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS:-false}
+      DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_DYNAMIC_SYMBOLS: ${DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_DYNAMIC_SYMBOLS:-true}
+      VERSION: ${VERSION:-local-dev}
     volumes:
       - .:/app
       - /var/run/docker.sock:/var/run/docker.sock:ro
     secrets:
       - dd-api-key
-    command: ['/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key); sudo mount -t debugfs none /sys/kernel/debug && cd /app && make && sudo -E /app/dd-otel-host-profiler --service "$DD_OTEL_HOST_PROFILER_SERVICE:-dd-otel-host-profiler-dev}" -collection-agent "http://datadog-agent:8126" --upload-period ${DD_OTEL_HOST_PROFILER_REPORTER_INTERVAL:-60s} --sampling-rate 20 --dump-cpu-profile cpu.pprof']
+      - dd-app-key
+    command: ['/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key) DD_APP_KEY=$$(cat /run/secrets/dd-app-key); sudo mount -t debugfs none /sys/kernel/debug && cd /app && make && sudo -E /app/dd-otel-host-profiler --agent-url "http://datadog-agent:8126" --sampling-rate 20 --pprof-prefix ./cpu_']
 
   datadog-agent:
     image: gcr.io/datadoghq/agent:7
@@ -29,3 +37,5 @@ services:
 secrets:
   dd-api-key:
     environment: DD_API_KEY
+  dd-app-key:
+    environment: DD_APP_KEY

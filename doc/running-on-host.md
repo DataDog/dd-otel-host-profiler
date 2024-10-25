@@ -19,8 +19,7 @@ Alternatively, you can build the profiler from source. The following instruction
 To build the profiler, you can use the following commands:
 
 ```
-make docker-image
-make agent
+make profiler-in-docker
 ```
 
 This will create a `dd-otel-host-profiler` binary in the current directory.
@@ -38,7 +37,7 @@ sudo mount -t debugfs none /sys/kernel/debug
 After that, you can start the profiler as shown below (make sure you run it as root):
 
 ```
-sudo dd-otel-host-profiler -service "$(hostname)" -collection-agent "http://localhost:8126"
+sudo dd-otel-host-profiler --service "$(hostname)" --agent-url "http://localhost:8126"
 ```
 
-If your datadog agent is reachable under a different address, you can modify the `-collection-agent` parameter accordingly.
+If your Datadog agent is reachable under a different address, you can modify the `--agent-url` parameter accordingly.
