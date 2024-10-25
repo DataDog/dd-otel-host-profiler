@@ -17,26 +17,19 @@ import (
 	"runtime"
 	"time"
 
-	//nolint:gosec
-	_ "net/http/pprof"
-
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/times"
-	tracertypes "github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer/types"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/util"
-	"github.com/tklauser/numcpus"
-	"golang.org/x/sys/unix"
-
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/host"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracehandler"
-
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/hostmetadata"
-
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/metrics"
 	otelreporter "github.com/open-telemetry/opentelemetry-ebpf-profiler/reporter"
-
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/times"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracehandler"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
+	tracertypes "github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer/types"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/util"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/tklauser/numcpus"
+	"golang.org/x/sys/unix"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
