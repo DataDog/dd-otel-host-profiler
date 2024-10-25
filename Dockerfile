@@ -4,6 +4,8 @@ RUN apt-get update -y && apt-get upgrade -y && apt-get install -y sudo && apt-ge
 
 RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
 
+ENV GOPATH=
+
 RUN useradd -ms /bin/bash build
 RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 RUN adduser build sudo
