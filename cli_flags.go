@@ -108,9 +108,9 @@ func parseArgs() (*arguments, error) {
 				Name:        "agent-url",
 				Aliases:     []string{"U"},
 				Value:       defaultArgAgentURL,
-				Usage:       "The Datadog agent URL in the format of http://host:port.",
+				Usage:       "The Datadog trace agent URL in the format of http://host:port.",
 				Destination: &args.collAgentAddr,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_AGENT_URL", "DD_AGENT_URL"),
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_TRACE_AGENT_URL", "DD_TRACE_AGENT_URL"),
 			},
 			&cli.StringFlag{
 				Name:        "service",
