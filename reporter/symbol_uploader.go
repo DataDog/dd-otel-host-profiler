@@ -209,7 +209,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 
 	existingSymbolSource, err := d.GetExistingSymbolsOnBackend(ctx, e)
 	if err != nil {
-		log.Debugf("Failed to get existing symbols for executable %s: %v", filePath, err)
+		log.Warnf("Failed to get existing symbols for executable %s: %v", filePath, err)
 		return false
 	}
 
