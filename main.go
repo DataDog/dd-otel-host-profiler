@@ -147,7 +147,7 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to parse the included tracers: %v", err)
 	}
 
-	metadataCollector := hostmetadata.NewCollector(args.collAgentAddr)
+	metadataCollector := hostmetadata.NewCollector(args.agentURL)
 	metadataCollector.AddCustomData("os.type", "linux")
 
 	kernelVersion, err := getKernelVersion()
@@ -158,7 +158,7 @@ func mainWithExitCode() exitCode {
 	metadataCollector.AddCustomData("os.kernel.release", kernelVersion)
 
 	// hostname and sourceIP will be populated from the root namespace.
-	hostname, sourceIP, err := getHostnameAndSourceIP(args.collAgentAddr)
+	hostname, sourceIP, err := getHostnameAndSourceIP(args.agentURL)
 	if err != nil {
 		log.Warnf("Failed to fetch metadata information in the root namespace: %v", err)
 	}
@@ -189,9 +189,9 @@ func mainWithExitCode() exitCode {
 		}
 		apiKey = args.apiKey
 	} else {
-		intakeURL, err = intakeURLForAgent(args.collAgentAddr)
+		intakeURL, err = intakeURLForAgent(args.agentURL)
 		if err != nil {
-			return failure("Failed to get intake URL from agent URL %v: %v", args.collAgentAddr, err)
+			return failure("Failed to get intake URL from agent URL %v: %v", args.agentURL, err)
 		}
 	}
 
