@@ -39,7 +39,7 @@ const (
 type arguments struct {
 	bpfVerifierLogLevel    uint64
 	bpfVerifierLogSize     uint64
-	collAgentAddr          string
+	agentURL               string
 	copyright              bool
 	mapScaleFactor         uint64
 	monitorInterval        time.Duration
@@ -109,7 +109,7 @@ func parseArgs() (*arguments, error) {
 				Aliases:     []string{"U"},
 				Value:       defaultArgAgentURL,
 				Usage:       "The Datadog trace agent URL in the format of http://host:port.",
-				Destination: &args.collAgentAddr,
+				Destination: &args.agentURL,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_TRACE_AGENT_URL", "DD_TRACE_AGENT_URL"),
 			},
 			&cli.StringFlag{
