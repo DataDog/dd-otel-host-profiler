@@ -23,7 +23,7 @@ jobs:
         run: echo "version=$(go mod edit -json | jq -r .Go)" >> "${GITHUB_OUTPUT}"
       - name: Compute profiler version
         id: profiler-version
-        run: echo "version= ${{ github.ref_name }}-${GITHUB_SHA::7}.${{ github.run_id }}" >> "${GITHUB_OUTPUT}"
+        run: echo "version=${{ github.ref_name }}-${GITHUB_SHA::7}.${{ github.run_id }}" >> "${GITHUB_OUTPUT}"
 
   build:
     name: Build
