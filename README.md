@@ -54,12 +54,12 @@ A `docker-compose.yml` file is provided to help run the profiler in a container 
 First, create a `.env` file with the following content:
 
 ```
-DD_API_KEY=your-api-key # required
-DD_APP_KEY=your-app-key # required
 DD_SITE=datadoghq.com # optional, defaults to "datadoghq.com"
 DD_SERVICE=my-service # optional, defaults to "dd-otel-host-profiler"
 DD_HOST_PROFILING_UPLOAD_PERIOD=10s # optional, defaults to 60s
 DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS=true # optional, defaults to false
+DD_API_KEY=your-api-key # required (not needed on a Datadog workspace) 
+DD_APP_KEY=your-app-key # required (not needed on a Datadog workspace) 
 ```
 
 Then, you can run the profiler with the following command:
