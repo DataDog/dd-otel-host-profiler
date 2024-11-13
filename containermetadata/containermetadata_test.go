@@ -151,6 +151,12 @@ func TestExtractContainerIDFromFile(t *testing.T) {
 				containerdClient: &containerd.Client{},
 			},
 		},
+		{
+			name:           "systemd",
+			cgroupname:     "testdata/cgroupv1systemd",
+			expContainerID: "",
+			expEnv:         envUndefined,
+		},
 	}
 
 	defaultHandler := &containerMetadataProvider{
