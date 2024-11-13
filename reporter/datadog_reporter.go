@@ -16,17 +16,17 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/zstd"
 	lru "github.com/elastic/go-freelru"
 	pprofile "github.com/google/pprof/profile"
-	log "github.com/sirupsen/logrus"
-	"github.com/zeebo/xxh3"
-
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf/xsync"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/process"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/reporter"
+	log "github.com/sirupsen/logrus"
+	"github.com/zeebo/xxh3"
+
+	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 )
 
 // Assert that we implement the full Reporter interface.

@@ -247,7 +247,7 @@ func scanPkg(pkg string) (string, error) {
 		p := filepath.Join(pkg, entry.Name())
 		c, err := scanFile(p)
 		if err != nil {
-			return "unknown", fmt.Errorf("error scanning %s: %s", p, err)
+			return "unknown", fmt.Errorf("error scanning %s: %w", p, err)
 		}
 		for _, c := range c {
 			if _, dup := dedup[c]; dup {
@@ -272,7 +272,7 @@ func isCopyright(line string) (string, bool) {
 func scanFile(fname string) ([]string, error) {
 	f, err := os.Open(fname)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open %s: %s", fname, err)
+		return nil, fmt.Errorf("cannot open %s: %w", fname, err)
 	}
 	defer f.Close()
 	var copyrights []string

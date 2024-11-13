@@ -28,12 +28,11 @@ import (
 
 	"github.com/DataDog/zstd"
 	lru "github.com/elastic/go-freelru"
-	log "github.com/sirupsen/logrus"
-
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf/pfelf"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf/readatbuf"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/process"
+	log "github.com/sirupsen/logrus"
 )
 
 const uploadCacheSize = 16384
@@ -356,12 +355,11 @@ func (d *DatadogSymbolUploader) copySymbols(ctx context.Context, inputPath, outp
 
 func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *os.File,
 	e *executableMetadata) error {
-	req, err := d.buildSymbolUploadRequest(symbolFile, e)
+	req, err := d.buildSymbolUploadRequest(ctx, symbolFile, e)
 	if err != nil {
 		return fmt.Errorf("failed to build symbol upload request: %w", err)
 	}
 
-	req = req.WithContext(ctx)
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return err
@@ -378,7 +376,7 @@ func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *o
 	return nil
 }
 
-func (d *DatadogSymbolUploader) buildSymbolUploadRequest(symbolFile *os.File,
+func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, symbolFile *os.File,
 	e *executableMetadata) (*http.Request, error) {
 	b := new(bytes.Buffer)
 
@@ -422,7 +420,7 @@ func (d *DatadogSymbolUploader) buildSymbolUploadRequest(symbolFile *os.File,
 		return nil, fmt.Errorf("failed to close zstd writer: %w", err)
 	}
 
-	r, err := http.NewRequest(http.MethodPost, d.intakeURL, b)
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, d.intakeURL, b)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

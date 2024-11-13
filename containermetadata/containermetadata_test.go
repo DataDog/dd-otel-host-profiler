@@ -20,15 +20,13 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/docker/docker/client"
 	lru "github.com/elastic/go-freelru"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
-
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestExtractContainerIDFromFile(t *testing.T) {
@@ -276,6 +274,8 @@ func TestGetKubernetesPodMetadata(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			containerMetadataCache, err := lru.NewSynced[string, ContainerMetadata](
 				containerMetadataCacheSize, hashString)
 			require.NoError(t, err)

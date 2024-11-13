@@ -9,21 +9,15 @@ linters:
     #   - not relevant for us
     #   - false positives
     #
-    # "might be worth fixing" means we should investigate/fix in the mid term
-    - containedctx # might be worth fixing
-    - contextcheck # might be worth fixing
     - cyclop
     - depguard
     - dupword
-    - durationcheck # might be worth fixing
     - err113
-    - errorlint # might be worth fixing
     - exhaustive
     - exhaustruct
     - forbidigo
-    - forcetypeassert # might be worth fixing
     - funlen
-    - gci # might be worth fixing
+    - gci
     - gochecknoglobals
     - gochecknoinits
     - gocognit
@@ -37,23 +31,19 @@ linters:
     - inamedparam
     - interfacebloat
     - ireturn
+    - lll
     - maintidx
     - makezero
     - mnd
     - nestif
-    - nilerr # might be worth fixing
     - nilnil
     - nlreturn
-    - noctx # might be worth fixing
     - nonamedreturns
     - paralleltest
     - protogetter
-    - sqlclosecheck # might be worth fixing
     - tagalign
     - tagliatelle
-    - testableexamples # might be worth fixing
     - testpackage
-    - tparallel # might be worth fixing
     - thelper
     - varnamelen
     - wastedassign
@@ -64,6 +54,8 @@ linters:
     - exportloopref
 
 linters-settings:
+  goimports:
+    local-prefixes: github.com/DataDog/dd-otel-host-profiler
   goconst:
     min-len: 2
     min-occurrences: 2
@@ -92,8 +84,6 @@ linters-settings:
           - log,logf,logln
           - warn,warnf,warnln
           - print,printf,println,sprint,sprintf,sprintln,fprint,fprintf,fprintln
-  lll:
-    tab-width: 4
   misspell:
     locale: US
     ignore-words:
