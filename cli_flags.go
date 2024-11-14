@@ -37,36 +37,37 @@ const (
 )
 
 type arguments struct {
-	bpfVerifierLogLevel    uint64
-	bpfVerifierLogSize     uint64
-	agentURL               string
-	copyright              bool
-	mapScaleFactor         uint64
-	monitorInterval        time.Duration
-	clockSyncInterval      time.Duration
-	noKernelVersionCheck   bool
-	node                   string
-	probabilisticInterval  time.Duration
-	probabilisticThreshold uint64
-	reporterInterval       time.Duration
-	samplesPerSecond       uint64
-	pprofPrefix            string
-	sendErrorFrames        bool
-	serviceName            string
-	serviceVersion         string
-	environment            string
-	uploadSymbols          bool
-	uploadDynamicSymbols   bool
-	uploadSymbolsDryRun    bool
-	tags                   string
-	timeline               bool
-	tracers                string
-	verboseMode            bool
-	apiKey                 string
-	appKey                 string
-	site                   string
-	agentless              bool
-	cmd                    *cli.Command
+	bpfVerifierLogLevel     uint64
+	bpfVerifierLogSize      uint64
+	agentURL                string
+	copyright               bool
+	mapScaleFactor          uint64
+	monitorInterval         time.Duration
+	clockSyncInterval       time.Duration
+	noKernelVersionCheck    bool
+	node                    string
+	probabilisticInterval   time.Duration
+	probabilisticThreshold  uint64
+	reporterInterval        time.Duration
+	samplesPerSecond        uint64
+	pprofPrefix             string
+	sendErrorFrames         bool
+	serviceName             string
+	serviceVersion          string
+	environment             string
+	uploadSymbols           bool
+	uploadDynamicSymbols    bool
+	uploadSymbolsDryRun     bool
+	tags                    string
+	timeline                bool
+	tracers                 string
+	verboseMode             bool
+	apiKey                  string
+	appKey                  string
+	site                    string
+	agentless               bool
+	enableGoRuntimeProfiler bool
+	cmd                     *cli.Command
 }
 
 func parseArgs() (*arguments, error) {
@@ -299,6 +300,13 @@ func parseArgs() (*arguments, error) {
 				Hidden:      true,
 				Destination: &args.site,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SITE", "DD_SITE"),
+			},
+			&cli.BoolFlag{
+				Name:        "profile",
+				Value:       false,
+				Usage:       "Enable self-profiling with Go runtime profiler.",
+				Destination: &args.enableGoRuntimeProfiler,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER"),
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
