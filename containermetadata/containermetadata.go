@@ -88,7 +88,9 @@ var (
 	dockerBuildkitPattern = regexp.MustCompile(`\d+:.*:/.*/*docker/buildkit/([0-9a-z]+)`)
 	lxcPattern            = regexp.MustCompile(`\d+::/lxc\.(monitor|payload)\.([a-zA-Z]+)/`)
 	containerdPattern     = regexp.MustCompile(`\d+:.+:/([a-zA-Z0-9_-]+)/+([a-zA-Z0-9_-]+)`)
-	defaultPattern        = regexp.MustCompile(`^.*/(?:.*[-:])?([0-9a-f]+)(?:\.|\s*$)`)
+	// The inner container ID pattern is extracted from:
+	// https://github.com/DataDog/datadog-agent/blob/6e43db2/pkg/util/cgroups/reader.go#L24C24-L24C90
+	defaultPattern = regexp.MustCompile(`^.*/(?:.*[-:])?([0-9a-f]{64})|([0-9a-f]{32}-\\d+)|([0-9a-f]{8}(-[0-9a-f]{4}){4}$)(?:\.|\s*$)`)
 
 	containerIDPattern = regexp.MustCompile(`.+://([0-9a-f]{64})`)
 

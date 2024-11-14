@@ -1,0 +1,14 @@
+13:devices:/system.slice/dd.taskapi.service
+12:pids:/system.slice/dd.taskapi.service
+11:cpu,cpuacct:/system.slice/dd.taskapi.service
+10:cpuset:/
+9:memory:/system.slice/dd.taskapi.service
+8:rdma:/
+7:freezer:/
+6:misc:/
+5:hugetlb:/
+4:blkio:/system.slice/dd.taskapi.service
+3:perf_event:/
+2:net_cls,net_prio:/
+1:name=systemd:/system.slice/dd.taskapi.service
+0::/system.slice/dd.taskapi.service
