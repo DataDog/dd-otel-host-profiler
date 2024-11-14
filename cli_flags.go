@@ -12,9 +12,9 @@ import (
 	"time"
 
 	cebpf "github.com/cilium/ebpf"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v3"
+	"go.opentelemetry.io/ebpf-profiler/tracer"
 
 	"github.com/DataDog/dd-otel-host-profiler/version"
 )

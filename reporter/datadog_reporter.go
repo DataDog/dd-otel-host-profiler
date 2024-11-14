@@ -19,12 +19,12 @@ import (
 	"github.com/DataDog/zstd"
 	lru "github.com/elastic/go-freelru"
 	pprofile "github.com/google/pprof/profile"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf/xsync"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/process"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/reporter"
 	log "github.com/sirupsen/logrus"
 	"github.com/zeebo/xxh3"
+	"go.opentelemetry.io/ebpf-profiler/libpf"
+	"go.opentelemetry.io/ebpf-profiler/libpf/xsync"
+	"go.opentelemetry.io/ebpf-profiler/process"
+	"go.opentelemetry.io/ebpf-profiler/reporter"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 )
