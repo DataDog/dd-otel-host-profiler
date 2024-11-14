@@ -92,8 +92,6 @@ var (
 
 	containerIDPattern = regexp.MustCompile(`.+://([0-9a-f]{64})`)
 
-	cgroup = "/proc/%d/cgroup"
-
 	ErrDeferred = errors.New("lookup deferred due to previous failure")
 )
 
@@ -125,6 +123,10 @@ type containerMetadataProvider struct {
 
 	// deferredPID prevents busy loops for PIDs where the cgroup extraction fails.
 	deferredPID *lru.SyncedLRU[libpf.PID, libpf.Void]
+
+	// file pattern to extract container ID from cgroup file
+	// only used for testing
+	cgroupPattern string
 }
 
 // ContainerMetadata contains the container and/or pod metadata.
@@ -180,6 +182,7 @@ func NewContainerMetadataProvider(ctx context.Context, nodeName string, monitorI
 		dockerClient:     getDockerClient(),
 		containerdClient: getContainerdClient(),
 		nodeName:         nodeName,
+		cgroupPattern:    "proc/%d/cgroup",
 	}
 
 	p.deferredPID, err = lru.NewSynced[libpf.PID, libpf.Void](deferredLRUSize,
@@ -680,7 +683,7 @@ func (p *containerMetadataProvider) lookupContainerID(pid libpf.PID) (containerI
 		return "", envUndefined, ErrDeferred
 	}
 
-	containerID, env, err = p.extractContainerIDFromFile(fmt.Sprintf(cgroup, pid))
+	containerID, env, err = p.extractContainerIDFromFile(fmt.Sprintf(p.cgroupPattern, pid))
 	if err != nil {
 		p.deferredPID.Add(pid, libpf.Void{})
 		return "", envUndefined, err

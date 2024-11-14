@@ -289,12 +289,12 @@ func TestGetKubernetesPodMetadata(t *testing.T) {
 				kubeClientSet:          test.clientset,
 				dockerClient:           nil,
 				containerIDCache:       containerIDCache,
+				cgroupPattern:          "testdata/cgroupv%dkubernetes",
 			}
 			instance.deferredPID, err = lru.NewSynced[libpf.PID, libpf.Void](1024,
 				func(u libpf.PID) uint32 { return uint32(u) })
 			require.NoError(t, err)
 
-			cgroup = "testdata/cgroupv%dkubernetes"
 			meta, err := instance.GetContainerMetadata(test.pid)
 			if test.err != nil {
 				require.Error(t, err)
@@ -333,6 +333,7 @@ func BenchmarkGetKubernetesPodMetadata(b *testing.B) {
 			kubeClientSet:          clientset,
 			dockerClient:           nil,
 			containerIDCache:       containerIDCache,
+			cgroupPattern:          "/tmp/test_containermetadata_cgroup%d",
 		}
 		instance.deferredPID, err = lru.NewSynced[libpf.PID, libpf.Void](1024,
 			func(u libpf.PID) uint32 { return uint32(u) })
@@ -374,7 +375,6 @@ func BenchmarkGetKubernetesPodMetadata(b *testing.B) {
 					"%dd89697807a981b82f6245ac3a13be232c1e13435d52bc3f53060d61babe19", j)
 			require.NoError(b, err)
 
-			cgroup = "/tmp/test_containermetadata_cgroup%d"
 			opts := v1.CreateOptions{}
 			clientsetPod, err := clientset.CoreV1().Pods("default").Create(
 				context.Background(), pod, opts)
