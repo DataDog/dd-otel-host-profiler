@@ -184,7 +184,7 @@ func NewContainerMetadataProvider(ctx context.Context, nodeName string, monitorI
 		dockerClient:     getDockerClient(),
 		containerdClient: getContainerdClient(),
 		nodeName:         nodeName,
-		cgroupPattern:    "proc/%d/cgroup",
+		cgroupPattern:    "/proc/%d/cgroup",
 	}
 
 	p.deferredPID, err = lru.NewSynced[libpf.PID, libpf.Void](deferredLRUSize,
