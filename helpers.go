@@ -22,12 +22,12 @@ import (
 	"syscall"
 	"unicode"
 
-	"github.com/DataDog/dd-otel-host-profiler/reporter"
+	"github.com/jsimonetti/rtnetlink"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
 	log "github.com/sirupsen/logrus"
-
-	"github.com/jsimonetti/rtnetlink"
 	"golang.org/x/sys/unix"
+
+	"github.com/DataDog/dd-otel-host-profiler/reporter"
 )
 
 var ValidTagKeyRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9-._/]+$`)
@@ -77,7 +77,7 @@ func getSourceIPAddress(domain string) (net.IP, error) {
 
 	dstIPs, err := resolveDestination(domain)
 	if err != nil {
-		return nil, fmt.Errorf("unable to resolve %s: %v", domain, err)
+		return nil, fmt.Errorf("unable to resolve %s: %w", domain, err)
 	}
 	if len(dstIPs) == 0 {
 		return nil, fmt.Errorf("unable to resolve %s: no IP address", domain)
@@ -92,7 +92,7 @@ func getSourceIPAddress(domain string) (net.IP, error) {
 	for _, ip := range dstIPs {
 		addressFamily, err := addressFamily(ip)
 		if err != nil {
-			return nil, fmt.Errorf("unable to get address family for %s: %v", ip.String(), err)
+			return nil, fmt.Errorf("unable to get address family for %s: %w", ip.String(), err)
 		}
 
 		req := &rtnetlink.RouteMessage{
@@ -105,7 +105,7 @@ func getSourceIPAddress(domain string) (net.IP, error) {
 
 		routes, err := conn.Route.Get(req)
 		if err != nil {
-			lastError = fmt.Errorf("unable to get route to %s (%s): %v", domain, ip.String(), err)
+			lastError = fmt.Errorf("unable to get route to %s (%s): %w", domain, ip.String(), err)
 			continue
 		}
 
@@ -135,7 +135,7 @@ func getSourceIPAddress(domain string) (net.IP, error) {
 	}
 
 	if !found {
-		return nil, fmt.Errorf("no route found to %s: %v", domain, lastError)
+		return nil, fmt.Errorf("no route found to %s: %w", domain, lastError)
 	}
 
 	log.Debugf("Traffic to %v is routed from %v", domain, srcIP.String())
@@ -151,14 +151,14 @@ func getHostnameAndSourceIP(domain string) (hostname, sourceIP string, err error
 		if name, hostnameErr := os.Hostname(); hostnameErr == nil {
 			hostname = name
 		} else {
-			joinedErr = fmt.Errorf("failed to get hostname: %v", hostnameErr)
+			joinedErr = fmt.Errorf("failed to get hostname: %w", hostnameErr)
 		}
 
 		if srcIP, ipErr := getSourceIPAddress(domain); ipErr == nil {
 			sourceIP = srcIP.String()
 		} else {
 			joinedErr = errors.Join(joinedErr,
-				fmt.Errorf("failed to get source IP: %v", ipErr))
+				fmt.Errorf("failed to get source IP: %w", ipErr))
 		}
 
 		return joinedErr

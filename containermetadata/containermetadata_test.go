@@ -20,15 +20,13 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/docker/docker/client"
 	lru "github.com/elastic/go-freelru"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
-
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestExtractContainerIDFromFile(t *testing.T) {
@@ -276,6 +274,8 @@ func TestGetKubernetesPodMetadata(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			containerMetadataCache, err := lru.NewSynced[string, ContainerMetadata](
 				containerMetadataCacheSize, hashString)
 			require.NoError(t, err)
@@ -289,12 +289,12 @@ func TestGetKubernetesPodMetadata(t *testing.T) {
 				kubeClientSet:          test.clientset,
 				dockerClient:           nil,
 				containerIDCache:       containerIDCache,
+				cgroupPattern:          "testdata/cgroupv%dkubernetes",
 			}
 			instance.deferredPID, err = lru.NewSynced[libpf.PID, libpf.Void](1024,
 				func(u libpf.PID) uint32 { return uint32(u) })
 			require.NoError(t, err)
 
-			cgroup = "testdata/cgroupv%dkubernetes"
 			meta, err := instance.GetContainerMetadata(test.pid)
 			if test.err != nil {
 				require.Error(t, err)
@@ -333,6 +333,7 @@ func BenchmarkGetKubernetesPodMetadata(b *testing.B) {
 			kubeClientSet:          clientset,
 			dockerClient:           nil,
 			containerIDCache:       containerIDCache,
+			cgroupPattern:          "/tmp/test_containermetadata_cgroup%d",
 		}
 		instance.deferredPID, err = lru.NewSynced[libpf.PID, libpf.Void](1024,
 			func(u libpf.PID) uint32 { return uint32(u) })
@@ -374,7 +375,6 @@ func BenchmarkGetKubernetesPodMetadata(b *testing.B) {
 					"%dd89697807a981b82f6245ac3a13be232c1e13435d52bc3f53060d61babe19", j)
 			require.NoError(b, err)
 
-			cgroup = "/tmp/test_containermetadata_cgroup%d"
 			opts := v1.CreateOptions{}
 			clientsetPod, err := clientset.CoreV1().Pods("default").Create(
 				context.Background(), pod, opts)

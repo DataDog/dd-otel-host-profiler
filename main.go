@@ -26,7 +26,6 @@ import (
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
 	tracertypes "github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer/types"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/util"
-
 	log "github.com/sirupsen/logrus"
 	"github.com/tklauser/numcpus"
 	"golang.org/x/sys/unix"
@@ -71,7 +70,7 @@ func startTraceHandling(ctx context.Context, rep otelreporter.TraceReporter,
 	traceCh := make(chan *host.Trace)
 
 	if err := trc.StartMapMonitors(ctx, traceCh); err != nil {
-		return fmt.Errorf("failed to start map monitors: %v", err)
+		return fmt.Errorf("failed to start map monitors: %w", err)
 	}
 
 	_, err := tracehandler.Start(ctx, rep, trc.TraceProcessor(),

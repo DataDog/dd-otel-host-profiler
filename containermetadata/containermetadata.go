@@ -33,6 +33,10 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	lru "github.com/elastic/go-freelru"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/metrics"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/periodiccaller"
+	"github.com/open-telemetry/opentelemetry-ebpf-profiler/stringutil"
 	log "github.com/sirupsen/logrus"
 	"github.com/zeebo/xxh3"
 	corev1 "k8s.io/api/core/v1"
@@ -42,11 +46,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/metrics"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/periodiccaller"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/stringutil"
 )
 
 const (
@@ -93,8 +92,6 @@ var (
 
 	containerIDPattern = regexp.MustCompile(`.+://([0-9a-f]{64})`)
 
-	cgroup = "/proc/%d/cgroup"
-
 	ErrDeferred = errors.New("lookup deferred due to previous failure")
 )
 
@@ -126,6 +123,10 @@ type containerMetadataProvider struct {
 
 	// deferredPID prevents busy loops for PIDs where the cgroup extraction fails.
 	deferredPID *lru.SyncedLRU[libpf.PID, libpf.Void]
+
+	// file pattern to extract container ID from cgroup file
+	// only used for testing
+	cgroupPattern string
 }
 
 // ContainerMetadata contains the container and/or pod metadata.
@@ -172,7 +173,7 @@ func NewContainerMetadataProvider(ctx context.Context, nodeName string, monitorI
 	containerIDCache, err := lru.NewSynced[libpf.PID, containerIDEntry](
 		containerIDCacheSize, libpf.PID.Hash32)
 	if err != nil {
-		return nil, fmt.Errorf("unable to create container id cache: %v", err)
+		return nil, fmt.Errorf("unable to create container id cache: %w", err)
 	}
 	containerIDCache.SetLifetime(containerIDCacheTimeout)
 
@@ -181,6 +182,7 @@ func NewContainerMetadataProvider(ctx context.Context, nodeName string, monitorI
 		dockerClient:     getDockerClient(),
 		containerdClient: getContainerdClient(),
 		nodeName:         nodeName,
+		cgroupPattern:    "proc/%d/cgroup",
 	}
 
 	p.deferredPID, err = lru.NewSynced[libpf.PID, libpf.Void](deferredLRUSize,
@@ -193,14 +195,14 @@ func NewContainerMetadataProvider(ctx context.Context, nodeName string, monitorI
 	if os.Getenv(kubernetesServiceHost) != "" {
 		err = createKubernetesClient(ctx, p)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create kubernetes client %v", err)
+			return nil, fmt.Errorf("failed to create kubernetes client %w", err)
 		}
 	} else {
 		log.Infof("Environment variable %s not set", kubernetesServiceHost)
 		p.containerMetadataCache, err = lru.NewSynced[string, ContainerMetadata](
 			containerMetadataCacheSize, hashString)
 		if err != nil {
-			return nil, fmt.Errorf("unable to create container metadata cache: %v", err)
+			return nil, fmt.Errorf("unable to create container metadata cache: %w", err)
 		}
 	}
 
@@ -238,7 +240,7 @@ func getPodsPerNode(ctx context.Context, h *containerMetadataProvider) (int, err
 		FieldSelector: "spec.nodeName=" + h.nodeName,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to get kubernetes nodes for '%s': %v",
+		return 0, fmt.Errorf("failed to get kubernetes nodes for '%s': %w",
 			h.nodeName, err)
 	}
 
@@ -277,28 +279,28 @@ func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) e
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		return fmt.Errorf("failed to create in cluster configuration for Kubernetes: %v", err)
+		return fmt.Errorf("failed to create in cluster configuration for Kubernetes: %w", err)
 	}
 	p.kubeClientSet, err = kubernetes.NewForConfig(config)
 	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %v", err)
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
 	k, ok := p.kubeClientSet.(*kubernetes.Clientset)
 	if !ok {
-		return fmt.Errorf("failed to create Kubernetes client: %v", err)
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
 	if p.nodeName == "" {
 		p.nodeName, err = getNodeName()
 		if err != nil {
-			return fmt.Errorf("failed to get kubernetes node name; %v", err)
+			return fmt.Errorf("failed to get kubernetes node name; %w", err)
 		}
 	}
 
 	p.containerMetadataCache, err = getContainerMetadataCache(ctx, p)
 	if err != nil {
-		return fmt.Errorf("failed to create container metadata cache: %v", err)
+		return fmt.Errorf("failed to create container metadata cache: %w", err)
 	}
 
 	// Create the shared informer factory and use the client to connect to
@@ -332,7 +334,7 @@ func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) e
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to attach event handler: %v", err)
+		return fmt.Errorf("failed to attach event handler: %w", err)
 	}
 
 	// Shutdown the informer when the context attached to this handler expires
@@ -546,7 +548,7 @@ func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID stri
 		FieldSelector: "spec.nodeName=" + p.nodeName,
 	})
 	if err != nil {
-		return ContainerMetadata{}, fmt.Errorf("failed to retrieve kubernetes pods, %v", err)
+		return ContainerMetadata{}, fmt.Errorf("failed to retrieve kubernetes pods, %w", err)
 	}
 
 	for j := range pods.Items {
@@ -607,7 +609,7 @@ func (p *containerMetadataProvider) getDockerContainerMetadata(pidContainerID st
 	containers, err := p.dockerClient.ContainerList(context.Background(),
 		container.ListOptions{})
 	if err != nil {
-		return ContainerMetadata{}, fmt.Errorf("failed to list docker containers, %v", err)
+		return ContainerMetadata{}, fmt.Errorf("failed to list docker containers, %w", err)
 	}
 
 	for i := range containers {
@@ -646,7 +648,7 @@ func (p *containerMetadataProvider) getContainerdContainerMetadata(pidContainerI
 	containers, err := p.containerdClient.Containers(ctx)
 	if err != nil {
 		return ContainerMetadata{},
-			fmt.Errorf("failed to get containerd containers in namespace '%s': %v",
+			fmt.Errorf("failed to get containerd containers in namespace '%s': %w",
 				fields[1], err)
 	}
 
@@ -681,7 +683,7 @@ func (p *containerMetadataProvider) lookupContainerID(pid libpf.PID) (containerI
 		return "", envUndefined, ErrDeferred
 	}
 
-	containerID, env, err = p.extractContainerIDFromFile(fmt.Sprintf(cgroup, pid))
+	containerID, env, err = p.extractContainerIDFromFile(fmt.Sprintf(p.cgroupPattern, pid))
 	if err != nil {
 		p.deferredPID.Add(pid, libpf.Void{})
 		return "", envUndefined, err
@@ -705,7 +707,7 @@ func (p *containerMetadataProvider) extractContainerIDFromFile(cgroupFilePath st
 				"Failed to get container id", cgroupFilePath)
 			return "", envUndefined, nil
 		}
-		return "", envUndefined, fmt.Errorf("failed to get container id from %s: %v",
+		return "", envUndefined, fmt.Errorf("failed to get container id from %s: %w",
 			cgroupFilePath, err)
 	}
 	defer f.Close()
