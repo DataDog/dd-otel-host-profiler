@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/host"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/hostmetadata"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/metrics"
 	otelreporter "github.com/open-telemetry/opentelemetry-ebpf-profiler/reporter"
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/times"
@@ -146,24 +145,6 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to parse the included tracers: %v", err)
 	}
 
-	metadataCollector := hostmetadata.NewCollector(args.agentURL)
-	metadataCollector.AddCustomData("os.type", "linux")
-
-	kernelVersion, err := getKernelVersion()
-	if err != nil {
-		return failure("Failed to get Linux kernel version: %v", err)
-	}
-	// OTel semantic introduced in https://github.com/open-telemetry/semantic-conventions/issues/66
-	metadataCollector.AddCustomData("os.kernel.release", kernelVersion)
-
-	// hostname and sourceIP will be populated from the root namespace.
-	hostname, sourceIP, err := getHostnameAndSourceIP(args.agentURL)
-	if err != nil {
-		log.Warnf("Failed to fetch metadata information in the root namespace: %v", err)
-	}
-	metadataCollector.AddCustomData("host.name", hostname)
-	metadataCollector.AddCustomData("host.ip", sourceIP)
-
 	validatedTags := ValidateTags(args.tags)
 	log.Debugf("Validated tags: %s", validatedTags)
 
@@ -219,9 +200,6 @@ func mainWithExitCode() exitCode {
 	}
 
 	metrics.SetReporter(rep)
-
-	// Now that set the initial host metadata, start a goroutine to keep sending updates regularly.
-	metadataCollector.StartMetadataCollection(mainCtx, rep)
 
 	// Load the eBPF code and map definitions
 	trc, err := tracer.NewTracer(mainCtx, &tracer.Config{
