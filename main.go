@@ -234,7 +234,6 @@ func mainWithExitCode() exitCode {
 		MapScaleFactor:         int(args.mapScaleFactor),
 		KernelVersionCheck:     !args.noKernelVersionCheck,
 		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
-		BPFVerifierLogSize:     int(args.bpfVerifierLogSize),
 		ProbabilisticInterval:  args.probabilisticInterval,
 		ProbabilisticThreshold: uint(args.probabilisticThreshold),
 	})

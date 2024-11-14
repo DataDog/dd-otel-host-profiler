@@ -5,7 +5,6 @@ go 1.23.1
 require (
 	github.com/DataDog/jsonapi v0.10.0
 	github.com/DataDog/zstd v1.5.6
-	github.com/cilium/ebpf v0.16.0
 	github.com/containerd/containerd v1.7.22
 	github.com/docker/docker v27.2.1+incompatible
 	github.com/elastic/go-freelru v0.15.0
@@ -31,6 +30,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/Microsoft/hcsshim v0.11.7 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cilium/ebpf v0.16.0 // indirect
 	github.com/containerd/cgroups v1.1.0 // indirect
 	github.com/containerd/containerd/api v1.7.19 // indirect
 	github.com/containerd/continuity v0.4.2 // indirect

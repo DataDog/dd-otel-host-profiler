@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"time"
 
-	cebpf "github.com/cilium/ebpf"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v3"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
@@ -38,7 +37,6 @@ const (
 
 type arguments struct {
 	bpfVerifierLogLevel     uint64
-	bpfVerifierLogSize      uint64
 	agentURL                string
 	copyright               bool
 	mapScaleFactor          uint64
@@ -96,14 +94,6 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Log level of the eBPF verifier output (0,1,2).",
 				Destination: &args.bpfVerifierLogLevel,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_BPF_LOG_LEVEL"),
-			},
-			&cli.UintFlag{
-				Name:  "bpf-log-size",
-				Value: cebpf.DefaultVerifierLogSize,
-				Usage: "Size in bytes that will be allocated for the eBPF verifier output. " +
-					"Only takes effect if bpf-log-level > 0.",
-				Destination: &args.bpfVerifierLogSize,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_BPF_LOG_SIZE"),
 			},
 			&cli.StringFlag{
 				Name:        "agent-url",
