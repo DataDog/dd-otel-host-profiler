@@ -115,13 +115,16 @@ func mainWithExitCode() exitCode {
 	if args.enableGoRuntimeProfiler {
 		addr, _ := strings.CutPrefix(args.agentURL, "http://")
 		err = profiler.Start(
-			profiler.WithService(args.serviceName+"-profiler"),
+			profiler.WithService("dd-otel-host-self-profiler"),
 			profiler.WithEnv(args.environment),
 			profiler.WithVersion(versionInfo.Version),
 			profiler.WithAgentAddr(addr),
+			profiler.MutexProfileFraction(100),
 			profiler.WithProfileTypes(
 				profiler.CPUProfile,
 				profiler.HeapProfile,
+				profiler.GoroutineProfile,
+				profiler.MutexProfile,
 			),
 		)
 		if err != nil {
