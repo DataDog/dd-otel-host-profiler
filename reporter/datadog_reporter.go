@@ -20,7 +20,6 @@ import (
 	lru "github.com/elastic/go-freelru"
 	pprofile "github.com/google/pprof/profile"
 	log "github.com/sirupsen/logrus"
-	"github.com/zeebo/xxh3"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/xsync"
 	"go.opentelemetry.io/ebpf-profiler/process"
@@ -94,9 +93,6 @@ type DatadogReporter struct {
 	// To fill in the OTLP/profiles signal with the relevant information,
 	// this structure holds in long term storage information that might
 	// be duplicated in other places but not accessible for DatadogReporter.
-
-	// hostmetadata stores metadata that is sent out with every request.
-	hostmetadata *lru.SyncedLRU[string, string]
 
 	// fallbackSymbols keeps track of FrameID to their symbol.
 	fallbackSymbols *lru.SyncedLRU[libpf.FrameID, string]
@@ -173,13 +169,6 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 	}
 }
 
-// hashString is a helper function for LRUs that use string as a key.
-// Xxh3 turned out to be the fastest hash function for strings in the FreeLRU benchmarks.
-// It was only outperformed by the AES hash function, which is implemented in Plan9 assembly.
-func hashString(s string) uint32 {
-	return uint32(xxh3.HashString(s))
-}
-
 // SupportsReportTraceEvent returns true if the reporter supports reporting trace events
 // via ReportTraceEvent().
 func (r *DatadogReporter) SupportsReportTraceEvent() bool {
@@ -251,23 +240,13 @@ func (r *DatadogReporter) FrameMetadata(fileID libpf.FileID, addressOrLine libpf
 	r.frames.Add(fileID, &mu)
 }
 
-// ReportHostMetadata enqueues host metadata.
-func (r *DatadogReporter) ReportHostMetadata(metadataMap map[string]string) {
-	r.addHostmetadata(metadataMap)
-}
+// ReportHostMetadata is a NOP for DatadogReporter.
+func (r *DatadogReporter) ReportHostMetadata(_ map[string]string) {}
 
-// ReportHostMetadataBlocking enqueues host metadata.
+// ReportHostMetadataBlocking is a NOP for DatadogReporter.
 func (r *DatadogReporter) ReportHostMetadataBlocking(_ context.Context,
-	metadataMap map[string]string, _ int, _ time.Duration) error {
-	r.addHostmetadata(metadataMap)
+	_ map[string]string, _ int, _ time.Duration) error {
 	return nil
-}
-
-// addHostmetadata adds to and overwrites host metadata.
-func (r *DatadogReporter) addHostmetadata(metadataMap map[string]string) {
-	for k, v := range metadataMap {
-		r.hostmetadata.Add(k, v)
-	}
 }
 
 // ReportMetrics is a NOP for DatadogReporter.
@@ -306,14 +285,6 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 		return nil, err
 	}
 
-	// Next step: Dynamically configure the size of this LRU.
-	// Currently, we use the length of the JSON array in
-	// hostmetadata/hostmetadata.json.
-	hostmetadata, err := lru.NewSynced[string, string](115, hashString)
-	if err != nil {
-		return nil, err
-	}
-
 	var symbolUploader *DatadogSymbolUploader
 	if cfg.SymbolUploaderConfig.Enabled {
 		log.Infof("Enabling Datadog local symbol upload")
@@ -332,7 +303,6 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 		fallbackSymbols:           fallbackSymbols,
 		executables:               executables,
 		frames:                    frames,
-		hostmetadata:              hostmetadata,
 		containerMetadataProvider: p,
 		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceFramesCounts{}),
 		processes:                 processes,
