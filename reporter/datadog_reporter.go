@@ -31,7 +31,11 @@ import (
 // Assert that we implement the full Reporter interface.
 var _ reporter.Reporter = (*DatadogReporter)(nil)
 
-const profilerName = "dd-otel-host-profiler"
+const (
+	profilerName            = "dd-otel-host-profiler"
+	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
+	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
+)
 
 // execInfo enriches an executable with additional metadata.
 type execInfo struct {
@@ -78,12 +82,15 @@ type traceEvents struct {
 }
 
 type processMetadata struct {
+	updatedAt         time.Time
 	execPath          string
 	containerMetadata containermetadata.ContainerMetadata
 }
 
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
 type DatadogReporter struct {
+	config *Config
+
 	// profiler version
 	version string
 
@@ -132,6 +139,57 @@ type DatadogReporter struct {
 	profileSeq uint64
 }
 
+func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, error) {
+	executables, err := lru.NewSynced[libpf.FileID, execInfo](cfg.CacheSize, libpf.FileID.Hash32)
+	if err != nil {
+		return nil, err
+	}
+	executables.SetLifetime(1 * time.Hour) // Allow GC to clean stale items.
+
+	frames, err := lru.NewSynced[libpf.FileID,
+		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.CacheSize, libpf.FileID.Hash32)
+	if err != nil {
+		return nil, err
+	}
+	frames.SetLifetime(1 * time.Hour) // Allow GC to clean stale items.
+
+	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.CacheSize, libpf.PID.Hash32)
+	if err != nil {
+		return nil, err
+	}
+	processes.SetLifetime(pidCacheCleanupInterval)
+
+	var symbolUploader *DatadogSymbolUploader
+	if cfg.SymbolUploaderConfig.Enabled {
+		log.Infof("Enabling Datadog local symbol upload")
+		symbolUploader, err = NewDatadogSymbolUploader(cfg.SymbolUploaderConfig)
+		if err != nil {
+			log.Errorf(
+				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
+				err)
+		}
+	}
+
+	return &DatadogReporter{
+		config:                    cfg,
+		version:                   cfg.Version,
+		samplesPerSecond:          cfg.SamplesPerSecond,
+		stopSignal:                make(chan libpf.Void),
+		executables:               executables,
+		frames:                    frames,
+		containerMetadataProvider: p,
+		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceEvents{}),
+		processes:                 processes,
+		intakeURL:                 cfg.IntakeURL,
+		pprofPrefix:               cfg.PprofPrefix,
+		apiKey:                    cfg.APIKey,
+		symbolUploader:            symbolUploader,
+		tags:                      cfg.Tags,
+		timeline:                  cfg.Timeline,
+		profileSeq:                0,
+	}, nil
+}
+
 // SupportsReportTraceEvent returns true if the reporter supports reporting trace events
 // via ReportTraceEvent().
 func (r *DatadogReporter) SupportsReportTraceEvent() bool {
@@ -143,7 +201,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 	traceEventsMap := r.traceEvents.WLock()
 	defer r.traceEvents.WUnlock(&traceEventsMap)
 
-	if _, ok := r.processes.Get(meta.PID); !ok {
+	if pMeta, ok := r.processes.Get(meta.PID); !ok || time.Since(pMeta.updatedAt) > pidCacheUpdateInterval {
 		r.addProcessMetadata(meta.PID)
 	}
 
@@ -270,53 +328,8 @@ func (r *DatadogReporter) GetMetrics() reporter.Metrics {
 	return reporter.Metrics{}
 }
 
-// StartDatadog sets up and manages the reporting connection to the Datadog Backend.
-func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (reporter.Reporter, error) {
-	executables, err := lru.NewSynced[libpf.FileID, execInfo](cfg.CacheSize, libpf.FileID.Hash32)
-	if err != nil {
-		return nil, err
-	}
-
-	frames, err := lru.NewSynced[libpf.FileID,
-		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.CacheSize, libpf.FileID.Hash32)
-	if err != nil {
-		return nil, err
-	}
-
-	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.CacheSize, libpf.PID.Hash32)
-	if err != nil {
-		return nil, err
-	}
-
-	var symbolUploader *DatadogSymbolUploader
-	if cfg.SymbolUploaderConfig.Enabled {
-		log.Infof("Enabling Datadog local symbol upload")
-		symbolUploader, err = NewDatadogSymbolUploader(cfg.SymbolUploaderConfig)
-		if err != nil {
-			log.Errorf(
-				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
-				err)
-		}
-	}
-
-	r := &DatadogReporter{
-		version:                   cfg.Version,
-		samplesPerSecond:          cfg.SamplesPerSecond,
-		stopSignal:                make(chan libpf.Void),
-		executables:               executables,
-		frames:                    frames,
-		containerMetadataProvider: p,
-		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceEvents{}),
-		processes:                 processes,
-		intakeURL:                 cfg.IntakeURL,
-		pprofPrefix:               cfg.PprofPrefix,
-		apiKey:                    cfg.APIKey,
-		symbolUploader:            symbolUploader,
-		tags:                      cfg.Tags,
-		timeline:                  cfg.Timeline,
-		profileSeq:                0,
-	}
-
+// Start sets up and manages the reporting connection to the Datadog Backend.
+func (r *DatadogReporter) Start(mainCtx context.Context) error {
 	// Create a child context for reporting features
 	ctx, cancelReporting := context.WithCancel(mainCtx)
 
@@ -327,8 +340,10 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 	}
 
 	go func() {
-		tick := time.NewTicker(cfg.ReportInterval)
+		tick := time.NewTicker(r.config.ReportInterval)
 		defer tick.Stop()
+		purgeTick := time.NewTicker(5 * time.Minute)
+		defer purgeTick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -339,7 +354,12 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 				if err := r.reportProfile(ctx); err != nil {
 					log.Errorf("Request failed: %v", err)
 				}
-				tick.Reset(libpf.AddJitter(cfg.ReportInterval, 0.2))
+				tick.Reset(libpf.AddJitter(r.config.ReportInterval, 0.2))
+			case <-purgeTick.C:
+				// Allow the GC to purge expired entries to avoid memory leaks.
+				r.executables.PurgeExpired()
+				r.frames.PurgeExpired()
+				r.processes.PurgeExpired()
 			}
 		}
 	}()
@@ -351,7 +371,7 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 		cancelReporting()
 	}()
 
-	return r, nil
+	return nil
 }
 
 // reportProfile creates and sends out a profile.
@@ -685,5 +705,9 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 		// Even upon failure, we might still have managed to get the containerID
 	}
 
-	r.processes.Add(pid, processMetadata{execPath, containerMetadata})
+	r.processes.Add(pid, processMetadata{
+		updatedAt:         time.Now(),
+		execPath:          execPath,
+		containerMetadata: containerMetadata,
+	})
 }

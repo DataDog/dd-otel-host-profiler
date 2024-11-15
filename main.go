@@ -198,7 +198,7 @@ func mainWithExitCode() exitCode {
 		}
 	}
 
-	rep, err := reporter.Start(mainCtx, &reporter.Config{
+	rep, err := reporter.NewDatadog(&reporter.Config{
 		IntakeURL:        intakeURL,
 		Version:          versionInfo.Version,
 		ReportInterval:   intervals.ReportInterval(),
@@ -218,6 +218,11 @@ func mainWithExitCode() exitCode {
 			Version:              args.serviceVersion,
 		},
 	}, containerMetadataProvider)
+	if err != nil {
+		return failure("Failed to create Datadog reporter: %v", err)
+	}
+
+	err = rep.Start(mainCtx)
 	if err != nil {
 		return failure("Failed to start reporting: %v", err)
 	}
