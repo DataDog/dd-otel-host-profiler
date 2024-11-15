@@ -179,6 +179,13 @@ func (r *DatadogReporter) ReportFramesForTrace(_ *libpf.Trace) {}
 func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *reporter.TraceEventMeta) {
 }
 
+// ExecutableKnown returns true if the metadata of the Executable specified by fileID is
+// cached in the reporter.
+func (r *DatadogReporter) ExecutableKnown(fileID libpf.FileID) bool {
+	_, known := r.executables.Get(fileID)
+	return known
+}
+
 // ExecutableMetadata accepts a fileID with the corresponding filename
 // and caches this information.
 func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, filePath, buildID string,
@@ -191,6 +198,18 @@ func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, filePath, buil
 	if r.symbolUploader != nil && interp == libpf.Native {
 		r.symbolUploader.UploadSymbols(fileID, filePath, buildID, opener)
 	}
+}
+
+// FrameKnown returns true if the metadata of the Frame specified by frameID is
+// cached in the reporter.
+func (r *DatadogReporter) FrameKnown(frameID libpf.FrameID) bool {
+	known := false
+	if frameMapLock, exists := r.frames.Get(frameID.FileID()); exists {
+		frameMap := frameMapLock.RLock()
+		defer frameMapLock.RUnlock(&frameMap)
+		_, known = (*frameMap)[frameID.AddressOrLine()]
+	}
+	return known
 }
 
 // FrameMetadata accepts metadata associated with a frame and caches this information.
