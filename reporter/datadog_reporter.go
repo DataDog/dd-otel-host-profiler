@@ -22,7 +22,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/xsync"
-	"go.opentelemetry.io/ebpf-profiler/process"
 	"go.opentelemetry.io/ebpf-profiler/reporter"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
@@ -246,15 +245,14 @@ func (r *DatadogReporter) ExecutableKnown(fileID libpf.FileID) bool {
 
 // ExecutableMetadata accepts a fileID with the corresponding filename
 // and caches this information.
-func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, filePath, buildID string,
-	interp libpf.InterpreterType, opener process.FileOpener) {
-	r.executables.Add(fileID, execInfo{
-		fileName: path.Base(filePath),
-		buildID:  buildID,
+func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataArgs) {
+	r.executables.Add(args.FileID, execInfo{
+		fileName: path.Base(args.FileName),
+		buildID:  args.GnuBuildID,
 	})
 
-	if r.symbolUploader != nil && interp == libpf.Native {
-		r.symbolUploader.UploadSymbols(fileID, filePath, buildID, opener)
+	if r.symbolUploader != nil && args.Interp == libpf.Native {
+		r.symbolUploader.UploadSymbols(args.FileID, args.FileName, args.GnuBuildID, args.Open)
 	}
 }
 
