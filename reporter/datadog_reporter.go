@@ -94,9 +94,6 @@ type DatadogReporter struct {
 	// this structure holds in long term storage information that might
 	// be duplicated in other places but not accessible for DatadogReporter.
 
-	// fallbackSymbols keeps track of FrameID to their symbol.
-	fallbackSymbols *lru.SyncedLRU[libpf.FrameID, string]
-
 	// executables stores metadata for executables.
 	executables *lru.SyncedLRU[libpf.FileID, execInfo]
 
@@ -182,14 +179,6 @@ func (r *DatadogReporter) ReportFramesForTrace(_ *libpf.Trace) {}
 func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *reporter.TraceEventMeta) {
 }
 
-// ReportFallbackSymbol enqueues a fallback symbol for reporting, for a given frame.
-func (r *DatadogReporter) ReportFallbackSymbol(frameID libpf.FrameID, symbol string) {
-	if _, exists := r.fallbackSymbols.Peek(frameID); exists {
-		return
-	}
-	r.fallbackSymbols.Add(frameID, symbol)
-}
-
 // ExecutableMetadata accepts a fileID with the corresponding filename
 // and caches this information.
 func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, filePath, buildID string,
@@ -264,11 +253,6 @@ func (r *DatadogReporter) GetMetrics() reporter.Metrics {
 
 // StartDatadog sets up and manages the reporting connection to the Datadog Backend.
 func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (reporter.Reporter, error) {
-	fallbackSymbols, err := lru.NewSynced[libpf.FrameID, string](cfg.CacheSize, libpf.FrameID.Hash32)
-	if err != nil {
-		return nil, err
-	}
-
 	executables, err := lru.NewSynced[libpf.FileID, execInfo](cfg.CacheSize, libpf.FileID.Hash32)
 	if err != nil {
 		return nil, err
@@ -300,7 +284,6 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 		version:                   cfg.Version,
 		samplesPerSecond:          cfg.SamplesPerSecond,
 		stopSignal:                make(chan libpf.Void),
-		fallbackSymbols:           fallbackSymbols,
 		executables:               executables,
 		frames:                    frames,
 		containerMetadataProvider: p,
@@ -436,10 +419,9 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 	}
 
 	fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
-	frameIDtoFunction := make(map[libpf.FrameID]*pprofile.Function)
 	totalSampleCount := 0
 
-	for traceAndMetaKey, traceInfo := range samples {
+	for traceKey, traceInfo := range samples {
 		sample := &pprofile.Sample{}
 
 		for _, ts := range traceInfo.timestamps {
@@ -485,30 +467,6 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 				line := pprofile.Line{Function: createPprofFunctionEntry(funcMap, profile, "",
 					loc.Mapping.File)}
 				loc.Line = append(loc.Line, line)
-			case libpf.KernelFrame:
-				// Reconstruct frameID
-				frameID := libpf.NewFrameID(traceInfo.files[i], traceInfo.linenos[i])
-				// Store Kernel frame information as Line message:
-				line := pprofile.Line{}
-
-				if tmpFunction, exists := frameIDtoFunction[frameID]; exists {
-					line.Function = tmpFunction
-				} else {
-					symbol, exists := r.fallbackSymbols.Get(frameID)
-					if !exists {
-						// TODO: choose a proper default value if the kernel symbol was not
-						// reported yet.
-						symbol = unknownStr
-					}
-					line.Function = createPprofFunctionEntry(
-						funcMap, profile, symbol, "")
-				}
-				loc.Line = append(loc.Line, line)
-
-				// To be compliant with the protocol generate a dummy mapping entry.
-				loc.Mapping = getDummyMapping(fileIDtoMapping, profile,
-					traceInfo.files[i])
-
 			case libpf.AbortFrame:
 				// Next step: Figure out how the OTLP protocol
 				// could handle artificial frames, like AbortFrame,
@@ -526,20 +484,15 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 						"UNREPORTED", frameKind.String())
 				} else {
 					fileIDInfo := fileIDInfoLock.RLock()
-					si, exists := (*fileIDInfo)[traceInfo.linenos[i]]
-					if !exists {
-						// At this point, we do not have enough information for the frame.
-						// Therefore, we report a dummy entry and use the interpreter as filename.
-						// To differentiate this case with the case where no information about
-						// the file ID is available at all, we use a different name for reported
-						// function.
-						line.Function = createPprofFunctionEntry(funcMap, profile,
-							"UNRESOLVED", frameKind.String())
-					} else {
+					if si, exists := (*fileIDInfo)[traceInfo.linenos[i]]; exists {
 						line.Line = int64(si.lineNumber)
-
 						line.Function = createPprofFunctionEntry(funcMap, profile,
 							si.functionName, si.filePath)
+					} else {
+						// At this point, we do not have enough information for the frame.
+						// Therefore, we report a dummy entry and use the interpreter as filename.
+						line.Function = createPprofFunctionEntry(funcMap, profile,
+							"UNRESOLVED", frameKind.String())
 					}
 					fileIDInfoLock.RUnlock(&fileIDInfo)
 				}
@@ -551,7 +504,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			sample.Location = append(sample.Location, loc)
 		}
 
-		processMeta, _ := r.processes.Get(traceAndMetaKey.pid)
+		processMeta, _ := r.processes.Get(traceKey.pid)
 		execPath := processMeta.execPath
 
 		// Check if the last frame is a kernel frame.
@@ -575,7 +528,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 		if r.timeline {
 			timestamps = traceInfo.timestamps
 		}
-		addTraceLabels(sample.Label, traceAndMetaKey, processMeta, baseExec, timestamps)
+		addTraceLabels(sample.Label, traceKey, processMeta, baseExec, timestamps)
 
 		count := int64(len(traceInfo.timestamps))
 		sample.Value = append(sample.Value, count, count*samplingPeriod)
