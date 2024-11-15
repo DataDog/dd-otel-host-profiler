@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/open-telemetry/opentelemetry-ebpf-profiler/host"
@@ -28,6 +29,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/tklauser/numcpus"
 	"golang.org/x/sys/unix"
+	"gopkg.in/DataDog/dd-trace-go.v1/profiler"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
@@ -107,6 +109,27 @@ func mainWithExitCode() exitCode {
 
 	if code := sanityCheck(args); code != exitSuccess {
 		return code
+	}
+
+	if args.enableGoRuntimeProfiler {
+		addr, _ := strings.CutPrefix(args.agentURL, "http://")
+		err = profiler.Start(
+			profiler.WithService("dd-otel-host-self-profiler"),
+			profiler.WithEnv(args.environment),
+			profiler.WithVersion(versionInfo.Version),
+			profiler.WithAgentAddr(addr),
+			profiler.MutexProfileFraction(100),
+			profiler.WithProfileTypes(
+				profiler.CPUProfile,
+				profiler.HeapProfile,
+				profiler.GoroutineProfile,
+				profiler.MutexProfile,
+			),
+		)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer profiler.Stop()
 	}
 
 	// Context to drive main goroutine and the Tracer monitors.
