@@ -65,8 +65,8 @@ type traceAndMetaKey struct {
 	tid            libpf.PID
 }
 
-// traceFramesCounts holds known information about a trace.
-type traceFramesCounts struct {
+// traceEvents holds known information about a trace.
+type traceEvents struct {
 	files              []libpf.FileID
 	linenos            []libpf.AddressOrLineno
 	frameTypes         []libpf.FrameType
@@ -104,7 +104,7 @@ type DatadogReporter struct {
 	frames *lru.SyncedLRU[libpf.FileID, *xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]]
 
 	// traceEvents stores reported trace events (trace metadata with frames and counts)
-	traceEvents xsync.RWMutex[map[traceAndMetaKey]*traceFramesCounts]
+	traceEvents xsync.RWMutex[map[traceAndMetaKey]*traceEvents]
 
 	// processes stores the metadata associated to a PID.
 	processes *lru.SyncedLRU[libpf.PID, processMetadata]
@@ -135,10 +135,16 @@ type DatadogReporter struct {
 	profileSeq uint64
 }
 
+// SupportsReportTraceEvent returns true if the reporter supports reporting trace events
+// via ReportTraceEvent().
+func (r *DatadogReporter) SupportsReportTraceEvent() bool {
+	return true
+}
+
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
 func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.TraceEventMeta) {
-	traceEvents := r.traceEvents.WLock()
-	defer r.traceEvents.WUnlock(&traceEvents)
+	traceEventsMap := r.traceEvents.WLock()
+	defer r.traceEvents.WUnlock(&traceEventsMap)
 
 	if _, ok := r.processes.Get(meta.PID); !ok {
 		r.addProcessMetadata(meta.PID)
@@ -152,13 +158,13 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 		tid:            meta.TID,
 	}
 
-	if tr, exists := (*traceEvents)[key]; exists {
+	if tr, exists := (*traceEventsMap)[key]; exists {
 		tr.timestamps = append(tr.timestamps, uint64(meta.Timestamp))
-		(*traceEvents)[key] = tr
+		(*traceEventsMap)[key] = tr
 		return
 	}
 
-	(*traceEvents)[key] = &traceFramesCounts{
+	(*traceEventsMap)[key] = &traceEvents{
 		files:              trace.Files,
 		linenos:            trace.Linenos,
 		frameTypes:         trace.FrameTypes,
@@ -167,12 +173,6 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 		mappingFileOffsets: trace.MappingFileOffsets,
 		timestamps:         []uint64{uint64(meta.Timestamp)},
 	}
-}
-
-// SupportsReportTraceEvent returns true if the reporter supports reporting trace events
-// via ReportTraceEvent().
-func (r *DatadogReporter) SupportsReportTraceEvent() bool {
-	return true
 }
 
 // ReportFramesForTrace is a NOP for DatadogReporter.
@@ -304,7 +304,7 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 		executables:               executables,
 		frames:                    frames,
 		containerMetadataProvider: p,
-		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceFramesCounts{}),
+		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceEvents{}),
 		processes:                 processes,
 		intakeURL:                 cfg.IntakeURL,
 		pprofPrefix:               cfg.PprofPrefix,
