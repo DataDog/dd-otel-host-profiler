@@ -238,24 +238,16 @@ func NewContainerMetadataProvider(ctx context.Context, nodeName string, monitorI
 // for the allocatable information of the nodes.
 func getPodsPerNode(ctx context.Context, h *containerMetadataProvider) (int, error) {
 	h.kubernetesClientQueryCount.Add(1)
-	nodeList, err := h.kubeClientSet.CoreV1().Nodes().List(ctx, v1.ListOptions{
-		FieldSelector: "spec.nodeName=" + h.nodeName,
-	})
+	node, err := h.kubeClientSet.CoreV1().Nodes().Get(ctx, h.nodeName, v1.GetOptions{})
 	if err != nil {
-		return 0, fmt.Errorf("failed to get kubernetes nodes for '%s': %w",
+		return 0, fmt.Errorf("failed to get kubernetes node '%s': %w",
 			h.nodeName, err)
 	}
 
-	if len(nodeList.Items) == 0 {
-		return 0, errors.New("empty node list")
-	}
-
-	// With the ListOptions filter in place, there should be only one node listed in the
-	// return we get from the API.
-	quantity, ok := nodeList.Items[0].Status.Allocatable[corev1.ResourcePods]
+	quantity, ok := node.Status.Allocatable[corev1.ResourcePods]
 	if !ok {
 		return 0, fmt.Errorf("failed to get allocatable information from %s",
-			nodeList.Items[0].Name)
+			node.Name)
 	}
 
 	return int(quantity.Value()), nil
