@@ -271,25 +271,33 @@ func (r *DatadogReporter) FrameKnown(frameID libpf.FrameID) bool {
 }
 
 // FrameMetadata accepts metadata associated with a frame and caches this information.
-func (r *DatadogReporter) FrameMetadata(fileID libpf.FileID, addressOrLine libpf.AddressOrLineno,
-	lineNumber libpf.SourceLineno, functionOffset uint32, functionName, filePath string) {
+func (r *DatadogReporter) FrameMetadata(args *reporter.FrameMetadataArgs) {
+	fileID := args.FrameID.FileID()
+	addressOrLine := args.FrameID.AddressOrLine()
+
+	log.Debugf("FrameMetadata [%x] %v+%v at %v:%v",
+		fileID, args.FunctionName, args.FunctionOffset,
+		args.SourceFile, args.SourceLine)
+
 	if frameMapLock, exists := r.frames.Get(fileID); exists {
 		frameMap := frameMapLock.WLock()
 		defer frameMapLock.WUnlock(&frameMap)
 
-		if filePath == "" {
-			// The new filePath may be empty, and we don't want to overwrite
+		sourceFile := args.SourceFile
+
+		if sourceFile == "" {
+			// The new sourceFile may be empty, and we don't want to overwrite
 			// an existing filePath with it.
 			if s, exists := (*frameMap)[addressOrLine]; exists {
-				filePath = s.filePath
+				sourceFile = s.filePath
 			}
 		}
 
 		(*frameMap)[addressOrLine] = sourceInfo{
-			lineNumber:     lineNumber,
-			functionOffset: functionOffset,
-			functionName:   functionName,
-			filePath:       filePath,
+			lineNumber:     args.SourceLine,
+			filePath:       sourceFile,
+			functionOffset: args.FunctionOffset,
+			functionName:   args.FunctionName,
 		}
 
 		return
@@ -297,10 +305,10 @@ func (r *DatadogReporter) FrameMetadata(fileID libpf.FileID, addressOrLine libpf
 
 	v := make(map[libpf.AddressOrLineno]sourceInfo)
 	v[addressOrLine] = sourceInfo{
-		lineNumber:     lineNumber,
-		functionOffset: functionOffset,
-		functionName:   functionName,
-		filePath:       filePath,
+		lineNumber:     args.SourceLine,
+		filePath:       args.SourceFile,
+		functionOffset: args.FunctionOffset,
+		functionName:   args.FunctionName,
 	}
 	mu := xsync.NewRWMutex(v)
 	r.frames.Add(fileID, &mu)
