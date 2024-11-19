@@ -143,7 +143,12 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	if err != nil {
 		return nil, err
 	}
-	executables.SetLifetime(1 * time.Hour) // Allow GC to clean stale items.
+	// TODO: Consider purging stale entries from executables to avoid memory leaks.
+	// Currently, setting a lifetime via go-freelru will cause the executables to be
+	// removed from the cache after the lifetime expires, regardless of whether
+	// they are still in use or not.
+	// This leads to mappings missing filename and buildID information, which is
+	// required for the profile to be correctly displayed in the Datadog UI.
 
 	frames, err := lru.NewSynced[libpf.FileID,
 		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.CacheSize, libpf.FileID.Hash32)
