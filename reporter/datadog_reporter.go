@@ -578,7 +578,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 		if r.timeline {
 			timestamps = traceInfo.timestamps
 		}
-		addTraceLabels(sample.Label, traceKey, processMeta, baseExec, timestamps)
+		addTraceLabels(sample.Label, traceKey, processMeta.containerMetadata, baseExec, timestamps)
 
 		count := int64(len(traceInfo.timestamps))
 		sample.Value = append(sample.Value, count, count*samplingPeriod)
@@ -620,22 +620,22 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 	return function
 }
 
-func addTraceLabels(labels map[string][]string, i traceAndMetaKey, processMeta processMetadata,
+func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
 	baseExec string, timestamps []uint64) {
 	if i.comm != "" {
 		labels["thread_name"] = append(labels["thread_name"], i.comm)
 	}
 
-	if processMeta.containerMetadata.PodName != "" {
-		labels["pod_name"] = append(labels["pod_name"], processMeta.containerMetadata.PodName)
+	if containerMetadata.PodName != "" {
+		labels["pod_name"] = append(labels["pod_name"], containerMetadata.PodName)
 	}
 
-	if processMeta.containerMetadata.ContainerID != "" {
-		labels["container_id"] = append(labels["container_id"], processMeta.containerMetadata.ContainerID)
+	if containerMetadata.ContainerID != "" {
+		labels["container_id"] = append(labels["container_id"], containerMetadata.ContainerID)
 	}
 
-	if processMeta.containerMetadata.ContainerName != "" {
-		labels["container_name"] = append(labels["container_name"], processMeta.containerMetadata.ContainerName)
+	if containerMetadata.ContainerName != "" {
+		labels["container_name"] = append(labels["container_name"], containerMetadata.ContainerName)
 	}
 
 	if i.apmServiceName != "" {
