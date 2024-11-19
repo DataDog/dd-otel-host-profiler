@@ -139,7 +139,7 @@ type DatadogReporter struct {
 }
 
 func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, error) {
-	executables, err := lru.NewSynced[libpf.FileID, execInfo](cfg.CacheSize, libpf.FileID.Hash32)
+	executables, err := lru.NewSynced[libpf.FileID, execInfo](cfg.ExecutablesCacheElements, libpf.FileID.Hash32)
 	if err != nil {
 		return nil, err
 	}
@@ -151,13 +151,13 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	// required for the profile to be correctly displayed in the Datadog UI.
 
 	frames, err := lru.NewSynced[libpf.FileID,
-		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.CacheSize, libpf.FileID.Hash32)
+		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.FramesCacheElements, libpf.FileID.Hash32)
 	if err != nil {
 		return nil, err
 	}
 	frames.SetLifetime(1 * time.Hour) // Allow GC to clean stale items.
 
-	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.CacheSize, libpf.PID.Hash32)
+	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.ProcessesCacheElements, libpf.PID.Hash32)
 	if err != nil {
 		return nil, err
 	}

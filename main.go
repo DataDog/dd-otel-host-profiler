@@ -195,15 +195,18 @@ func mainWithExitCode() exitCode {
 	}
 
 	rep, err := reporter.NewDatadog(&reporter.Config{
-		IntakeURL:        intakeURL,
-		Version:          versionInfo.Version,
-		ReportInterval:   intervals.ReportInterval(),
-		CacheSize:        traceHandlerCacheSize,
-		SamplesPerSecond: int(args.samplesPerSecond),
-		PprofPrefix:      args.pprofPrefix,
-		Tags:             validatedTags,
-		Timeline:         args.timeline,
-		APIKey:           apiKey,
+		IntakeURL:                intakeURL,
+		Version:                  versionInfo.Version,
+		ReportInterval:           intervals.ReportInterval(),
+		ExecutablesCacheElements: traceHandlerCacheSize,
+		// Next step: Calculate FramesCacheElements from numCores and samplingRate.
+		FramesCacheElements:    traceHandlerCacheSize,
+		ProcessesCacheElements: traceHandlerCacheSize,
+		SamplesPerSecond:       int(args.samplesPerSecond),
+		PprofPrefix:            args.pprofPrefix,
+		Tags:                   validatedTags,
+		Timeline:               args.timeline,
+		APIKey:                 apiKey,
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,

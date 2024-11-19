@@ -28,8 +28,12 @@ type Config struct {
 	Version string
 	// IntakeURL defines the URL of profiling intake.
 	IntakeURL string
-	// CacheSize defines the size of the reporter caches.
-	CacheSize uint32
+	// ExecutablesCacheElements defines item capacity of the executables cache.
+	ExecutablesCacheElements uint32
+	// FramesCacheElements defines the item capacity of the frames cache.
+	FramesCacheElements uint32
+	// ProcessesCacheElements defines the item capacity of the processes cache.
+	ProcessesCacheElements uint32
 	// samplesPerSecond defines the number of samples per second.
 	SamplesPerSecond int
 	// ReportInterval defines the interval at which the agent reports data to the collection agent.
