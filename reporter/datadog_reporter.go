@@ -155,7 +155,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	if err != nil {
 		return nil, err
 	}
-	frames.SetLifetime(1 * time.Hour) // Allow GC to clean stale items.
+	// TODO: Similarly to executables, consider purging stale entries from frames.
 
 	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.ProcessesCacheElements, libpf.PID.Hash32)
 	if err != nil {
