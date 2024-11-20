@@ -19,12 +19,10 @@ import (
 	"github.com/DataDog/zstd"
 	lru "github.com/elastic/go-freelru"
 	pprofile "github.com/google/pprof/profile"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/libpf/xsync"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/process"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/reporter"
 	log "github.com/sirupsen/logrus"
-	"github.com/zeebo/xxh3"
+	"go.opentelemetry.io/ebpf-profiler/libpf"
+	"go.opentelemetry.io/ebpf-profiler/libpf/xsync"
+	"go.opentelemetry.io/ebpf-profiler/reporter"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 )
@@ -32,7 +30,11 @@ import (
 // Assert that we implement the full Reporter interface.
 var _ reporter.Reporter = (*DatadogReporter)(nil)
 
-const profilerName = "dd-otel-host-profiler"
+const (
+	profilerName            = "dd-otel-host-profiler"
+	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
+	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
+)
 
 // execInfo enriches an executable with additional metadata.
 type execInfo struct {
@@ -66,8 +68,8 @@ type traceAndMetaKey struct {
 	tid            libpf.PID
 }
 
-// traceFramesCounts holds known information about a trace.
-type traceFramesCounts struct {
+// traceEvents holds known information about a trace.
+type traceEvents struct {
 	files              []libpf.FileID
 	linenos            []libpf.AddressOrLineno
 	frameTypes         []libpf.FrameType
@@ -79,12 +81,15 @@ type traceFramesCounts struct {
 }
 
 type processMetadata struct {
+	updatedAt         time.Time
 	execPath          string
 	containerMetadata containermetadata.ContainerMetadata
 }
 
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
 type DatadogReporter struct {
+	config *Config
+
 	// profiler version
 	version string
 
@@ -95,12 +100,6 @@ type DatadogReporter struct {
 	// this structure holds in long term storage information that might
 	// be duplicated in other places but not accessible for DatadogReporter.
 
-	// hostmetadata stores metadata that is sent out with every request.
-	hostmetadata *lru.SyncedLRU[string, string]
-
-	// fallbackSymbols keeps track of FrameID to their symbol.
-	fallbackSymbols *lru.SyncedLRU[libpf.FrameID, string]
-
 	// executables stores metadata for executables.
 	executables *lru.SyncedLRU[libpf.FileID, execInfo]
 
@@ -108,7 +107,7 @@ type DatadogReporter struct {
 	frames *lru.SyncedLRU[libpf.FileID, *xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]]
 
 	// traceEvents stores reported trace events (trace metadata with frames and counts)
-	traceEvents xsync.RWMutex[map[traceAndMetaKey]*traceFramesCounts]
+	traceEvents xsync.RWMutex[map[traceAndMetaKey]*traceEvents]
 
 	// processes stores the metadata associated to a PID.
 	processes *lru.SyncedLRU[libpf.PID, processMetadata]
@@ -139,12 +138,74 @@ type DatadogReporter struct {
 	profileSeq uint64
 }
 
+func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, error) {
+	executables, err := lru.NewSynced[libpf.FileID, execInfo](cfg.ExecutablesCacheElements, libpf.FileID.Hash32)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: Consider purging stale entries from executables to avoid memory leaks.
+	// Currently, setting a lifetime via go-freelru will cause the executables to be
+	// removed from the cache after the lifetime expires, regardless of whether
+	// they are still in use or not.
+	// This leads to mappings missing filename and buildID information, which is
+	// required for the profile to be correctly displayed in the Datadog UI.
+
+	frames, err := lru.NewSynced[libpf.FileID,
+		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.FramesCacheElements, libpf.FileID.Hash32)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: Similarly to executables, consider purging stale entries from frames.
+
+	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.ProcessesCacheElements, libpf.PID.Hash32)
+	if err != nil {
+		return nil, err
+	}
+	processes.SetLifetime(pidCacheCleanupInterval)
+
+	var symbolUploader *DatadogSymbolUploader
+	if cfg.SymbolUploaderConfig.Enabled {
+		log.Infof("Enabling Datadog local symbol upload")
+		symbolUploader, err = NewDatadogSymbolUploader(cfg.SymbolUploaderConfig)
+		if err != nil {
+			log.Errorf(
+				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
+				err)
+		}
+	}
+
+	return &DatadogReporter{
+		config:                    cfg,
+		version:                   cfg.Version,
+		samplesPerSecond:          cfg.SamplesPerSecond,
+		stopSignal:                make(chan libpf.Void),
+		executables:               executables,
+		frames:                    frames,
+		containerMetadataProvider: p,
+		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceEvents{}),
+		processes:                 processes,
+		intakeURL:                 cfg.IntakeURL,
+		pprofPrefix:               cfg.PprofPrefix,
+		apiKey:                    cfg.APIKey,
+		symbolUploader:            symbolUploader,
+		tags:                      cfg.Tags,
+		timeline:                  cfg.Timeline,
+		profileSeq:                0,
+	}, nil
+}
+
+// SupportsReportTraceEvent returns true if the reporter supports reporting trace events
+// via ReportTraceEvent().
+func (r *DatadogReporter) SupportsReportTraceEvent() bool {
+	return true
+}
+
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
 func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.TraceEventMeta) {
-	traceEvents := r.traceEvents.WLock()
-	defer r.traceEvents.WUnlock(&traceEvents)
+	traceEventsMap := r.traceEvents.WLock()
+	defer r.traceEvents.WUnlock(&traceEventsMap)
 
-	if _, ok := r.processes.Get(meta.PID); !ok {
+	if pMeta, ok := r.processes.Get(meta.PID); !ok || time.Since(pMeta.updatedAt) > pidCacheUpdateInterval {
 		r.addProcessMetadata(meta.PID)
 	}
 
@@ -156,13 +217,13 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 		tid:            meta.TID,
 	}
 
-	if tr, exists := (*traceEvents)[key]; exists {
+	if tr, exists := (*traceEventsMap)[key]; exists {
 		tr.timestamps = append(tr.timestamps, uint64(meta.Timestamp))
-		(*traceEvents)[key] = tr
+		(*traceEventsMap)[key] = tr
 		return
 	}
 
-	(*traceEvents)[key] = &traceFramesCounts{
+	(*traceEventsMap)[key] = &traceEvents{
 		files:              trace.Files,
 		linenos:            trace.Linenos,
 		frameTypes:         trace.FrameTypes,
@@ -173,19 +234,6 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 	}
 }
 
-// hashString is a helper function for LRUs that use string as a key.
-// Xxh3 turned out to be the fastest hash function for strings in the FreeLRU benchmarks.
-// It was only outperformed by the AES hash function, which is implemented in Plan9 assembly.
-func hashString(s string) uint32 {
-	return uint32(xxh3.HashString(s))
-}
-
-// SupportsReportTraceEvent returns true if the reporter supports reporting trace events
-// via ReportTraceEvent().
-func (r *DatadogReporter) SupportsReportTraceEvent() bool {
-	return true
-}
-
 // ReportFramesForTrace is a NOP for DatadogReporter.
 func (r *DatadogReporter) ReportFramesForTrace(_ *libpf.Trace) {}
 
@@ -193,48 +241,66 @@ func (r *DatadogReporter) ReportFramesForTrace(_ *libpf.Trace) {}
 func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *reporter.TraceEventMeta) {
 }
 
-// ReportFallbackSymbol enqueues a fallback symbol for reporting, for a given frame.
-func (r *DatadogReporter) ReportFallbackSymbol(frameID libpf.FrameID, symbol string) {
-	if _, exists := r.fallbackSymbols.Peek(frameID); exists {
-		return
-	}
-	r.fallbackSymbols.Add(frameID, symbol)
+// ExecutableKnown returns true if the metadata of the Executable specified by fileID is
+// cached in the reporter.
+func (r *DatadogReporter) ExecutableKnown(fileID libpf.FileID) bool {
+	_, known := r.executables.Get(fileID)
+	return known
 }
 
 // ExecutableMetadata accepts a fileID with the corresponding filename
 // and caches this information.
-func (r *DatadogReporter) ExecutableMetadata(fileID libpf.FileID, filePath, buildID string,
-	interp libpf.InterpreterType, opener process.FileOpener) {
-	r.executables.Add(fileID, execInfo{
-		fileName: path.Base(filePath),
-		buildID:  buildID,
+func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataArgs) {
+	r.executables.Add(args.FileID, execInfo{
+		fileName: path.Base(args.FileName),
+		buildID:  args.GnuBuildID,
 	})
 
-	if r.symbolUploader != nil && interp == libpf.Native {
-		r.symbolUploader.UploadSymbols(fileID, filePath, buildID, opener)
+	if r.symbolUploader != nil && args.Interp == libpf.Native {
+		r.symbolUploader.UploadSymbols(args.FileID, args.FileName, args.GnuBuildID, args.Open)
 	}
 }
 
+// FrameKnown returns true if the metadata of the Frame specified by frameID is
+// cached in the reporter.
+func (r *DatadogReporter) FrameKnown(frameID libpf.FrameID) bool {
+	known := false
+	if frameMapLock, exists := r.frames.Get(frameID.FileID()); exists {
+		frameMap := frameMapLock.RLock()
+		defer frameMapLock.RUnlock(&frameMap)
+		_, known = (*frameMap)[frameID.AddressOrLine()]
+	}
+	return known
+}
+
 // FrameMetadata accepts metadata associated with a frame and caches this information.
-func (r *DatadogReporter) FrameMetadata(fileID libpf.FileID, addressOrLine libpf.AddressOrLineno,
-	lineNumber libpf.SourceLineno, functionOffset uint32, functionName, filePath string) {
+func (r *DatadogReporter) FrameMetadata(args *reporter.FrameMetadataArgs) {
+	fileID := args.FrameID.FileID()
+	addressOrLine := args.FrameID.AddressOrLine()
+
+	log.Debugf("FrameMetadata [%x] %v+%v at %v:%v",
+		fileID, args.FunctionName, args.FunctionOffset,
+		args.SourceFile, args.SourceLine)
+
 	if frameMapLock, exists := r.frames.Get(fileID); exists {
 		frameMap := frameMapLock.WLock()
 		defer frameMapLock.WUnlock(&frameMap)
 
-		if filePath == "" {
-			// The new filePath may be empty, and we don't want to overwrite
+		sourceFile := args.SourceFile
+
+		if sourceFile == "" {
+			// The new sourceFile may be empty, and we don't want to overwrite
 			// an existing filePath with it.
 			if s, exists := (*frameMap)[addressOrLine]; exists {
-				filePath = s.filePath
+				sourceFile = s.filePath
 			}
 		}
 
 		(*frameMap)[addressOrLine] = sourceInfo{
-			lineNumber:     lineNumber,
-			functionOffset: functionOffset,
-			functionName:   functionName,
-			filePath:       filePath,
+			lineNumber:     args.SourceLine,
+			filePath:       sourceFile,
+			functionOffset: args.FunctionOffset,
+			functionName:   args.FunctionName,
 		}
 
 		return
@@ -242,32 +308,22 @@ func (r *DatadogReporter) FrameMetadata(fileID libpf.FileID, addressOrLine libpf
 
 	v := make(map[libpf.AddressOrLineno]sourceInfo)
 	v[addressOrLine] = sourceInfo{
-		lineNumber:     lineNumber,
-		functionOffset: functionOffset,
-		functionName:   functionName,
-		filePath:       filePath,
+		lineNumber:     args.SourceLine,
+		filePath:       args.SourceFile,
+		functionOffset: args.FunctionOffset,
+		functionName:   args.FunctionName,
 	}
 	mu := xsync.NewRWMutex(v)
 	r.frames.Add(fileID, &mu)
 }
 
-// ReportHostMetadata enqueues host metadata.
-func (r *DatadogReporter) ReportHostMetadata(metadataMap map[string]string) {
-	r.addHostmetadata(metadataMap)
-}
+// ReportHostMetadata is a NOP for DatadogReporter.
+func (r *DatadogReporter) ReportHostMetadata(_ map[string]string) {}
 
-// ReportHostMetadataBlocking enqueues host metadata.
+// ReportHostMetadataBlocking is a NOP for DatadogReporter.
 func (r *DatadogReporter) ReportHostMetadataBlocking(_ context.Context,
-	metadataMap map[string]string, _ int, _ time.Duration) error {
-	r.addHostmetadata(metadataMap)
+	_ map[string]string, _ int, _ time.Duration) error {
 	return nil
-}
-
-// addHostmetadata adds to and overwrites host metadata.
-func (r *DatadogReporter) addHostmetadata(metadataMap map[string]string) {
-	for k, v := range metadataMap {
-		r.hostmetadata.Add(k, v)
-	}
 }
 
 // ReportMetrics is a NOP for DatadogReporter.
@@ -283,68 +339,8 @@ func (r *DatadogReporter) GetMetrics() reporter.Metrics {
 	return reporter.Metrics{}
 }
 
-// StartDatadog sets up and manages the reporting connection to the Datadog Backend.
-func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (reporter.Reporter, error) {
-	fallbackSymbols, err := lru.NewSynced[libpf.FrameID, string](cfg.CacheSize, libpf.FrameID.Hash32)
-	if err != nil {
-		return nil, err
-	}
-
-	executables, err := lru.NewSynced[libpf.FileID, execInfo](cfg.CacheSize, libpf.FileID.Hash32)
-	if err != nil {
-		return nil, err
-	}
-
-	frames, err := lru.NewSynced[libpf.FileID,
-		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.CacheSize, libpf.FileID.Hash32)
-	if err != nil {
-		return nil, err
-	}
-
-	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.CacheSize, libpf.PID.Hash32)
-	if err != nil {
-		return nil, err
-	}
-
-	// Next step: Dynamically configure the size of this LRU.
-	// Currently, we use the length of the JSON array in
-	// hostmetadata/hostmetadata.json.
-	hostmetadata, err := lru.NewSynced[string, string](115, hashString)
-	if err != nil {
-		return nil, err
-	}
-
-	var symbolUploader *DatadogSymbolUploader
-	if cfg.SymbolUploaderConfig.Enabled {
-		log.Infof("Enabling Datadog local symbol upload")
-		symbolUploader, err = NewDatadogSymbolUploader(cfg.SymbolUploaderConfig)
-		if err != nil {
-			log.Errorf(
-				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
-				err)
-		}
-	}
-
-	r := &DatadogReporter{
-		version:                   cfg.Version,
-		samplesPerSecond:          cfg.SamplesPerSecond,
-		stopSignal:                make(chan libpf.Void),
-		fallbackSymbols:           fallbackSymbols,
-		executables:               executables,
-		frames:                    frames,
-		hostmetadata:              hostmetadata,
-		containerMetadataProvider: p,
-		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceFramesCounts{}),
-		processes:                 processes,
-		intakeURL:                 cfg.IntakeURL,
-		pprofPrefix:               cfg.PprofPrefix,
-		apiKey:                    cfg.APIKey,
-		symbolUploader:            symbolUploader,
-		tags:                      cfg.Tags,
-		timeline:                  cfg.Timeline,
-		profileSeq:                0,
-	}
-
+// Start sets up and manages the reporting connection to the Datadog Backend.
+func (r *DatadogReporter) Start(mainCtx context.Context) error {
 	// Create a child context for reporting features
 	ctx, cancelReporting := context.WithCancel(mainCtx)
 
@@ -355,8 +351,10 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 	}
 
 	go func() {
-		tick := time.NewTicker(cfg.ReportInterval)
+		tick := time.NewTicker(r.config.ReportInterval)
 		defer tick.Stop()
+		purgeTick := time.NewTicker(5 * time.Minute)
+		defer purgeTick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -367,7 +365,12 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 				if err := r.reportProfile(ctx); err != nil {
 					log.Errorf("Request failed: %v", err)
 				}
-				tick.Reset(libpf.AddJitter(cfg.ReportInterval, 0.2))
+				tick.Reset(libpf.AddJitter(r.config.ReportInterval, 0.2))
+			case <-purgeTick.C:
+				// Allow the GC to purge expired entries to avoid memory leaks.
+				r.executables.PurgeExpired()
+				r.frames.PurgeExpired()
+				r.processes.PurgeExpired()
 			}
 		}
 	}()
@@ -379,7 +382,7 @@ func Start(mainCtx context.Context, cfg *Config, p containermetadata.Provider) (
 		cancelReporting()
 	}()
 
-	return r, nil
+	return nil
 }
 
 // reportProfile creates and sends out a profile.
@@ -466,10 +469,9 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 	}
 
 	fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
-	frameIDtoFunction := make(map[libpf.FrameID]*pprofile.Function)
 	totalSampleCount := 0
 
-	for traceAndMetaKey, traceInfo := range samples {
+	for traceKey, traceInfo := range samples {
 		sample := &pprofile.Sample{}
 
 		for _, ts := range traceInfo.timestamps {
@@ -515,30 +517,6 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 				line := pprofile.Line{Function: createPprofFunctionEntry(funcMap, profile, "",
 					loc.Mapping.File)}
 				loc.Line = append(loc.Line, line)
-			case libpf.KernelFrame:
-				// Reconstruct frameID
-				frameID := libpf.NewFrameID(traceInfo.files[i], traceInfo.linenos[i])
-				// Store Kernel frame information as Line message:
-				line := pprofile.Line{}
-
-				if tmpFunction, exists := frameIDtoFunction[frameID]; exists {
-					line.Function = tmpFunction
-				} else {
-					symbol, exists := r.fallbackSymbols.Get(frameID)
-					if !exists {
-						// TODO: choose a proper default value if the kernel symbol was not
-						// reported yet.
-						symbol = unknownStr
-					}
-					line.Function = createPprofFunctionEntry(
-						funcMap, profile, symbol, "")
-				}
-				loc.Line = append(loc.Line, line)
-
-				// To be compliant with the protocol generate a dummy mapping entry.
-				loc.Mapping = getDummyMapping(fileIDtoMapping, profile,
-					traceInfo.files[i])
-
 			case libpf.AbortFrame:
 				// Next step: Figure out how the OTLP protocol
 				// could handle artificial frames, like AbortFrame,
@@ -556,20 +534,15 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 						"UNREPORTED", frameKind.String())
 				} else {
 					fileIDInfo := fileIDInfoLock.RLock()
-					si, exists := (*fileIDInfo)[traceInfo.linenos[i]]
-					if !exists {
-						// At this point, we do not have enough information for the frame.
-						// Therefore, we report a dummy entry and use the interpreter as filename.
-						// To differentiate this case with the case where no information about
-						// the file ID is available at all, we use a different name for reported
-						// function.
-						line.Function = createPprofFunctionEntry(funcMap, profile,
-							"UNRESOLVED", frameKind.String())
-					} else {
+					if si, exists := (*fileIDInfo)[traceInfo.linenos[i]]; exists {
 						line.Line = int64(si.lineNumber)
-
 						line.Function = createPprofFunctionEntry(funcMap, profile,
 							si.functionName, si.filePath)
+					} else {
+						// At this point, we do not have enough information for the frame.
+						// Therefore, we report a dummy entry and use the interpreter as filename.
+						line.Function = createPprofFunctionEntry(funcMap, profile,
+							"UNRESOLVED", frameKind.String())
 					}
 					fileIDInfoLock.RUnlock(&fileIDInfo)
 				}
@@ -581,7 +554,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			sample.Location = append(sample.Location, loc)
 		}
 
-		processMeta, _ := r.processes.Get(traceAndMetaKey.pid)
+		processMeta, _ := r.processes.Get(traceKey.pid)
 		execPath := processMeta.execPath
 
 		// Check if the last frame is a kernel frame.
@@ -605,7 +578,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 		if r.timeline {
 			timestamps = traceInfo.timestamps
 		}
-		addTraceLabels(sample.Label, traceAndMetaKey, processMeta, baseExec, timestamps)
+		addTraceLabels(sample.Label, traceKey, processMeta.containerMetadata, baseExec, timestamps)
 
 		count := int64(len(traceInfo.timestamps))
 		sample.Value = append(sample.Value, count, count*samplingPeriod)
@@ -647,22 +620,22 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 	return function
 }
 
-func addTraceLabels(labels map[string][]string, i traceAndMetaKey, processMeta processMetadata,
+func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
 	baseExec string, timestamps []uint64) {
 	if i.comm != "" {
 		labels["thread_name"] = append(labels["thread_name"], i.comm)
 	}
 
-	if processMeta.containerMetadata.PodName != "" {
-		labels["pod_name"] = append(labels["pod_name"], processMeta.containerMetadata.PodName)
+	if containerMetadata.PodName != "" {
+		labels["pod_name"] = append(labels["pod_name"], containerMetadata.PodName)
 	}
 
-	if processMeta.containerMetadata.ContainerID != "" {
-		labels["container_id"] = append(labels["container_id"], processMeta.containerMetadata.ContainerID)
+	if containerMetadata.ContainerID != "" {
+		labels["container_id"] = append(labels["container_id"], containerMetadata.ContainerID)
 	}
 
-	if processMeta.containerMetadata.ContainerName != "" {
-		labels["container_name"] = append(labels["container_name"], processMeta.containerMetadata.ContainerName)
+	if containerMetadata.ContainerName != "" {
+		labels["container_name"] = append(labels["container_name"], containerMetadata.ContainerName)
 	}
 
 	if i.apmServiceName != "" {
@@ -743,5 +716,9 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 		// Even upon failure, we might still have managed to get the containerID
 	}
 
-	r.processes.Add(pid, processMetadata{execPath, containerMetadata})
+	r.processes.Add(pid, processMetadata{
+		updatedAt:         time.Now(),
+		execPath:          execPath,
+		containerMetadata: containerMetadata,
+	})
 }

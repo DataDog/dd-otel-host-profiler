@@ -18,16 +18,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/host"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/metrics"
-	otelreporter "github.com/open-telemetry/opentelemetry-ebpf-profiler/reporter"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/times"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracehandler"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer"
-	tracertypes "github.com/open-telemetry/opentelemetry-ebpf-profiler/tracer/types"
-	"github.com/open-telemetry/opentelemetry-ebpf-profiler/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/tklauser/numcpus"
+	"go.opentelemetry.io/ebpf-profiler/host"
+	"go.opentelemetry.io/ebpf-profiler/metrics"
+	otelreporter "go.opentelemetry.io/ebpf-profiler/reporter"
+	"go.opentelemetry.io/ebpf-profiler/times"
+	"go.opentelemetry.io/ebpf-profiler/tracehandler"
+	"go.opentelemetry.io/ebpf-profiler/tracer"
+	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
+	"go.opentelemetry.io/ebpf-profiler/util"
 	"golang.org/x/sys/unix"
 	"gopkg.in/DataDog/dd-trace-go.v1/profiler"
 
@@ -144,10 +144,6 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to probe eBPF syscall: %v", err)
 	}
 
-	if err = tracer.ProbeTracepoint(); err != nil {
-		return failure("Failed to probe tracepoint: %v", err)
-	}
-
 	presentCores, err := numcpus.GetPresent()
 	if err != nil {
 		return failure("Failed to read CPU file: %v", err)
@@ -198,16 +194,19 @@ func mainWithExitCode() exitCode {
 		}
 	}
 
-	rep, err := reporter.Start(mainCtx, &reporter.Config{
-		IntakeURL:        intakeURL,
-		Version:          versionInfo.Version,
-		ReportInterval:   intervals.ReportInterval(),
-		CacheSize:        traceHandlerCacheSize,
-		SamplesPerSecond: int(args.samplesPerSecond),
-		PprofPrefix:      args.pprofPrefix,
-		Tags:             validatedTags,
-		Timeline:         args.timeline,
-		APIKey:           apiKey,
+	rep, err := reporter.NewDatadog(&reporter.Config{
+		IntakeURL:                intakeURL,
+		Version:                  versionInfo.Version,
+		ReportInterval:           intervals.ReportInterval(),
+		ExecutablesCacheElements: traceHandlerCacheSize,
+		// Next step: Calculate FramesCacheElements from numCores and samplingRate.
+		FramesCacheElements:    traceHandlerCacheSize,
+		ProcessesCacheElements: traceHandlerCacheSize,
+		SamplesPerSecond:       int(args.samplesPerSecond),
+		PprofPrefix:            args.pprofPrefix,
+		Tags:                   validatedTags,
+		Timeline:               args.timeline,
+		APIKey:                 apiKey,
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,
@@ -218,6 +217,11 @@ func mainWithExitCode() exitCode {
 			Version:              args.serviceVersion,
 		},
 	}, containerMetadataProvider)
+	if err != nil {
+		return failure("Failed to create Datadog reporter: %v", err)
+	}
+
+	err = rep.Start(mainCtx)
 	if err != nil {
 		return failure("Failed to start reporting: %v", err)
 	}
@@ -234,7 +238,6 @@ func mainWithExitCode() exitCode {
 		MapScaleFactor:         int(args.mapScaleFactor),
 		KernelVersionCheck:     !args.noKernelVersionCheck,
 		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
-		BPFVerifierLogSize:     int(args.bpfVerifierLogSize),
 		ProbabilisticInterval:  args.probabilisticInterval,
 		ProbabilisticThreshold: uint(args.probabilisticThreshold),
 	})
@@ -245,10 +248,8 @@ func mainWithExitCode() exitCode {
 	defer trc.Close()
 
 	now := time.Now()
-	// Initial scan of /proc filesystem to list currently active PIDs and have them processed.
-	if err = trc.StartPIDEventProcessor(mainCtx); err != nil {
-		log.Errorf("Failed to list processes from /proc: %v", err)
-	}
+	trc.StartPIDEventProcessor(mainCtx)
+
 	metrics.Add(metrics.IDProcPIDStartupMs, metrics.MetricValue(time.Since(now).Milliseconds()))
 	log.Debug("Completed initial PID listing")
 
