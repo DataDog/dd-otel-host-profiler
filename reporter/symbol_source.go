@@ -14,6 +14,7 @@ const (
 	DynamicSymbolTable
 	SymbolTable
 	DebugInfo
+	GoPCLnTab
 )
 
 func (s SymbolSource) String() string {
@@ -26,7 +27,10 @@ func (s SymbolSource) String() string {
 		return "symbol_table"
 	case DebugInfo:
 		return "debug_info"
+	case GoPCLnTab:
+		return "gopclntab"
 	}
+
 	return "unknown"
 }
 
@@ -40,6 +44,8 @@ func NewSymbolSource(s string) (SymbolSource, error) {
 		return SymbolTable, nil
 	case "debug_info":
 		return DebugInfo, nil
+	case "gopclntab":
+		return GoPCLnTab, nil
 	}
 	return None, fmt.Errorf("unknown symbol source: %s", s)
 }
