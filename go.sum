@@ -22,8 +22,8 @@ github.com/DataDog/gostackparse v0.7.0 h1:i7dLkXHvYzHV308hnkvVGDL3BR4FWl7IsXNPz/
 github.com/DataDog/gostackparse v0.7.0/go.mod h1:lTfqcJKqS9KnXQGnyQMCugq3u1FP6UZMfWR0aitKFMM=
 github.com/DataDog/jsonapi v0.10.0 h1:qDNSVEdnNteT6lXg9xN/JaGNgvVphwmN8frtJVzUVEU=
 github.com/DataDog/jsonapi v0.10.0/go.mod h1:FUSGF3bwMARlVfXEoFo9R/CVlYYy9BGL4C/Prf6Ke3M=
-github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20241119174319-901d5b72ce75 h1:nkofaoWfM7irT7Af870L8LKPGkKP9Wq4vR96dN248Ts=
-github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20241119174319-901d5b72ce75/go.mod h1:LZs0Ai6k5IPICeMqXRDpr1uyW7NJnoXgyrlaQh36XSM=
+github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20241121135249-b6ca36e82a06 h1:n/86T7k33ex2SbJt8WnmnBBjpaQiqBRklmLy5YeBCms=
+github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20241121135249-b6ca36e82a06/go.mod h1:LZs0Ai6k5IPICeMqXRDpr1uyW7NJnoXgyrlaQh36XSM=
 github.com/DataDog/sketches-go v1.4.5 h1:ki7VfeNz7IcNafq7yI/j5U/YCkO3LJiMDtXz9OMQbyE=
 github.com/DataDog/sketches-go v1.4.5/go.mod h1:7Y8GN8Jf66DLyDhc94zuWA3uHEt/7ttt8jHOBWWrSOg=
 github.com/DataDog/zstd v1.5.6 h1:LbEglqepa/ipmmQJUDnSsfvA8e8IStVcGaFWDuxvGOY=
