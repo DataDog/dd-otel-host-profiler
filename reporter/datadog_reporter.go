@@ -34,6 +34,7 @@ const (
 	profilerName            = "dd-otel-host-profiler"
 	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
 	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
+	executableCacheLifetime = 1 * time.Hour   // executable cache items will be removed if unused after this interval
 )
 
 // execInfo enriches an executable with additional metadata.
@@ -143,19 +144,19 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Consider purging stale entries from executables to avoid memory leaks.
-	// Currently, setting a lifetime via go-freelru will cause the executables to be
-	// removed from the cache after the lifetime expires, regardless of whether
-	// they are still in use or not.
-	// This leads to mappings missing filename and buildID information, which is
-	// required for the profile to be correctly displayed in the Datadog UI.
+	executables.SetLifetime(executableCacheLifetime)
 
 	frames, err := lru.NewSynced[libpf.FileID,
 		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.FramesCacheElements, libpf.FileID.Hash32)
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Similarly to executables, consider purging stale entries from frames.
+	// TODO: Consider purging stale entries from frames to avoid memory leaks.
+	// Currently, setting a lifetime via go-freelru will cause the frames to be
+	// removed from the cache after the lifetime expires, regardless of whether
+	// they are still in use or not.
+	// This leads to mappings missing function name information, which is
+	// required for the profile to be correctly displayed in the Datadog UI.
 
 	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.ProcessesCacheElements, libpf.PID.Hash32)
 	if err != nil {
@@ -496,7 +497,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 				if tmpMapping, exists := fileIDtoMapping[traceInfo.files[i]]; exists {
 					loc.Mapping = tmpMapping
 				} else {
-					executionInfo, exists := r.executables.Get(traceInfo.files[i])
+					executionInfo, exists := r.executables.GetAndRefresh(traceInfo.files[i], executableCacheLifetime)
 
 					// Next step: Select a proper default value,
 					// if the name of the executable is not known yet.
