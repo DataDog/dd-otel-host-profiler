@@ -69,7 +69,6 @@ import,github.com/spaolacci/murmur3,BSD-3-Clause,"Copyright 2013, Sébastien Pao
 import,github.com/tklauser/numcpus,Apache-2.0,unknown
 import,github.com/urfave/cli/v3,MIT,Copyright (c) 2023 urfave/cli maintainers
 import,github.com/x448/float16,MIT,Copyright (c) 2019 Montgomery Edwards⁴⁴⁸ and Faye Amacker
-import,github.com/xrash/smetrics,MIT,Copyright (C) 2016 Felipe da Cunha Gonçalves
 import,github.com/zeebo/xxh3,BSD-2-Clause,"Copyright (c) 2012-2014, Yann Collet | Copyright (c) 2019, Jeff Wendling"
 import,go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp,Apache-2.0,unknown
 import,go.opentelemetry.io/ebpf-profiler,Apache-2.0,unknown
@@ -79,13 +78,13 @@ import,go.opentelemetry.io/otel/trace,Apache-2.0,unknown
 import,go.opentelemetry.io/proto/otlp,Apache-2.0,unknown
 import,golang.org/x/arch/arm64/arm64asm,BSD-3-Clause,Copyright 2015 The Go Authors.
 import,golang.org/x/exp/constraints,BSD-3-Clause,Copyright 2009 The Go Authors.
-import,golang.org/x/net,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,golang.org/x/net,BSD-3-Clause,Copyright 2009 The Go Authors.
 import,golang.org/x/oauth2,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
 import,golang.org/x/sync,BSD-3-Clause,Copyright 2009 The Go Authors.
 import,golang.org/x/sys/unix,BSD-3-Clause,Copyright 2009 The Go Authors.
-import,golang.org/x/term,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
-import,golang.org/x/text,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
-import,golang.org/x/time/rate,BSD-3-Clause,Copyright (c) 2009 The Go Authors. All rights reserved.
+import,golang.org/x/term,BSD-3-Clause,Copyright 2009 The Go Authors.
+import,golang.org/x/text,BSD-3-Clause,Copyright 2009 The Go Authors.
+import,golang.org/x/time/rate,BSD-3-Clause,Copyright 2009 The Go Authors.
 import,google.golang.org/genproto/googleapis/api/httpbody,Apache-2.0,unknown
 import,google.golang.org/genproto/googleapis/rpc,Apache-2.0,unknown
 import,google.golang.org/genproto/protobuf/field_mask,Apache-2.0,unknown

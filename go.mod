@@ -5,27 +5,27 @@ go 1.23.1
 require (
 	github.com/DataDog/jsonapi v0.10.0
 	github.com/DataDog/zstd v1.5.6
-	github.com/containerd/containerd v1.7.22
-	github.com/docker/docker v27.2.1+incompatible
-	github.com/elastic/go-freelru v0.15.0
-	github.com/google/pprof v0.0.0-20240829160300-da1f7e9f2b25
+	github.com/containerd/containerd v1.7.24
+	github.com/docker/docker v27.3.1+incompatible
+	github.com/elastic/go-freelru v0.16.0
+	github.com/google/pprof v0.0.0-20241101162523-b92577c0c142
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
-	github.com/tklauser/numcpus v0.8.0
-	github.com/urfave/cli/v3 v3.0.0-alpha9
+	github.com/tklauser/numcpus v0.9.0
+	github.com/urfave/cli/v3 v3.0.0-alpha9.4
 	github.com/zeebo/xxh3 v1.0.2
 	go.opentelemetry.io/ebpf-profiler v0.0.0-20241114112653-6d846a2023a0
-	golang.org/x/sys v0.26.0
-	gopkg.in/DataDog/dd-trace-go.v1 v1.69.1
-	k8s.io/api v0.31.0
-	k8s.io/apimachinery v0.31.0
-	k8s.io/client-go v0.31.0
+	golang.org/x/sys v0.27.0
+	gopkg.in/DataDog/dd-trace-go.v1 v1.70.1
+	k8s.io/api v0.31.3
+	k8s.io/apimachinery v0.31.3
+	k8s.io/client-go v0.31.3
 )
 
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230811130428-ced1acdcaa24 // indirect
 	github.com/AdamKorcz/go-118-fuzz-build v0.0.0-20230306123547-8075edf89bb0 // indirect
-	github.com/DataDog/datadog-go/v5 v5.3.0 // indirect
+	github.com/DataDog/datadog-go/v5 v5.5.0 // indirect
 	github.com/DataDog/gostackparse v0.7.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/Microsoft/hcsshim v0.11.7 // indirect
@@ -34,7 +34,7 @@ require (
 	github.com/containerd/cgroups v1.1.0 // indirect
 	github.com/containerd/containerd/api v1.7.19 // indirect
 	github.com/containerd/continuity v0.4.2 // indirect
-	github.com/containerd/errdefs v0.1.0 // indirect
+	github.com/containerd/errdefs v0.3.0 // indirect
 	github.com/containerd/fifo v1.1.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
@@ -47,7 +47,7 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/elastic/go-perf v0.0.0-20241016160959-1342461adb4a // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
-	github.com/felixge/httpsnoop v1.0.3 // indirect
+	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -89,22 +89,21 @@ require (
 	github.com/richardartoul/molecule v1.0.1-0.20240531184615-7ca0df43c0b3 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.45.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.49.0 // indirect
 	go.opentelemetry.io/otel v1.30.0 // indirect
 	go.opentelemetry.io/otel/metric v1.30.0 // indirect
 	go.opentelemetry.io/otel/trace v1.30.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	golang.org/x/arch v0.10.0 // indirect
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0 // indirect
-	golang.org/x/net v0.26.0 // indirect
+	golang.org/x/net v0.28.0 // indirect
 	golang.org/x/oauth2 v0.21.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/term v0.22.0 // indirect
-	golang.org/x/text v0.16.0 // indirect
-	golang.org/x/time v0.3.0 // indirect
-	google.golang.org/genproto v0.0.0-20231211222908-989df2bf70f3 // indirect
+	golang.org/x/term v0.23.0 // indirect
+	golang.org/x/text v0.17.0 // indirect
+	golang.org/x/time v0.6.0 // indirect
+	google.golang.org/genproto v0.0.0-20240213162025-012b6fc9bca9 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240604185151-ef581f913117 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240604185151-ef581f913117 // indirect
 	google.golang.org/grpc v1.66.2 // indirect
@@ -125,4 +124,4 @@ require (
 // To update the Datadog/opentelemetry-ebpf-profiler dependency on latest commit on datadog branch, change the following line to:
 // replace github.com/open-telemetry/opentelemetry-ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler datadog
 // and run `GOPRIVATE=github.com/Datadog/* go mod tidy`
-replace go.opentelemetry.io/ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20241119174319-901d5b72ce75
+replace go.opentelemetry.io/ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20241121135249-b6ca36e82a06
