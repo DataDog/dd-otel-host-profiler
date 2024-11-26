@@ -210,6 +210,7 @@ func mainWithExitCode() exitCode {
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,
+			UploadGoPCLnTab:      args.uploadGoPCLnTab,
 			DryRun:               args.uploadSymbolsDryRun,
 			APIKey:               args.apiKey,
 			APPKey:               args.appKey,

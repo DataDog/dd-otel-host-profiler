@@ -54,6 +54,7 @@ type arguments struct {
 	environment             string
 	uploadSymbols           bool
 	uploadDynamicSymbols    bool
+	uploadGoPCLnTab         bool
 	uploadSymbolsDryRun     bool
 	tags                    string
 	timeline                bool
@@ -247,6 +248,14 @@ func parseArgs() (*arguments, error) {
 				Hidden:      true,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_DYNAMIC_SYMBOLS"),
 				Destination: &args.uploadDynamicSymbols,
+			},
+			&cli.BoolFlag{
+				Name:        "upload-gopclntab",
+				Usage:       "Enable gopcnltab upload.",
+				Value:       false,
+				Hidden:      true,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB"),
+				Destination: &args.uploadGoPCLnTab,
 			},
 			&cli.BoolFlag{
 				Name:        "upload-symbols-dry-run",
