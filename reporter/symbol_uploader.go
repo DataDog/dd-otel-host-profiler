@@ -32,19 +32,24 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/readatbuf"
+	"go.opentelemetry.io/ebpf-profiler/nativeunwind/elfunwindinfo"
 	"go.opentelemetry.io/ebpf-profiler/process"
 )
 
-const uploadCacheSize = 16384
-const uploadQueueSize = 1000
-const uploadWorkerCount = 10
+const (
+	uploadCacheSize   = 16384
+	uploadQueueSize   = 1000
+	uploadWorkerCount = 10
 
-const sourceMapEndpoint = "/api/v2/srcmap"
+	sourceMapEndpoint = "/api/v2/srcmap"
 
-const symbolCopyTimeout = 10 * time.Second
-const uploadTimeout = 15 * time.Second
+	symbolCopyTimeout = 10 * time.Second
+	uploadTimeout     = 15 * time.Second
 
-const buildIDSectionName = ".note.gnu.build-id"
+	buildIDSectionName = ".note.gnu.build-id"
+
+	maxBytesGoPclntab = 128 * 1024 * 1024
+)
 
 var debugStrSectionNames = []string{".debug_str", ".zdebug_str", ".debug_str.dwo"}
 var debugInfoSectionNames = []string{".debug_info", ".zdebug_info"}
@@ -57,6 +62,8 @@ type uploadData struct {
 	opener   process.FileOpener
 }
 
+type goPCLnTabData []byte
+
 type DatadogSymbolUploader struct {
 	ddAPIKey             string
 	ddAPPKey             string
@@ -64,6 +71,7 @@ type DatadogSymbolUploader struct {
 	version              string
 	dryRun               bool
 	uploadDynamicSymbols bool
+	uploadGoPCLnTab      bool
 	workerCount          int
 
 	uploadCache   *lru.SyncedLRU[libpf.FileID, struct{}]
@@ -112,6 +120,7 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		version:              cfg.Version,
 		dryRun:               cfg.DryRun,
 		uploadDynamicSymbols: cfg.UploadDynamicSymbols,
+		uploadGoPCLnTab:      cfg.UploadGoPCLnTab,
 		workerCount:          uploadWorkerCount,
 		client:               &http.Client{Timeout: uploadTimeout},
 		uploadCache:          uploadCache,
@@ -191,7 +200,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	}
 	defer elfWrapper.Close()
 
-	debugElf, symbolSource := elfWrapper.findSymbols()
+	debugElf, symbolSource, goPCLNTabData := elfWrapper.findSymbols(d.uploadGoPCLnTab)
 	if debugElf == nil {
 		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", filePath)
 		return false
@@ -225,7 +234,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 		return true
 	}
 
-	err = d.handleSymbols(ctx, symbolPath, e)
+	err = d.handleSymbols(ctx, symbolPath, e, goPCLNTabData)
 	if err != nil {
 		log.Errorf("Failed to handle symbols: %v for executable: %s", err, e)
 		return false
@@ -316,7 +325,7 @@ func (e *executableMetadata) String() string {
 }
 
 func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath string,
-	e *executableMetadata) error {
+	e *executableMetadata, goPCLnTabData goPCLnTabData) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file to extract symbols: %w", err)
@@ -326,9 +335,16 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 
 	ctx, cancel := context.WithTimeout(ctx, symbolCopyTimeout)
 	defer cancel()
-	err = d.copySymbols(ctx, symbolPath, symbolFile.Name())
-	if err != nil {
-		return fmt.Errorf("failed to copy symbols: %w", err)
+	if goPCLnTabData != nil {
+		err = copySymbolsAndGoPCLnTab(ctx, symbolPath, symbolFile.Name(), goPCLnTabData)
+		if err != nil {
+			return fmt.Errorf("failed to copy GoPCLnTab: %w", err)
+		}
+	} else {
+		err = copySymbols(ctx, symbolPath, symbolFile.Name())
+		if err != nil {
+			return fmt.Errorf("failed to copy symbols: %w", err)
+		}
 	}
 
 	err = d.uploadSymbols(ctx, symbolFile, e)
@@ -339,7 +355,38 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 	return nil
 }
 
-func (d *DatadogSymbolUploader) copySymbols(ctx context.Context, inputPath, outputPath string) error {
+func copySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
+	goPCLnTabData goPCLnTabData) error {
+	gopclntabFile, err := os.CreateTemp("", "gopclntab")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file to extract GoPCLnTab: %w", err)
+	}
+	defer os.Remove(gopclntabFile.Name())
+	defer gopclntabFile.Close()
+
+	_, err = gopclntabFile.Write(goPCLnTabData)
+	if err != nil {
+		return fmt.Errorf("failed to write GoPCLnTab: %w", err)
+	}
+
+	args := []string{
+		"--only-keep-debug",
+		"--remove-section=.gdb_index",
+		"--remove-section=.gopclntab",
+		"--remove-section=.data.rel.ro.gopclntab",
+		"--add-section", ".gopclntab=" + gopclntabFile.Name(),
+		"--set-section-flags", ".gopclntab=readonly",
+		inputPath,
+		outputPath,
+	}
+	_, err = exec.CommandContext(ctx, "objcopy", args...).Output()
+	if err != nil {
+		return fmt.Errorf("failed to extract debug symbols: %w", cleanCmdError(err))
+	}
+	return nil
+}
+
+func copySymbols(ctx context.Context, inputPath, outputPath string) error {
 	args := []string{
 		"--only-keep-debug",
 		"--remove-section=.gdb_index",
@@ -487,6 +534,56 @@ func HasDWARFData(f *pfelf.File) bool {
 	return len(f.Progs) == 0 && hasBuildID && hasDebugStr
 }
 
+func findGoPCLnTab(ef *pfelf.File) (goPCLnTabData, error) {
+	var err error
+	var data []byte
+
+	if s := ef.Section(".gopclntab"); s != nil {
+		if data, err = s.Data(maxBytesGoPclntab); err != nil {
+			return nil, fmt.Errorf("failed to load .gopclntab: %w", err)
+		}
+	} else if s := ef.Section(".data.rel.ro.gopclntab"); s != nil {
+		if data, err = s.Data(maxBytesGoPclntab); err != nil {
+			return nil, fmt.Errorf("failed to load .data.rel.ro.gopclntab: %w", err)
+		}
+	} else if s := ef.Section(".go.buildinfo"); s != nil {
+		symtab, err := ef.ReadSymbols()
+		if err != nil {
+			// It seems the Go binary was stripped. So we use the heuristic approach
+			// to get the stack deltas.
+			if data, err = elfunwindinfo.SearchGoPclntab(ef); err != nil {
+				return nil, fmt.Errorf("failed to search .gopclntab: %w", err)
+			}
+		} else {
+			start, err := symtab.LookupSymbolAddress("runtime.pclntab")
+			if err != nil {
+				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
+			}
+			end, err := symtab.LookupSymbolAddress("runtime.epclntab")
+			if err != nil {
+				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
+			}
+			if start >= end {
+				return nil, fmt.Errorf("invalid .gopclntab symbols: %v-%v", start, end)
+			}
+			data = make([]byte, end-start)
+			if _, err := ef.ReadVirtualMemory(data, int64(start)); err != nil {
+				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
+			}
+		}
+	}
+
+	if data == nil {
+		return nil, nil
+	}
+
+	if len(data) < 16 {
+		return nil, fmt.Errorf(".gopclntab is too short (%v)", len(data))
+	}
+
+	return data, nil
+}
+
 type elfWrapper struct {
 	reader         process.ReadAtCloser
 	elfFile        *pfelf.File
@@ -523,9 +620,21 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 
 // findSymbols attempts to find a symbol source for the elf file, it returns an elfWrapper around the elf file
 // with symbols if found, or nil if no symbols were found.
-func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
+func (e *elfWrapper) findSymbols(checkGoPCLnTab bool) (*elfWrapper, SymbolSource, goPCLnTabData) {
+	// Check if the elf file has a GoPCLnTab
+	if checkGoPCLnTab {
+		goPCLnTabData, err := findGoPCLnTab(e.elfFile)
+		if err == nil {
+			if goPCLnTabData != nil {
+				return e, GoPCLnTab, goPCLnTabData
+			}
+		} else {
+			log.Warnf("Failed to find .gopclntab in %s: %v", e.filePath, err)
+		}
+	}
+
 	if HasDWARFData(e.elfFile) {
-		return e, DebugInfo
+		return e, DebugInfo, nil
 	}
 
 	log.Debugf("No debug symbols found in %s", e.filePath)
@@ -538,7 +647,7 @@ func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 	debugElf := e.findDebugSymbolsWithBuildID()
 	if debugElf != nil {
 		if HasDWARFData(debugElf.elfFile) {
-			return debugElf, DebugInfo
+			return debugElf, DebugInfo, nil
 		}
 		debugElf.Close()
 		log.Debugf("No debug symbols found in buildID link file %s", debugElf.filePath)
@@ -548,7 +657,7 @@ func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 	debugElf = e.findDebugSymbolsWithDebugLink()
 	if debugElf != nil {
 		if HasDWARFData(debugElf.elfFile) {
-			return debugElf, DebugInfo
+			return debugElf, DebugInfo, nil
 		}
 		log.Debugf("No debug symbols found in debug link file %s", debugElf.filePath)
 		debugElf.Close()
@@ -556,15 +665,15 @@ func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 
 	// Check if initial elf file has a symbol table
 	if e.elfFile.Section(".symtab") != nil {
-		return e, SymbolTable
+		return e, SymbolTable, nil
 	}
 
 	// Check if initial elf file has a dynamic symbol table
 	if e.elfFile.Section(".dynsym") != nil {
-		return e, DynamicSymbolTable
+		return e, DynamicSymbolTable, nil
 	}
 
-	return nil, None
+	return nil, None, nil
 }
 
 func (e *elfWrapper) findDebugSymbolsWithBuildID() *elfWrapper {
