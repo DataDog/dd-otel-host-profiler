@@ -51,7 +51,6 @@ type arguments struct {
 	pprofPrefix             string
 	sendErrorFrames         bool
 	serviceName             string
-	serviceVersion          string
 	environment             string
 	uploadSymbols           bool
 	uploadDynamicSymbols    bool
@@ -73,7 +72,7 @@ func parseArgs() (*arguments, error) {
 	versionInfo := version.GetVersionInfo()
 
 	cli.VersionPrinter = func(_ *cli.Command) {
-		fmt.Printf("dd-otel-host-profiler, version %s (revision: %s, date: %s), arch: %v\n",
+		fmt.Printf("dd-otel-host-profiler, version v%s (revision: %s, date: %s), arch: %v\n",
 			versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 	}
 

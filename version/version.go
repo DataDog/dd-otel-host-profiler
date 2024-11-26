@@ -5,7 +5,10 @@
 
 package version
 
-import "runtime/debug"
+import (
+	"runtime/debug"
+	"strings"
+)
 
 var (
 	// Version is the current version of the profiler
@@ -22,7 +25,7 @@ type Info struct {
 func GetVersionInfo() Info {
 	buildInfo, ok := debug.ReadBuildInfo()
 	versionInfo := Info{
-		Version: version,
+		Version: strings.TrimLeft(version, "v"),
 	}
 
 	if !ok {

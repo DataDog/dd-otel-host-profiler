@@ -55,9 +55,6 @@ func addTagsFromArgs(tags *reporter.Tags, args *arguments) {
 	if args.serviceName != "" {
 		*tags = append(*tags, reporter.MakeTag("service", args.serviceName))
 	}
-	if args.serviceVersion != "" {
-		*tags = append(*tags, reporter.MakeTag("version", args.serviceVersion))
-	}
 }
 
 // isAPIKeyValid reports whether the given string is a structurally valid API key
