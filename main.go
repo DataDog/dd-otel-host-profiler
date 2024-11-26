@@ -137,7 +137,7 @@ func mainWithExitCode() exitCode {
 		unix.SIGINT, unix.SIGTERM, unix.SIGABRT)
 	defer mainCancel()
 
-	log.Infof("Starting Datadog OTEL host profiler %s (revision: %s, date: %s), arch: %v",
+	log.Infof("Starting Datadog OTEL host profiler v%s (revision: %s, date: %s), arch: %v",
 		versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 
 	if err = tracer.ProbeBPFSyscall(); err != nil {
@@ -214,7 +214,7 @@ func mainWithExitCode() exitCode {
 			APIKey:               args.apiKey,
 			APPKey:               args.appKey,
 			Site:                 args.site,
-			Version:              args.serviceVersion,
+			Version:              versionInfo.Version,
 		},
 	}, containerMetadataProvider)
 	if err != nil {
