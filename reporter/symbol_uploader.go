@@ -357,6 +357,7 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 
 func copySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
 	goPCLnTabData goPCLnTabData) error {
+	// Dump gopclntab data to a temporary file
 	gopclntabFile, err := os.CreateTemp("", "gopclntab")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file to extract GoPCLnTab: %w", err)
@@ -369,6 +370,12 @@ func copySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
 		return fmt.Errorf("failed to write GoPCLnTab: %w", err)
 	}
 
+	// objcopy does not support extracting debug information (with `--only-keep-debug`) and keeping
+	// some non-debug sections (like gopclntab) at the same time.
+	// `--only-keep-debug` does not really remove non-debug sections, it keeps their memory size
+	// but makes their file size 0 by marking them NOBITS (effectively zeroing them).
+	// That's why we extract debug information and at the same time remove `.gopclntab` section (with
+	// with `--remove-section=.gopclntab`) and add it back from the temporary file.
 	args := []string{
 		"--only-keep-debug",
 		"--remove-section=.gdb_index",
@@ -549,8 +556,11 @@ func findGoPCLnTab(ef *pfelf.File) (goPCLnTabData, error) {
 	} else if s := ef.Section(".go.buildinfo"); s != nil {
 		symtab, err := ef.ReadSymbols()
 		if err != nil {
-			// It seems the Go binary was stripped. So we use the heuristic approach
-			// to get the stack deltas.
+			// It seems the Go binary was stripped, use the heuristic approach to get find gopclntab.
+			// Note that `SearchGoPclntab` returns a slice starting from gopcltab header to the end of segment
+			// containing gopclntab. Therefore this slice might contain additional data after gopclntab.
+			// There does not seem to be an easy way to get the end of gopclntab segment without parsing the
+			// gopclntab itself.
 			if data, err = elfunwindinfo.SearchGoPclntab(ef); err != nil {
 				return nil, fmt.Errorf("failed to search .gopclntab: %w", err)
 			}
