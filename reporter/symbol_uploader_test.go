@@ -8,8 +8,10 @@ package reporter
 import (
 	"context"
 	"debug/elf"
-	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,33 +43,40 @@ func checkGoPCLnTab(t *testing.T, filename string) {
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
+	t.Parallel()
+	srcFile := "./testdata/helloworld.go"
 	tests := map[string]struct {
-		elfFile string
+		buildArgs []string
 	}{
 		// helloworld is a very basic Go binary without special build flags.
-		"regular Go binary": {elfFile: "testdata/helloworld"},
+		"regular": {},
 		// helloworld.pie is a Go binary that is build with PIE enabled.
-		"PIE Go binary": {elfFile: "testdata/helloworld.pie"},
+		"pie": {buildArgs: []string{"-buildmode=pie"}},
 		// helloworld.stripped.pie is a Go binary that is build with PIE enabled and all debug
 		// information stripped.
-		"stripped PIE Go binary": {elfFile: "testdata/helloworld.stripped.pie"},
+		"stripped.pie": {buildArgs: []string{"-buildmode=pie", "-ldflags=-s -w"}},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			f, err := pfelf.Open(test.elfFile)
+			t.Parallel()
+			tmpDir := t.TempDir()
+			exe := filepath.Join(tmpDir, strings.TrimRight(srcFile, ".go")+"."+name)
+			cmd := exec.Command("go", append([]string{"build", "-o", exe}, test.buildArgs...)...) // #nosec G204
+			cmd.Args = append(cmd.Args, srcFile)
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
+
+			f, err := pfelf.Open(exe)
 			require.NoError(t, err)
 			goPCLnTabInfo, err := findGoPCLnTab(f)
 			require.NoError(t, err)
 			assert.NotNil(t, goPCLnTabInfo)
-			outputFile, err := os.CreateTemp("", "test")
-			require.NoError(t, err)
-			defer os.Remove(outputFile.Name())
-			defer outputFile.Close()
 
-			err = copySymbolsAndGoPCLnTab(context.Background(), test.elfFile, outputFile.Name(), goPCLnTabInfo)
+			outputFile := filepath.Join(tmpDir, "output.dbg")
+			err = copySymbolsAndGoPCLnTab(context.Background(), exe, outputFile, goPCLnTabInfo)
 			require.NoError(t, err)
-			checkGoPCLnTab(t, outputFile.Name())
+			checkGoPCLnTab(t, outputFile)
 		})
 	}
 }
