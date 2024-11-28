@@ -82,7 +82,6 @@ jobs:
         go install gotest.tools/gotestsum@v1.12.0
     - name: Tests
       run: |
-        make test-deps
         gotestsum --junitfile gotestsum-report.xml -- ./... -v -race -coverprofile=coverage.txt -covermode=atomic
 
   build:

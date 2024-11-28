@@ -19,15 +19,7 @@ lint:
 linter-version:
 	@echo $(GOLANGCI_LINT_VERSION)
 
-TESTDATA_DIRS:= \
-	reporter/testdata
-
-test-deps:
-	$(foreach testdata_dir, $(TESTDATA_DIRS), \
-		($(MAKE) -C "$(testdata_dir)") || exit ; \
-	)
-
-test: test-deps
+test:
 	go test -v -race ./...
 
 check-copyrights:
