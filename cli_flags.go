@@ -36,36 +36,37 @@ const (
 )
 
 type arguments struct {
-	bpfVerifierLogLevel     uint64
-	agentURL                string
-	copyright               bool
-	mapScaleFactor          uint64
-	monitorInterval         time.Duration
-	clockSyncInterval       time.Duration
-	noKernelVersionCheck    bool
-	node                    string
-	probabilisticInterval   time.Duration
-	probabilisticThreshold  uint64
-	reporterInterval        time.Duration
-	samplesPerSecond        uint64
-	pprofPrefix             string
-	sendErrorFrames         bool
-	serviceName             string
-	environment             string
-	uploadSymbols           bool
-	uploadDynamicSymbols    bool
-	uploadGoPCLnTab         bool
-	uploadSymbolsDryRun     bool
-	tags                    string
-	timeline                bool
-	tracers                 string
-	verboseMode             bool
-	apiKey                  string
-	appKey                  string
-	site                    string
-	agentless               bool
-	enableGoRuntimeProfiler bool
-	cmd                     *cli.Command
+	bpfVerifierLogLevel         uint64
+	agentURL                    string
+	copyright                   bool
+	mapScaleFactor              uint64
+	monitorInterval             time.Duration
+	clockSyncInterval           time.Duration
+	noKernelVersionCheck        bool
+	node                        string
+	probabilisticInterval       time.Duration
+	probabilisticThreshold      uint64
+	reporterInterval            time.Duration
+	samplesPerSecond            uint64
+	pprofPrefix                 string
+	sendErrorFrames             bool
+	serviceName                 string
+	environment                 string
+	uploadSymbols               bool
+	uploadDynamicSymbols        bool
+	uploadGoPCLnTab             bool
+	useGoPCLnTabHeuristicSearch bool
+	uploadSymbolsDryRun         bool
+	tags                        string
+	timeline                    bool
+	tracers                     string
+	verboseMode                 bool
+	apiKey                      string
+	appKey                      string
+	site                        string
+	agentless                   bool
+	enableGoRuntimeProfiler     bool
+	cmd                         *cli.Command
 }
 
 func parseArgs() (*arguments, error) {
@@ -256,6 +257,14 @@ func parseArgs() (*arguments, error) {
 				Hidden:      true,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB"),
 				Destination: &args.uploadGoPCLnTab,
+			},
+			&cli.BoolFlag{
+				Name:        "upload-gopclntab-use-heuristic-search",
+				Usage:       "Use heurisitc search when uploading gopclntab. This can lead to uploading data beyond the actual gopclntab section.",
+				Value:       false,
+				Hidden:      true,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB_USE_HEURISTIC_SEARCH"),
+				Destination: &args.useGoPCLnTabHeuristicSearch,
 			},
 			&cli.BoolFlag{
 				Name:        "upload-symbols-dry-run",

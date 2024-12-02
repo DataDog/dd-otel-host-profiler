@@ -51,6 +51,14 @@ const (
 	maxBytesGoPclntab = 128 * 1024 * 1024
 )
 
+type GoPCLnTabSearchMode int64
+
+const (
+	NoPCLnTabSearch GoPCLnTabSearchMode = iota
+	PCLnTabSearchWithSectionAndSymbols
+	FullPCLnTabSearch
+)
+
 var debugStrSectionNames = []string{".debug_str", ".zdebug_str", ".debug_str.dwo"}
 var debugInfoSectionNames = []string{".debug_info", ".zdebug_info"}
 var globalDebugDirectories = []string{"/usr/lib/debug"}
@@ -65,14 +73,15 @@ type uploadData struct {
 type goPCLnTabData []byte
 
 type DatadogSymbolUploader struct {
-	ddAPIKey             string
-	ddAPPKey             string
-	intakeURL            string
-	version              string
-	dryRun               bool
-	uploadDynamicSymbols bool
-	uploadGoPCLnTab      bool
-	workerCount          int
+	ddAPIKey                    string
+	ddAPPKey                    string
+	intakeURL                   string
+	version                     string
+	dryRun                      bool
+	uploadDynamicSymbols        bool
+	uploadGoPCLnTab             bool
+	useGoPCLnTabHeuristicSearch bool
+	workerCount                 int
 
 	uploadCache   *lru.SyncedLRU[libpf.FileID, struct{}]
 	client        *http.Client
@@ -114,18 +123,19 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 	}
 
 	return &DatadogSymbolUploader{
-		ddAPIKey:             cfg.APIKey,
-		ddAPPKey:             cfg.APPKey,
-		intakeURL:            intakeURL,
-		version:              cfg.Version,
-		dryRun:               cfg.DryRun,
-		uploadDynamicSymbols: cfg.UploadDynamicSymbols,
-		uploadGoPCLnTab:      cfg.UploadGoPCLnTab,
-		workerCount:          uploadWorkerCount,
-		client:               &http.Client{Timeout: uploadTimeout},
-		uploadCache:          uploadCache,
-		uploadQueue:          make(chan uploadData, uploadQueueSize),
-		symbolQuerier:        symbolQuerier,
+		ddAPIKey:                    cfg.APIKey,
+		ddAPPKey:                    cfg.APPKey,
+		intakeURL:                   intakeURL,
+		version:                     cfg.Version,
+		dryRun:                      cfg.DryRun,
+		uploadDynamicSymbols:        cfg.UploadDynamicSymbols,
+		uploadGoPCLnTab:             cfg.UploadGoPCLnTab,
+		useGoPCLnTabHeuristicSearch: cfg.UseGoPCLnTabHeuristicSearch,
+		workerCount:                 uploadWorkerCount,
+		client:                      &http.Client{Timeout: uploadTimeout},
+		uploadCache:                 uploadCache,
+		uploadQueue:                 make(chan uploadData, uploadQueueSize),
+		symbolQuerier:               symbolQuerier,
 	}, nil
 }
 
@@ -184,6 +194,16 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 	return symbolSource, nil
 }
 
+func (d *DatadogSymbolUploader) getPCLnTabSearchMode() GoPCLnTabSearchMode {
+	if !d.uploadGoPCLnTab {
+		return NoPCLnTabSearch
+	}
+	if d.useGoPCLnTabHeuristicSearch {
+		return FullPCLnTabSearch
+	}
+	return PCLnTabSearchWithSectionAndSymbols
+}
+
 // Returns true if the upload was successful, false otherwise
 func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadData) bool {
 	filePath := uploadData.filePath
@@ -200,7 +220,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	}
 	defer elfWrapper.Close()
 
-	debugElf, symbolSource, goPCLNTabData := elfWrapper.findSymbols(d.uploadGoPCLnTab)
+	debugElf, symbolSource, goPCLNTabData := elfWrapper.findSymbols(d.getPCLnTabSearchMode())
 	if debugElf == nil {
 		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", filePath)
 		return false
@@ -541,7 +561,7 @@ func HasDWARFData(f *pfelf.File) bool {
 	return len(f.Progs) == 0 && hasBuildID && hasDebugStr
 }
 
-func findGoPCLnTab(ef *pfelf.File) (goPCLnTabData, error) {
+func findGoPCLnTab(ef *pfelf.File, useHeuristicSearchAsFallback bool) (goPCLnTabData, error) {
 	var err error
 	var data []byte
 
@@ -556,6 +576,9 @@ func findGoPCLnTab(ef *pfelf.File) (goPCLnTabData, error) {
 	} else if s := ef.Section(".go.buildinfo"); s != nil {
 		symtab, err := ef.ReadSymbols()
 		if err != nil {
+			if !useHeuristicSearchAsFallback {
+				return nil, fmt.Errorf("failed to read symbols: %w", err)
+			}
 			// It seems the Go binary was stripped, use the heuristic approach to get find gopclntab.
 			// Note that `SearchGoPclntab` returns a slice starting from gopcltab header to the end of segment
 			// containing gopclntab. Therefore this slice might contain additional data after gopclntab.
@@ -630,10 +653,10 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 
 // findSymbols attempts to find a symbol source for the elf file, it returns an elfWrapper around the elf file
 // with symbols if found, or nil if no symbols were found.
-func (e *elfWrapper) findSymbols(checkGoPCLnTab bool) (*elfWrapper, SymbolSource, goPCLnTabData) {
+func (e *elfWrapper) findSymbols(pcLnTabSearchMode GoPCLnTabSearchMode) (*elfWrapper, SymbolSource, goPCLnTabData) {
 	// Check if the elf file has a GoPCLnTab
-	if checkGoPCLnTab {
-		goPCLnTabData, err := findGoPCLnTab(e.elfFile)
+	if pcLnTabSearchMode != NoPCLnTabSearch {
+		goPCLnTabData, err := findGoPCLnTab(e.elfFile, pcLnTabSearchMode == FullPCLnTabSearch)
 		if err == nil {
 			if goPCLnTabData != nil {
 				return e, GoPCLnTab, goPCLnTabData
