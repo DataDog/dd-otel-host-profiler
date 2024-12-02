@@ -42,6 +42,19 @@ func checkGoPCLnTab(t *testing.T, filename string) {
 	assert.Equal(t, expectedHeader, data[:8])
 }
 
+func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string, useGoPCLnTabHeuristicSearch bool) {
+	f, err := pfelf.Open(filename)
+	require.NoError(t, err)
+	goPCLnTabInfo, err := findGoPCLnTab(f, useGoPCLnTabHeuristicSearch)
+	require.NoError(t, err)
+	assert.NotNil(t, goPCLnTabInfo)
+
+	outputFile := filepath.Join(tmpDir, "output.dbg")
+	err = copySymbolsAndGoPCLnTab(context.Background(), filename, outputFile, goPCLnTabInfo)
+	require.NoError(t, err)
+	checkGoPCLnTab(t, outputFile)
+}
+
 func TestGoPCLnTabExtraction(t *testing.T) {
 	t.Parallel()
 	srcFile := "./testdata/helloworld.go"
@@ -62,21 +75,17 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 			t.Parallel()
 			tmpDir := t.TempDir()
 			exe := filepath.Join(tmpDir, strings.TrimRight(srcFile, ".go")+"."+name)
+			exeStripped := exe + ".stripped"
 			cmd := exec.Command("go", append([]string{"build", "-o", exe}, test.buildArgs...)...) // #nosec G204
 			cmd.Args = append(cmd.Args, srcFile)
 			out, err := cmd.CombinedOutput()
 			require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
 
-			f, err := pfelf.Open(exe)
-			require.NoError(t, err)
-			goPCLnTabInfo, err := findGoPCLnTab(f)
-			require.NoError(t, err)
-			assert.NotNil(t, goPCLnTabInfo)
+			checkGoPCLnTabExtraction(t, exe, tmpDir, false)
 
-			outputFile := filepath.Join(tmpDir, "output.dbg")
-			err = copySymbolsAndGoPCLnTab(context.Background(), exe, outputFile, goPCLnTabInfo)
-			require.NoError(t, err)
-			checkGoPCLnTab(t, outputFile)
+			out, err = exec.Command("objcopy", "-S", "--rename-section", ".data.rel.ro.gopclntab=.foo1", "--rename-section", ".gopclntab=.foo2", exe, exeStripped).CombinedOutput() // #nosec G204
+			require.NoError(t, err, "failed to rename section: %s\n%s", err, out)
+			checkGoPCLnTabExtraction(t, exeStripped, tmpDir, true)
 		})
 	}
 }

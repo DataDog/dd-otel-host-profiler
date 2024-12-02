@@ -57,6 +57,9 @@ type SymbolUploaderConfig struct {
 	UploadDynamicSymbols bool
 	// UploadGoPCLnTab defines whether the agent should upload GoPCLnTab section for Go binaries to the backend.
 	UploadGoPCLnTab bool
+	// UseGoPCLnTabHeuristicSearch defines whether the agent should use heuristic search to find GoPCLnTab section for Go binaries when sections/symbols are not present.
+	// This is useful for stripped Go binaries but currently leads to uploading data that is beyond the actual GoPCLnTab section.
+	UseGoPCLnTabHeuristicSearch bool
 	// DryRun defines whether the agent should upload debug symbols to the backend in dry-run mode.
 	DryRun bool
 	// DataDog API key
