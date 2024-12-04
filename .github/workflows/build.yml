@@ -32,7 +32,7 @@ jobs:
       with:
         go_version: ${{ inputs.go-version }}
         golangci_lint_version: ${{ steps.linter-version.outputs.version }}
-        fail_level: error
+        fail_level: any
         filter_mode: nofilter
         reporter: github-pr-review
     - name: Verify copyright headers
