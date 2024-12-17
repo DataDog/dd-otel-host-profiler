@@ -8,6 +8,7 @@ services:
     pid: "host"
     environment:
       DD_SITE: ${DD_SITE:-datadoghq.com}
+      DD_TAGS: ${DD_TAGS:-}
       DD_SERVICE: ${DD_SERVICE:-dd-otel-host-profiler-dev}
       DD_HOST_PROFILING_UPLOAD_PERIOD: ${DD_HOST_PROFILING_UPLOAD_PERIOD:-60s}
       DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS: ${DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS:-false}

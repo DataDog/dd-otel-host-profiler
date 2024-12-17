@@ -67,6 +67,7 @@ type traceAndMetaKey struct {
 	apmServiceName string
 	pid            libpf.PID
 	tid            libpf.PID
+	syscallID      int
 }
 
 // traceEvents holds known information about a trace.
@@ -78,7 +79,7 @@ type traceEvents struct {
 	mappingEnds        []libpf.Address
 	mappingFileOffsets []uint64
 	timestamps         []uint64 // in nanoseconds
-
+	durations          []uint64 // in nanoseconds
 }
 
 type processMetadata struct {
@@ -216,11 +217,15 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 		apmServiceName: meta.APMServiceName,
 		pid:            meta.PID,
 		tid:            meta.TID,
+		syscallID:      meta.SyscallID,
 	}
 
 	if tr, exists := (*traceEventsMap)[key]; exists {
 		tr.timestamps = append(tr.timestamps, uint64(meta.Timestamp))
 		(*traceEventsMap)[key] = tr
+		if meta.SyscallID != -1 {
+			tr.durations = append(tr.durations, uint64(meta.OffTime))
+		}
 		return
 	}
 
@@ -232,6 +237,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 		mappingEnds:        trace.MappingEnd,
 		mappingFileOffsets: trace.MappingFileOffsets,
 		timestamps:         []uint64{uint64(meta.Timestamp)},
+		durations:          []uint64{uint64(meta.OffTime)}, // useless value for non-syscall events
 	}
 }
 
@@ -461,8 +467,11 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 
 	samplingPeriod := 1000000000 / int64(r.samplesPerSecond)
 	profile = &pprofile.Profile{
-		SampleType: []*pprofile.ValueType{{Type: "cpu-samples", Unit: "count"},
-			{Type: "cpu-time", Unit: "nanoseconds"}},
+		SampleType: []*pprofile.ValueType{
+			{Type: "cpu-samples", Unit: "count"},
+			{Type: "cpu-time", Unit: "nanoseconds"},
+			{Type: "tracepoint", Unit: "count"},
+		},
 		Sample:            make([]*pprofile.Sample, 0, numSamples),
 		PeriodType:        &pprofile.ValueType{Type: "cpu-time", Unit: "nanoseconds"},
 		Period:            samplingPeriod,
@@ -574,20 +583,41 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			sample.Location = append(sample.Location, loc)
 		}
 
+		if traceKey.syscallID != -1 {
+			// Add a dummy location for the syscall.
+			loc := createPProfLocation(profile, 0)
+			m := createPprofFunctionEntry(funcMap, profile, getSyscallName(traceKey.syscallID), "kernel")
+			loc.Line = append(loc.Line, pprofile.Line{Function: m})
+			sample.Location = append([]*pprofile.Location{loc}, sample.Location...)
+		}
+
 		if !r.timeline {
 			count := int64(len(traceInfo.timestamps))
 			labels := make(map[string][]string)
 			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
-			sample.Value = append(sample.Value, count, count*samplingPeriod)
+			if traceKey.syscallID != -1 {
+				sample.Value = append(sample.Value, 0, 0, count)
+				labels["tracepoint_type"] = append(labels["tracepoint_type"], getSyscallName(traceKey.syscallID))
+			} else {
+				sample.Value = append(sample.Value, count, count*samplingPeriod, 0)
+			}
 			sample.Label = labels
 			profile.Sample = append(profile.Sample, sample)
 		} else {
-			sample.Value = append(sample.Value, 1, samplingPeriod)
-			for _, ts := range traceInfo.timestamps {
+			if traceKey.syscallID != -1 {
+				sample.Value = append(sample.Value, 0, 0, 1)
+			} else {
+				sample.Value = append(sample.Value, 1, samplingPeriod, 0)
+			}
+			for i, ts := range traceInfo.timestamps {
 				sampleWithTimestamp := &pprofile.Sample{}
 				*sampleWithTimestamp = *sample
 				labels := make(map[string][]string)
 				addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, ts)
+				if traceKey.syscallID != -1 {
+					labels["tracepoint_type"] = append(labels["tracepoint_type"], getSyscallName(traceKey.syscallID))
+					labels["duration_ns"] = append(labels["duration_ns"], strconv.FormatUint(traceInfo.durations[i], 10))
+				}
 				sampleWithTimestamp.Label = labels
 				profile.Sample = append(profile.Sample, sampleWithTimestamp)
 			}

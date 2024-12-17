@@ -230,16 +230,19 @@ func mainWithExitCode() exitCode {
 
 	// Load the eBPF code and map definitions
 	trc, err := tracer.NewTracer(mainCtx, &tracer.Config{
-		Reporter:               rep,
-		Intervals:              intervals,
-		IncludeTracers:         includeTracers,
-		FilterErrorFrames:      !args.sendErrorFrames,
-		SamplesPerSecond:       int(args.samplesPerSecond),
-		MapScaleFactor:         int(args.mapScaleFactor),
-		KernelVersionCheck:     !args.noKernelVersionCheck,
-		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
-		ProbabilisticInterval:  args.probabilisticInterval,
-		ProbabilisticThreshold: uint(args.probabilisticThreshold),
+		Reporter:                 rep,
+		Intervals:                intervals,
+		IncludeTracers:           includeTracers,
+		FilterErrorFrames:        !args.sendErrorFrames,
+		SamplesPerSecond:         int(args.samplesPerSecond),
+		MapScaleFactor:           int(args.mapScaleFactor),
+		KernelVersionCheck:       !args.noKernelVersionCheck,
+		BPFVerifierLogLevel:      uint32(args.bpfVerifierLogLevel),
+		ProbabilisticInterval:    args.probabilisticInterval,
+		ProbabilisticThreshold:   uint(args.probabilisticThreshold),
+		OffCPUThreshold:          uint32(args.offCPUThreshold),
+		SyscallSamplingThreshold: uint32(args.syscallSamplingProb * float64(^uint32(0))),
+		SyscallSamplingPID:       int32(args.syscallSamplingPID),
 	})
 	if err != nil {
 		return failure("Failed to load eBPF tracer: %v", err)
@@ -258,6 +261,20 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to attach to perf event: %v", err)
 	}
 	log.Info("Attached tracer program")
+
+	if args.offCPUThreshold < tracer.OffCPUThresholdMax {
+		if err := trc.StartOffCPUProfiling(); err != nil {
+			return failure("failed to start off-cpu profiling: %v", err)
+		}
+		log.Printf("Enabled off-cpu profiling")
+	}
+
+	if args.syscallSamplingProb > 0 {
+		if err := trc.StartSyscallProfiling(); err != nil {
+			return failure("failed to start syscall profiling: %v", err)
+		}
+		log.Printf("Enabled syscall profiling")
+	}
 
 	if args.probabilisticThreshold < tracer.ProbabilisticThresholdMax {
 		trc.StartProbabilisticProfiling(mainCtx)

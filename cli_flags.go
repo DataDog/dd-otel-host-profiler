@@ -64,7 +64,11 @@ type arguments struct {
 	site                    string
 	agentless               bool
 	enableGoRuntimeProfiler bool
-	cmd                     *cli.Command
+	offCPUThreshold         uint64
+	syscallSamplingProb     float64
+	syscallSamplingPID      int64
+
+	cmd *cli.Command
 }
 
 func parseArgs() (*arguments, error) {
@@ -296,6 +300,33 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Enable self-profiling with Go runtime profiler.",
 				Destination: &args.enableGoRuntimeProfiler,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER"),
+			},
+			&cli.UintFlag{
+				Name:        "off-cpu-threshold",
+				Value:       tracer.OffCPUThresholdMax,
+				Usage:       "Set the off-CPU threshold.",
+				Destination: &args.offCPUThreshold,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_OFF_CPU_THRESHOLD"),
+			},
+			&cli.FloatFlag{
+				Name:        "syscall-sampling-probability",
+				Value:       0,
+				Usage:       "Set the syscall sampling probability (from 0 to 1000).",
+				Destination: &args.syscallSamplingProb,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_SYSCALL_SAMPLING_PROBABILITY"),
+				Action: func(ctx context.Context, cmd *cli.Command, v float64) error {
+					if v > 1 || v < 0 {
+						return fmt.Errorf("syscall sampling probability must be between 0 and 1")
+					}
+					return nil
+				},
+			},
+			&cli.IntFlag{
+				Name:        "syscall-sampling-pid",
+				Value:       -1,
+				Usage:       "Set the syscall sampling pid filter.",
+				Destination: &args.syscallSamplingPID,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_SYSCALL_SAMPLING_PID"),
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
