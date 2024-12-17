@@ -574,16 +574,24 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			sample.Location = append(sample.Location, loc)
 		}
 
-		sample.Label = make(map[string][]string)
-		var timestamps []uint64
-		if r.timeline {
-			timestamps = traceInfo.timestamps
+		if !r.timeline {
+			count := int64(len(traceInfo.timestamps))
+			labels := make(map[string][]string)
+			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
+			sample.Value = append(sample.Value, count, count*samplingPeriod)
+			sample.Label = labels
+			profile.Sample = append(profile.Sample, sample)
+		} else {
+			sample.Value = append(sample.Value, 1, samplingPeriod)
+			for _, ts := range traceInfo.timestamps {
+				sampleWithTimestamp := &pprofile.Sample{}
+				*sampleWithTimestamp = *sample
+				labels := make(map[string][]string)
+				addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, ts)
+				sampleWithTimestamp.Label = labels
+				profile.Sample = append(profile.Sample, sampleWithTimestamp)
+			}
 		}
-		addTraceLabels(sample.Label, traceKey, processMeta.containerMetadata, baseExec, timestamps)
-
-		count := int64(len(traceInfo.timestamps))
-		sample.Value = append(sample.Value, count, count*samplingPeriod)
-		profile.Sample = append(profile.Sample, sample)
 		totalSampleCount += len(traceInfo.timestamps)
 	}
 	log.Infof("Reporting pprof profile with %d samples from %v to %v",
@@ -622,7 +630,7 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 }
 
 func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
-	baseExec string, timestamps []uint64) {
+	baseExec string, timestamp uint64) {
 	if i.comm != "" {
 		labels["thread_name"] = append(labels["thread_name"], i.comm)
 	}
@@ -658,13 +666,8 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMeta
 		labels["process_name"] = append(labels["process_name"], baseExec)
 	}
 
-	if len(timestamps) > 0 {
-		timestampStrs := make([]string, 0, len(timestamps))
-		for _, ts := range timestamps {
-			timestampStrs = append(timestampStrs, strconv.FormatUint(ts, 10))
-		}
-		// Assign all timestamps as a single label entry
-		labels["end_timestamp_ns"] = timestampStrs
+	if timestamp != 0 {
+		labels["end_timestamp_ns"] = append(labels["end_timestamp_ns"], strconv.FormatUint(timestamp, 10))
 	}
 }
 
