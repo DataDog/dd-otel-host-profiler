@@ -32,7 +32,6 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/readatbuf"
-	"go.opentelemetry.io/ebpf-profiler/nativeunwind/elfunwindinfo"
 	"go.opentelemetry.io/ebpf-profiler/process"
 )
 
@@ -47,8 +46,6 @@ const (
 	uploadTimeout     = 15 * time.Second
 
 	buildIDSectionName = ".note.gnu.build-id"
-
-	maxBytesGoPclntab = 128 * 1024 * 1024
 )
 
 type GoPCLnTabSearchMode int64
@@ -69,8 +66,6 @@ type uploadData struct {
 	buildID  string
 	opener   process.FileOpener
 }
-
-type goPCLnTabData []byte
 
 type DatadogSymbolUploader struct {
 	ddAPIKey                    string
@@ -345,7 +340,7 @@ func (e *executableMetadata) String() string {
 }
 
 func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath string,
-	e *executableMetadata, goPCLnTabData goPCLnTabData) error {
+	e *executableMetadata, goPCLnTabInfo *GoPCLnTabInfo) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file to extract symbols: %w", err)
@@ -355,13 +350,13 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 
 	ctx, cancel := context.WithTimeout(ctx, symbolCopyTimeout)
 	defer cancel()
-	if goPCLnTabData != nil {
-		err = copySymbolsAndGoPCLnTab(ctx, symbolPath, symbolFile.Name(), goPCLnTabData)
+	if goPCLnTabInfo != nil {
+		err = CopySymbolsAndGoPCLnTab(ctx, symbolPath, symbolFile.Name(), goPCLnTabInfo)
 		if err != nil {
 			return fmt.Errorf("failed to copy GoPCLnTab: %w", err)
 		}
 	} else {
-		err = copySymbols(ctx, symbolPath, symbolFile.Name())
+		err = CopySymbols(ctx, symbolPath, symbolFile.Name())
 		if err != nil {
 			return fmt.Errorf("failed to copy symbols: %w", err)
 		}
@@ -375,8 +370,8 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 	return nil
 }
 
-func copySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
-	goPCLnTabData goPCLnTabData) error {
+func CopySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
+	goPCLnTabInfo *GoPCLnTabInfo) error {
 	// Dump gopclntab data to a temporary file
 	gopclntabFile, err := os.CreateTemp("", "gopclntab")
 	if err != nil {
@@ -385,9 +380,24 @@ func copySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
 	defer os.Remove(gopclntabFile.Name())
 	defer gopclntabFile.Close()
 
-	_, err = gopclntabFile.Write(goPCLnTabData)
+	_, err = gopclntabFile.Write(goPCLnTabInfo.Data)
 	if err != nil {
 		return fmt.Errorf("failed to write GoPCLnTab: %w", err)
+	}
+
+	var gofuncFile *os.File
+	if goPCLnTabInfo.GoFuncData != nil {
+		// Dump gofunc data to a temporary file
+		gofuncFile, err = os.CreateTemp("", "gofunc")
+		if err != nil {
+			return fmt.Errorf("failed to create temp file to extract GoFunc: %w", err)
+		}
+		defer os.Remove(gofuncFile.Name())
+		defer gofuncFile.Close()
+		_, err = gofuncFile.Write(goPCLnTabInfo.GoFuncData)
+		if err != nil {
+			return fmt.Errorf("failed to write GoFunc: %w", err)
+		}
 	}
 
 	// objcopy does not support extracting debug information (with `--only-keep-debug`) and keeping
@@ -403,9 +413,17 @@ func copySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
 		"--remove-section=.data.rel.ro.gopclntab",
 		"--add-section", ".gopclntab=" + gopclntabFile.Name(),
 		"--set-section-flags", ".gopclntab=readonly",
-		inputPath,
-		outputPath,
+		fmt.Sprintf("--change-section-address=.gopclntab=%d", goPCLnTabInfo.Address),
 	}
+	if gofuncFile != nil {
+		args = append(args, "--add-section", ".gofunc="+gofuncFile.Name(),
+			"--set-section-flags", ".gofunc=readonly",
+			fmt.Sprintf("--change-section-address=.gofunc=%d", goPCLnTabInfo.GoFuncAddr),
+			"--strip-symbol", "go:func.*",
+			"--add-symbol", "go:func.*=.gofunc:0")
+	}
+	args = append(args, inputPath, outputPath)
+
 	_, err = exec.CommandContext(ctx, "objcopy", args...).Output()
 	if err != nil {
 		return fmt.Errorf("failed to extract debug symbols: %w", cleanCmdError(err))
@@ -413,7 +431,7 @@ func copySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
 	return nil
 }
 
-func copySymbols(ctx context.Context, inputPath, outputPath string) error {
+func CopySymbols(ctx context.Context, inputPath, outputPath string) error {
 	args := []string{
 		"--only-keep-debug",
 		"--remove-section=.gdb_index",
@@ -561,62 +579,6 @@ func HasDWARFData(f *pfelf.File) bool {
 	return len(f.Progs) == 0 && hasBuildID && hasDebugStr
 }
 
-func findGoPCLnTab(ef *pfelf.File, useHeuristicSearchAsFallback bool) (goPCLnTabData, error) {
-	var err error
-	var data []byte
-
-	if s := ef.Section(".gopclntab"); s != nil {
-		if data, err = s.Data(maxBytesGoPclntab); err != nil {
-			return nil, fmt.Errorf("failed to load .gopclntab: %w", err)
-		}
-	} else if s := ef.Section(".data.rel.ro.gopclntab"); s != nil {
-		if data, err = s.Data(maxBytesGoPclntab); err != nil {
-			return nil, fmt.Errorf("failed to load .data.rel.ro.gopclntab: %w", err)
-		}
-	} else if s := ef.Section(".go.buildinfo"); s != nil {
-		symtab, err := ef.ReadSymbols()
-		if err != nil {
-			if !useHeuristicSearchAsFallback {
-				return nil, fmt.Errorf("failed to read symbols: %w", err)
-			}
-			// It seems the Go binary was stripped, use the heuristic approach to get find gopclntab.
-			// Note that `SearchGoPclntab` returns a slice starting from gopcltab header to the end of segment
-			// containing gopclntab. Therefore this slice might contain additional data after gopclntab.
-			// There does not seem to be an easy way to get the end of gopclntab segment without parsing the
-			// gopclntab itself.
-			if data, err = elfunwindinfo.SearchGoPclntab(ef); err != nil {
-				return nil, fmt.Errorf("failed to search .gopclntab: %w", err)
-			}
-		} else {
-			start, err := symtab.LookupSymbolAddress("runtime.pclntab")
-			if err != nil {
-				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
-			}
-			end, err := symtab.LookupSymbolAddress("runtime.epclntab")
-			if err != nil {
-				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
-			}
-			if start >= end {
-				return nil, fmt.Errorf("invalid .gopclntab symbols: %v-%v", start, end)
-			}
-			data = make([]byte, end-start)
-			if _, err := ef.ReadVirtualMemory(data, int64(start)); err != nil {
-				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
-			}
-		}
-	}
-
-	if data == nil {
-		return nil, nil
-	}
-
-	if len(data) < 16 {
-		return nil, fmt.Errorf(".gopclntab is too short (%v)", len(data))
-	}
-
-	return data, nil
-}
-
 type elfWrapper struct {
 	reader         process.ReadAtCloser
 	elfFile        *pfelf.File
@@ -653,13 +615,13 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 
 // findSymbols attempts to find a symbol source for the elf file, it returns an elfWrapper around the elf file
 // with symbols if found, or nil if no symbols were found.
-func (e *elfWrapper) findSymbols(pcLnTabSearchMode GoPCLnTabSearchMode) (*elfWrapper, SymbolSource, goPCLnTabData) {
+func (e *elfWrapper) findSymbols(pcLnTabSearchMode GoPCLnTabSearchMode) (*elfWrapper, SymbolSource, *GoPCLnTabInfo) {
 	// Check if the elf file has a GoPCLnTab
 	if pcLnTabSearchMode != NoPCLnTabSearch {
-		goPCLnTabData, err := findGoPCLnTab(e.elfFile, pcLnTabSearchMode == FullPCLnTabSearch)
+		goPCLnTabInfo, err := FindGoPCLnTab(e.elfFile, pcLnTabSearchMode == FullPCLnTabSearch)
 		if err == nil {
-			if goPCLnTabData != nil {
-				return e, GoPCLnTab, goPCLnTabData
+			if goPCLnTabInfo != nil {
+				return e, GoPCLnTab, goPCLnTabInfo
 			}
 		} else {
 			log.Warnf("Failed to find .gopclntab in %s: %v", e.filePath, err)
