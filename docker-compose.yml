@@ -20,7 +20,8 @@ services:
     secrets:
       - dd-api-key
       - dd-app-key
-    command: ['/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key) DD_APP_KEY=$$(cat /run/secrets/dd-app-key); sudo mount -t debugfs none /sys/kernel/debug && cd /app && make && sudo -E /app/dd-otel-host-profiler --agent-url "http://datadog-agent:8126" --sampling-rate 20']
+    command: ['/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key) DD_APP_KEY=$$(cat /run/secrets/dd-app-key); sudo mount -t debugfs none /sys/kernel/debug && cd /app && sudo -E /app/dd-otel-host-profiler --agent-url "http://datadog-agent:8126" --sampling-rate 20 --upload-period 60s --timeline --syscall-sampling-probability 1 --syscall-sampling-pid `pgrep burn`']
+    # command: ['/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key) DD_APP_KEY=$$(cat /run/secrets/dd-app-key); sudo mount -t debugfs none /sys/kernel/debug && cd /app && sudo -E /app/dd-otel-host-profiler --agent-url "http://datadog-agent:8126" --sampling-rate 20 --upload-period 15s --timeline --syscall-sampling-probability 0.01']
 
   datadog-agent:
     image: gcr.io/datadoghq/agent:7
