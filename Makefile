@@ -37,3 +37,6 @@ docker-image:
 profiler-in-docker: docker-image
 	docker run -v "$$PWD":/app -it --rm --user $(shell id -u):$(shell id -g) dd-otel-host-profiler \
 	   bash -c "cd /app && make VERSION=$(VERSION)"
+
+extract_symbols:
+	go build $(GO_FLAGS) ./reporter/extract_symbols

@@ -19,7 +19,20 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 )
 
-func checkGoPCLnTab(t *testing.T, filename string) {
+func findSymbol(f *elf.File, name string) *elf.Symbol {
+	syms, err := f.Symbols()
+	if err != nil {
+		return nil
+	}
+	for _, sym := range syms {
+		if sym.Name == name {
+			return &sym
+		}
+	}
+	return nil
+}
+
+func checkGoPCLnTab(t *testing.T, filename string, checkGoFunc bool) {
 	f, err := elf.Open(filename)
 	require.NoError(t, err)
 	defer f.Close()
@@ -40,19 +53,26 @@ func checkGoPCLnTab(t *testing.T, filename string) {
 
 	expectedHeader := []byte{0xf1, 0xff, 0xff, 0xff, 0x00, 0x00, quantum, 0x08}
 	assert.Equal(t, expectedHeader, data[:8])
+
+	if checkGoFunc {
+		section = f.Section(".gofunc")
+		require.NotNil(t, section)
+		require.Equal(t, elf.SHT_PROGBITS, section.Type)
+		require.NotNil(t, findSymbol(f, "go:func.*"))
+	}
 }
 
 func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string, useGoPCLnTabHeuristicSearch bool) {
 	f, err := pfelf.Open(filename)
 	require.NoError(t, err)
-	goPCLnTabInfo, err := findGoPCLnTab(f, useGoPCLnTabHeuristicSearch)
+	goPCLnTabInfo, err := FindGoPCLnTab(f, useGoPCLnTabHeuristicSearch)
 	require.NoError(t, err)
 	assert.NotNil(t, goPCLnTabInfo)
 
 	outputFile := filepath.Join(tmpDir, "output.dbg")
-	err = copySymbolsAndGoPCLnTab(context.Background(), filename, outputFile, goPCLnTabInfo)
+	err = CopySymbolsAndGoPCLnTab(context.Background(), filename, outputFile, goPCLnTabInfo)
 	require.NoError(t, err)
-	checkGoPCLnTab(t, outputFile)
+	checkGoPCLnTab(t, outputFile, useGoPCLnTabHeuristicSearch)
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
