@@ -1,3 +1,6 @@
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
 package main
 
 import (
@@ -5,19 +8,20 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/DataDog/dd-otel-host-profiler/reporter"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
+
+	"github.com/DataDog/dd-otel-host-profiler/reporter"
 )
 
 func extractDebugInfos(elfFile, outFile string) error {
 	ef, err := pfelf.Open(elfFile)
 	if err != nil {
-		return fmt.Errorf("failed to open elf file: %v", err)
+		return fmt.Errorf("failed to open elf file: %w", err)
 	}
 	defer ef.Close()
 	goPCLnTabInfo, err := reporter.FindGoPCLnTab(ef, true)
 	if err != nil {
-		return fmt.Errorf("failed to find pclntab: %v", err)
+		return fmt.Errorf("failed to find pclntab: %w", err)
 	}
 
 	if goPCLnTabInfo != nil {

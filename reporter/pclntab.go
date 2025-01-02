@@ -1,9 +1,13 @@
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
 package reporter
 
 import (
 	"bytes"
 	"debug/elf"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"unsafe"
 
@@ -11,10 +15,10 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 )
 
-type version int
+type headerVersion int
 
 const (
-	verUnknown version = iota
+	verUnknown headerVersion = iota
 	ver12
 	ver116
 	ver118
@@ -30,9 +34,9 @@ const (
 )
 
 type GoPCLnTabInfo struct {
-	Address    uint64  // goPCLnTab address
-	Data       []byte  // goPCLnTab data
-	Version    version // gopclntab header version
+	Address    uint64        // goPCLnTab address
+	Data       []byte        // goPCLnTab data
+	Version    headerVersion // gopclntab header version
 	Offsets    TableOffsets
 	GoFuncAddr uint64 // goFunc address
 	GoFuncData []byte // goFunc data
@@ -84,11 +88,13 @@ type pclntabHeader118 struct {
 
 // pclntabFuncMap is the Golang function symbol table map entry
 type pclntabFuncMap struct {
-	pc      uint64
-	funcOff uint64
+	pc      uint64 //nolint:unused
+	funcOff uint64 //nolint:unused
 }
 
 // pclntabFunc is the Golang function definition (struct _func in the spec) as before Go 1.18.
+//
+//nolint:unused
 type pclntabFunc struct {
 	startPc                      uint64
 	nameOff, argsSize, frameSize int32
@@ -99,6 +105,8 @@ type pclntabFunc struct {
 // pclntabFunc118 is the Golang function definition (struct _func in the spec)
 // starting with Go 1.18.
 // see: go/src/runtime/runtime2.go (struct _func)
+//
+//nolint:unused
 type pclntabFunc118 struct {
 	entryoff                     uint32 // start pc, as offset from pcHeader.textStart
 	nameOff, argsSize, frameSize int32
@@ -128,7 +136,7 @@ func sectionContaining(elfFile *pfelf.File, addr uint64) *pfelf.Section {
 	return nil
 }
 
-func goFuncOffset(v version) (uint32, error) {
+func goFuncOffset(v headerVersion) (uint32, error) {
 	if v < ver118 {
 		return 0, fmt.Errorf("unsupported version: %v", v)
 	}
@@ -138,14 +146,14 @@ func goFuncOffset(v version) (uint32, error) {
 	return 40 * ptrSize, nil
 }
 
-func FindModuleData(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) ([]byte, uint64, error) {
+func FindModuleData(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) (data []byte, address uint64, returnedErr error) {
 	// First try to locate module data by looking for runtime.firstmoduledata symbol.
 	if symtab != nil {
 		if symAddr, err := symtab.LookupSymbolAddress("runtime.firstmoduledata"); err == nil {
 			addr := uint64(symAddr)
 			section := sectionContaining(ef, addr)
 			if section == nil {
-				return nil, 0, fmt.Errorf("could not find section containing runtime.firstmoduledata")
+				return nil, 0, errors.New("could not find section containing runtime.firstmoduledata")
 			}
 			data, err := section.Data(maxBytesGoPclntab)
 			if err != nil {
@@ -163,8 +171,6 @@ func FindModuleData(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.
 		return nil, 0, fmt.Errorf("could not read .noptrdata section: %w", err)
 	}
 
-	// asume here that pointer size is 8
-	const ptrSize = 8
 	var buf [2 * ptrSize]byte
 	binary.NativeEndian.PutUint64(buf[:], goPCLnTabInfo.Address)
 	binary.NativeEndian.PutUint64(buf[ptrSize:], goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.FuncNameTabOffset)
@@ -194,10 +200,10 @@ func FindModuleData(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.
 		return noPtrSectionData[n:], noPtrSection.Addr + uint64(n), nil
 	}
 
-	return nil, 0, fmt.Errorf("could not find moduledata")
+	return nil, 0, errors.New("could not find moduledata")
 }
 
-func FindGoFunc(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) ([]byte, uint64, error) {
+func FindGoFunc(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) (data []byte, address uint64, returnedErr error) {
 	// First try to locate goFunc with go:func.* symbol.
 	if symtab != nil {
 		if goFuncAddr, err := symtab.LookupSymbolAddress("go:func.*"); err == nil {
@@ -227,7 +233,7 @@ func FindGoFunc(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.Symb
 	goFuncVal := binary.LittleEndian.Uint64(moduleData[goFuncOff:])
 	sec := sectionContaining(ef, goFuncVal)
 	if sec == nil {
-		return nil, 0, fmt.Errorf("could not find section containing gofunc")
+		return nil, 0, errors.New("could not find section containing gofunc")
 	}
 	secData, err := sec.Data(maxBytesGoPclntab)
 	if err != nil {
@@ -256,7 +262,7 @@ func pclntabHeaderSignature(arch elf.Machine) []byte {
 	return []byte{0xff, 0xff, 0xff, 0x00, 0x00, quantum, 0x08}
 }
 
-func SearchGoPclntab(ef *pfelf.File) ([]byte, uint64, error) {
+func SearchGoPclntab(ef *pfelf.File) (data []byte, address uint64, err error) {
 	signature := pclntabHeaderSignature(ef.Machine)
 
 	for i := range ef.Progs {
@@ -267,7 +273,7 @@ func SearchGoPclntab(ef *pfelf.File) ([]byte, uint64, error) {
 			continue
 		}
 
-		data, err := p.Data(maxBytesGoPclntab)
+		data, err = p.Data(maxBytesGoPclntab)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -359,19 +365,22 @@ func FindGoPCLnTab(ef *pfelf.File, useHeuristicSearchAsFallback bool) (goPCLnTab
 		return nil, nil
 	}
 
-	version := verUnknown
+	var version headerVersion
 	var offsets TableOffsets
 	hdrSize := uintptr(PclntabHeaderSize())
 	mapSize := unsafe.Sizeof(pclntabFuncMap{})
+	//nolint:gocritic
 	// funSize := unsafe.Sizeof(pclntabFunc{})
 	dataLen := uintptr(len(data))
 	if dataLen < hdrSize {
 		return nil, fmt.Errorf(".gopclntab is too short (%v)", len(data))
 	}
+	//nolint:gocritic
 	// var textStart uintptr
 	// var functab, funcdata, funcnametab, filetab, pctab, cutab []byte
 
 	hdr := (*pclntabHeader)(unsafe.Pointer(&data[0]))
+	//nolint:gocritic
 	// fieldSize := uintptr(hdr.ptrSize)
 	switch hdr.magic {
 	case magicGo1_2:
