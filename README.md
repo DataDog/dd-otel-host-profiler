@@ -1,21 +1,15 @@
 # dd-otel-host-profiler
 
-<!-- [![Documentation](https://img.shields.io/badge/documentation-datadoghq.dev/orchestrion-blue.svg?style=flat)](https://datadoghq.dev/orchestrion) -->
 ![Latest Release](https://img.shields.io/github/v/release/DataDog/dd-otel-host-profiler?display_name=tag&label=Latest%20Release)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/datadog/dd-otel-host-profiler)
 
 Datadog OTEL eBPF profiler.
 
-> [!WARNING]
-> This profiler is currently **experimental** and has not undergone thorough testing. Features and functionality may be unstable or incomplete.  
-> For a more stable and tested alternative, we strongly recommend using [`otel-profiling-agent`](https://github.com/DataDog/otel-profiling-agent) in the meantime.  
-> Use this repository at your own risk.
-
 # Overview
 
-dd-otel-host-profiler is based on [open-telemetry/opentelemetry-ebpf-profiler](https://github.com/open-telemetry/opentelemetry-ebpf-profiler). Please refer to our [documentation](https://docs.datadoghq.com/profiler/) for a list of officially supported Datadog profilers.
+dd-otel-host-profiler is an experimental profiler based on [open-telemetry/opentelemetry-ebpf-profiler](https://github.com/open-telemetry/opentelemetry-ebpf-profiler). Please refer to our [documentation](https://docs.datadoghq.com/profiler/) for a list of officially supported Datadog profilers.
 
-This profiler has support for sending profiling data to the Datadog backend via the Datadog Agent. We are active members of the OpenTelemetry Profiling SIG that is working on the OpenTelemetry profiling signal. However, the signal is still under active development, so the Datadog Agent is required until we release our support for directly ingesting the data using OTLP.
+This profiler has support for sending profiling data to the Datadog backend via the Datadog Agent. We are active members of the OpenTelemetry Profiling SIG that is working on the OpenTelemetry profiling signal. However, the signal is still under active development, so deploying the Datadog Agent in addition to the profiler is required until we release our support for directly ingesting the data using OTLP.
 
 ## Requirements
 
@@ -37,9 +31,7 @@ If you're not using a container runtime, please check this section to run the pr
 
 ### Local symbol upload (Experimental)
 
-For compiled languages (C/C++/Rust/Go), the profiler can upload local symbols (when available) to Datadog for symbolication. Symbols need to be available locally (unstripped binaries).
-
-This feature requires being part of our private beta program for the OpenTelemetry profiler. Please reach out to Datadog support to get access.
+For compiled languages (C/C++/Rust/Go/...), the profiler can upload local symbols (when available) to Datadog for symbolication. Symbols need to be available locally (unstripped binaries).
 
 To enable local symbol upload:
 1. Set the `DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS` environment variable to `true`.
