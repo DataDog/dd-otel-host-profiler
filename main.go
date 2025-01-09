@@ -208,15 +208,14 @@ func mainWithExitCode() exitCode {
 		Timeline:               args.timeline,
 		APIKey:                 apiKey,
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
-			Enabled:                     args.uploadSymbols,
-			UploadDynamicSymbols:        args.uploadDynamicSymbols,
-			UploadGoPCLnTab:             args.uploadGoPCLnTab,
-			UseGoPCLnTabHeuristicSearch: args.useGoPCLnTabHeuristicSearch,
-			DryRun:                      args.uploadSymbolsDryRun,
-			APIKey:                      args.apiKey,
-			APPKey:                      args.appKey,
-			Site:                        args.site,
-			Version:                     versionInfo.Version,
+			Enabled:              args.uploadSymbols,
+			UploadDynamicSymbols: args.uploadDynamicSymbols,
+			UploadGoPCLnTab:      args.uploadGoPCLnTab,
+			DryRun:               args.uploadSymbolsDryRun,
+			APIKey:               args.apiKey,
+			APPKey:               args.appKey,
+			Site:                 args.site,
+			Version:              versionInfo.Version,
 		},
 	}, containerMetadataProvider)
 	if err != nil {

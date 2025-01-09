@@ -10,6 +10,7 @@ import (
 
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 
+	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
 )
 
@@ -19,7 +20,7 @@ func extractDebugInfos(elfFile, outFile string) error {
 		return fmt.Errorf("failed to open elf file: %w", err)
 	}
 	defer ef.Close()
-	goPCLnTabInfo, err := reporter.FindGoPCLnTab(ef)
+	goPCLnTabInfo, err := pclntab.FindGoPCLnTab(ef)
 	if err != nil {
 		return fmt.Errorf("failed to find pclntab: %w", err)
 	}

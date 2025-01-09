@@ -33,6 +33,8 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/readatbuf"
 	"go.opentelemetry.io/ebpf-profiler/process"
+
+	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 )
 
 const (
@@ -68,15 +70,14 @@ type uploadData struct {
 }
 
 type DatadogSymbolUploader struct {
-	ddAPIKey                    string
-	ddAPPKey                    string
-	intakeURL                   string
-	version                     string
-	dryRun                      bool
-	uploadDynamicSymbols        bool
-	uploadGoPCLnTab             bool
-	useGoPCLnTabHeuristicSearch bool
-	workerCount                 int
+	ddAPIKey             string
+	ddAPPKey             string
+	intakeURL            string
+	version              string
+	dryRun               bool
+	uploadDynamicSymbols bool
+	uploadGoPCLnTab      bool
+	workerCount          int
 
 	uploadCache   *lru.SyncedLRU[libpf.FileID, struct{}]
 	client        *http.Client
@@ -118,19 +119,18 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 	}
 
 	return &DatadogSymbolUploader{
-		ddAPIKey:                    cfg.APIKey,
-		ddAPPKey:                    cfg.APPKey,
-		intakeURL:                   intakeURL,
-		version:                     cfg.Version,
-		dryRun:                      cfg.DryRun,
-		uploadDynamicSymbols:        cfg.UploadDynamicSymbols,
-		uploadGoPCLnTab:             cfg.UploadGoPCLnTab,
-		useGoPCLnTabHeuristicSearch: cfg.UseGoPCLnTabHeuristicSearch,
-		workerCount:                 uploadWorkerCount,
-		client:                      &http.Client{Timeout: uploadTimeout},
-		uploadCache:                 uploadCache,
-		uploadQueue:                 make(chan uploadData, uploadQueueSize),
-		symbolQuerier:               symbolQuerier,
+		ddAPIKey:             cfg.APIKey,
+		ddAPPKey:             cfg.APPKey,
+		intakeURL:            intakeURL,
+		version:              cfg.Version,
+		dryRun:               cfg.DryRun,
+		uploadDynamicSymbols: cfg.UploadDynamicSymbols,
+		uploadGoPCLnTab:      cfg.UploadGoPCLnTab,
+		workerCount:          uploadWorkerCount,
+		client:               &http.Client{Timeout: uploadTimeout},
+		uploadCache:          uploadCache,
+		uploadQueue:          make(chan uploadData, uploadQueueSize),
+		symbolQuerier:        symbolQuerier,
 	}, nil
 }
 
@@ -330,7 +330,7 @@ func (e *executableMetadata) String() string {
 }
 
 func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath string,
-	e *executableMetadata, goPCLnTabInfo *GoPCLnTabInfo) error {
+	e *executableMetadata, goPCLnTabInfo *pclntab.GoPCLnTabInfo) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file to extract symbols: %w", err)
@@ -361,7 +361,7 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 }
 
 func CopySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
-	goPCLnTabInfo *GoPCLnTabInfo) error {
+	goPCLnTabInfo *pclntab.GoPCLnTabInfo) error {
 	// Dump gopclntab data to a temporary file
 	gopclntabFile, err := os.CreateTemp("", "gopclntab")
 	if err != nil {
@@ -605,10 +605,10 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 
 // findSymbols attempts to find a symbol source for the elf file, it returns an elfWrapper around the elf file
 // with symbols if found, or nil if no symbols were found.
-func (e *elfWrapper) findSymbols(uploadGoPCLnTab bool) (*elfWrapper, SymbolSource, *GoPCLnTabInfo) {
+func (e *elfWrapper) findSymbols(uploadGoPCLnTab bool) (*elfWrapper, SymbolSource, *pclntab.GoPCLnTabInfo) {
 	// Check if the elf file has a GoPCLnTab
 	if uploadGoPCLnTab {
-		goPCLnTabInfo, err := FindGoPCLnTab(e.elfFile)
+		goPCLnTabInfo, err := pclntab.FindGoPCLnTab(e.elfFile)
 		if err == nil {
 			if goPCLnTabInfo != nil {
 				return e, GoPCLnTab, goPCLnTabInfo

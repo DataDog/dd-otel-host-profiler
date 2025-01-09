@@ -1,7 +1,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package reporter
+package pclntab
 
 import (
 	"bytes"
@@ -155,8 +155,8 @@ func getUint8(data []byte, offset int) int {
 	return int(*(*uint8)(unsafe.Pointer(&data[offset])))
 }
 
-// PclntabHeaderSize returns the minimal pclntab header size.
-func PclntabHeaderSize() int {
+// HeaderSize returns the minimal pclntab header size.
+func HeaderSize() int {
 	return int(unsafe.Sizeof(pclntabHeader{}))
 }
 
@@ -417,7 +417,7 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 	var version HeaderVersion
 	var offsets TableOffsets
 	var funcSize, funcNpcdataOffset int
-	hdrSize := uintptr(PclntabHeaderSize())
+	hdrSize := uintptr(HeaderSize())
 
 	dataLen := uintptr(len(data))
 	if dataLen < hdrSize {

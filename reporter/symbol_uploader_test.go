@@ -17,6 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
+
+	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 )
 
 func findSymbol(f *elf.File, name string) *elf.Symbol {
@@ -65,7 +67,7 @@ func checkGoPCLnTab(t *testing.T, filename string, checkGoFunc bool) {
 func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	f, err := pfelf.Open(filename)
 	require.NoError(t, err)
-	goPCLnTabInfo, err := FindGoPCLnTab(f)
+	goPCLnTabInfo, err := pclntab.FindGoPCLnTab(f)
 	require.NoError(t, err)
 	assert.NotNil(t, goPCLnTabInfo)
 

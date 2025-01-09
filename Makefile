@@ -39,4 +39,4 @@ profiler-in-docker: docker-image
 	   bash -c "cd /app && make VERSION=$(VERSION)"
 
 extract_symbols:
-	go build $(GO_FLAGS) ./reporter/extract_symbols
+	go build $(GO_FLAGS) ./tools/extract_symbols
