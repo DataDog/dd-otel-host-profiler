@@ -1,4 +1,4 @@
-.PHONY: all build build-debug
+.PHONY: all build extract_symbols
 
 VERSION ?= v0.0.0
 VERSION_LD_FLAGS := -X github.com/DataDog/dd-otel-host-profiler/version.version=$(VERSION)

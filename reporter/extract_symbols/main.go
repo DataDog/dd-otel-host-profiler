@@ -19,13 +19,13 @@ func extractDebugInfos(elfFile, outFile string) error {
 		return fmt.Errorf("failed to open elf file: %w", err)
 	}
 	defer ef.Close()
-	goPCLnTabInfo, err := reporter.FindGoPCLnTab(ef, true)
+	goPCLnTabInfo, err := reporter.FindGoPCLnTab(ef)
 	if err != nil {
 		return fmt.Errorf("failed to find pclntab: %w", err)
 	}
 
 	if goPCLnTabInfo != nil {
-		fmt.Printf("Found GoPCLnTab at 0x%x, size %d\n", goPCLnTabInfo.Address, len(goPCLnTabInfo.Data))
+		fmt.Printf("Found GoPCLnTab at 0x%x, size %d, headerVersion: %v\n", goPCLnTabInfo.Address, len(goPCLnTabInfo.Data), goPCLnTabInfo.Version.String())
 		fmt.Printf("Found GoFunc at 0x%x, size %d\n", goPCLnTabInfo.GoFuncAddr, len(goPCLnTabInfo.GoFuncData))
 		return reporter.CopySymbolsAndGoPCLnTab(context.Background(), elfFile, outFile, goPCLnTabInfo)
 	}

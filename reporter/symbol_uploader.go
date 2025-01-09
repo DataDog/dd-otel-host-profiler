@@ -189,16 +189,6 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 	return symbolSource, nil
 }
 
-func (d *DatadogSymbolUploader) getPCLnTabSearchMode() GoPCLnTabSearchMode {
-	if !d.uploadGoPCLnTab {
-		return NoPCLnTabSearch
-	}
-	if d.useGoPCLnTabHeuristicSearch {
-		return FullPCLnTabSearch
-	}
-	return PCLnTabSearchWithSectionAndSymbols
-}
-
 // Returns true if the upload was successful, false otherwise
 func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadData) bool {
 	filePath := uploadData.filePath
@@ -215,7 +205,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	}
 	defer elfWrapper.Close()
 
-	debugElf, symbolSource, goPCLNTabData := elfWrapper.findSymbols(d.getPCLnTabSearchMode())
+	debugElf, symbolSource, goPCLNTabData := elfWrapper.findSymbols(d.uploadGoPCLnTab)
 	if debugElf == nil {
 		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", filePath)
 		return false
@@ -615,10 +605,10 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 
 // findSymbols attempts to find a symbol source for the elf file, it returns an elfWrapper around the elf file
 // with symbols if found, or nil if no symbols were found.
-func (e *elfWrapper) findSymbols(pcLnTabSearchMode GoPCLnTabSearchMode) (*elfWrapper, SymbolSource, *GoPCLnTabInfo) {
+func (e *elfWrapper) findSymbols(uploadGoPCLnTab bool) (*elfWrapper, SymbolSource, *GoPCLnTabInfo) {
 	// Check if the elf file has a GoPCLnTab
-	if pcLnTabSearchMode != NoPCLnTabSearch {
-		goPCLnTabInfo, err := FindGoPCLnTab(e.elfFile, pcLnTabSearchMode == FullPCLnTabSearch)
+	if uploadGoPCLnTab {
+		goPCLnTabInfo, err := FindGoPCLnTab(e.elfFile)
 		if err == nil {
 			if goPCLnTabInfo != nil {
 				return e, GoPCLnTab, goPCLnTabInfo

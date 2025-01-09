@@ -62,17 +62,17 @@ func checkGoPCLnTab(t *testing.T, filename string, checkGoFunc bool) {
 	}
 }
 
-func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string, useGoPCLnTabHeuristicSearch bool) {
+func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	f, err := pfelf.Open(filename)
 	require.NoError(t, err)
-	goPCLnTabInfo, err := FindGoPCLnTab(f, useGoPCLnTabHeuristicSearch)
+	goPCLnTabInfo, err := FindGoPCLnTab(f)
 	require.NoError(t, err)
 	assert.NotNil(t, goPCLnTabInfo)
 
 	outputFile := filepath.Join(tmpDir, "output.dbg")
 	err = CopySymbolsAndGoPCLnTab(context.Background(), filename, outputFile, goPCLnTabInfo)
 	require.NoError(t, err)
-	checkGoPCLnTab(t, outputFile, useGoPCLnTabHeuristicSearch)
+	checkGoPCLnTab(t, outputFile, true)
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
@@ -101,11 +101,11 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 			out, err := cmd.CombinedOutput()
 			require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
 
-			checkGoPCLnTabExtraction(t, exe, tmpDir, false)
+			checkGoPCLnTabExtraction(t, exe, tmpDir)
 
 			out, err = exec.Command("objcopy", "-S", "--rename-section", ".data.rel.ro.gopclntab=.foo1", "--rename-section", ".gopclntab=.foo2", exe, exeStripped).CombinedOutput() // #nosec G204
 			require.NoError(t, err, "failed to rename section: %s\n%s", err, out)
-			checkGoPCLnTabExtraction(t, exeStripped, tmpDir, true)
+			checkGoPCLnTabExtraction(t, exeStripped, tmpDir)
 		})
 	}
 }
