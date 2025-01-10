@@ -606,20 +606,19 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 // findSymbols attempts to find a symbol source for the elf file, it returns an elfWrapper around the elf file
 // with symbols if found, or nil if no symbols were found.
 func (e *elfWrapper) findSymbols(uploadGoPCLnTab bool) (*elfWrapper, SymbolSource, *pclntab.GoPCLnTabInfo) {
+	var goPCLnTabInfo *pclntab.GoPCLnTabInfo
+
 	// Check if the elf file has a GoPCLnTab
 	if uploadGoPCLnTab {
-		goPCLnTabInfo, err := pclntab.FindGoPCLnTab(e.elfFile)
-		if err == nil {
-			if goPCLnTabInfo != nil {
-				return e, GoPCLnTab, goPCLnTabInfo
-			}
-		} else {
+		var err error
+		goPCLnTabInfo, err = pclntab.FindGoPCLnTab(e.elfFile)
+		if err != nil {
 			log.Warnf("Failed to find .gopclntab in %s: %v", e.filePath, err)
 		}
 	}
 
 	if HasDWARFData(e.elfFile) {
-		return e, DebugInfo, nil
+		return e, DebugInfo, goPCLnTabInfo
 	}
 
 	log.Debugf("No debug symbols found in %s", e.filePath)
@@ -632,7 +631,7 @@ func (e *elfWrapper) findSymbols(uploadGoPCLnTab bool) (*elfWrapper, SymbolSourc
 	debugElf := e.findDebugSymbolsWithBuildID()
 	if debugElf != nil {
 		if HasDWARFData(debugElf.elfFile) {
-			return debugElf, DebugInfo, nil
+			return debugElf, DebugInfo, goPCLnTabInfo
 		}
 		debugElf.Close()
 		log.Debugf("No debug symbols found in buildID link file %s", debugElf.filePath)
@@ -642,10 +641,14 @@ func (e *elfWrapper) findSymbols(uploadGoPCLnTab bool) (*elfWrapper, SymbolSourc
 	debugElf = e.findDebugSymbolsWithDebugLink()
 	if debugElf != nil {
 		if HasDWARFData(debugElf.elfFile) {
-			return debugElf, DebugInfo, nil
+			return debugElf, DebugInfo, goPCLnTabInfo
 		}
 		log.Debugf("No debug symbols found in debug link file %s", debugElf.filePath)
 		debugElf.Close()
+	}
+
+	if goPCLnTabInfo != nil {
+		return e, GoPCLnTab, goPCLnTabInfo
 	}
 
 	// Check if initial elf file has a symbol table

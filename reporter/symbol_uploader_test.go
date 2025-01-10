@@ -65,9 +65,11 @@ func checkGoPCLnTab(t *testing.T, filename string, checkGoFunc bool) {
 }
 
 func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
-	f, err := pfelf.Open(filename)
+	ef, err := pfelf.Open(filename)
 	require.NoError(t, err)
-	goPCLnTabInfo, err := pclntab.FindGoPCLnTab(f)
+	defer ef.Close()
+
+	goPCLnTabInfo, err := pclntab.FindGoPCLnTab(ef)
 	require.NoError(t, err)
 	assert.NotNil(t, goPCLnTabInfo)
 
@@ -79,7 +81,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 
 func TestGoPCLnTabExtraction(t *testing.T) {
 	t.Parallel()
-	srcFile := "./testdata/helloworld.go"
+	srcFile := "../testdata/helloworld.go"
 	tests := map[string]struct {
 		buildArgs []string
 	}{
@@ -97,7 +99,6 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 			t.Parallel()
 			tmpDir := t.TempDir()
 			exe := filepath.Join(tmpDir, strings.TrimRight(srcFile, ".go")+"."+name)
-			exeStripped := exe + ".stripped"
 			cmd := exec.Command("go", append([]string{"build", "-o", exe}, test.buildArgs...)...) // #nosec G204
 			cmd.Args = append(cmd.Args, srcFile)
 			out, err := cmd.CombinedOutput()
@@ -105,6 +106,7 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 
 			checkGoPCLnTabExtraction(t, exe, tmpDir)
 
+			exeStripped := exe + ".stripped"
 			out, err = exec.Command("objcopy", "-S", "--rename-section", ".data.rel.ro.gopclntab=.foo1", "--rename-section", ".gopclntab=.foo2", exe, exeStripped).CombinedOutput() // #nosec G204
 			require.NoError(t, err, "failed to rename section: %s\n%s", err, out)
 			checkGoPCLnTabExtraction(t, exeStripped, tmpDir)

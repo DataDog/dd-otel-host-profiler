@@ -35,6 +35,8 @@ const (
 	magicGo1_16 = 0xfffffffa
 	magicGo1_18 = 0xfffffff0
 	magicGo1_20 = 0xfffffff1
+
+	disableRecover = true
 )
 
 type GoPCLnTabInfo struct {
@@ -529,12 +531,14 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 }
 
 func FindGoPCLnTab(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
-	// gopclntab parsing code might panic if the data is corrupt.
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("panic while searching pclntab: %v", r)
-		}
-	}()
+	if !disableRecover {
+		// gopclntab parsing code might panic if the data is corrupt.
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic while searching pclntab: %v", r)
+			}
+		}()
+	}
 
 	var data []byte
 	var goPCLnTabAddr uint64
