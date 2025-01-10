@@ -235,7 +235,7 @@ func TestGetKubernetesPodMetadata(t *testing.T) {
 			pid:              1,
 			expContainerID:   "ed89697807a981b82f6245ac3a13be232c1e13435d52bc3f53060d61babe1997",
 			expContainerName: "testcontainer-ab1c",
-			expPodName:       "testpod",
+			expPodName:       "testpod-abc123-sldfj293",
 		},
 		{
 			name: "matchingPodNotFound",

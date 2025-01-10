@@ -392,49 +392,22 @@ func getDockerClient() *client.Client {
 // putCache updates the container id metadata cache for the provided pod.
 func (p *containerMetadataProvider) putCache(pod *corev1.Pod) {
 	log.Debugf("Update container metadata cache for pod %s", pod.Name)
-	podName := getPodName(pod)
 
 	for i := range pod.Status.ContainerStatuses {
 		var containerID string
 		var err error
 		if containerID, err = matchContainerID(
 			pod.Status.ContainerStatuses[i].ContainerID); err != nil {
-			log.Debugf("failed to get kubernetes container metadata: %v", err)
+			log.Debugf("failed to get kubernetes container metadata for pod %s: %v", pod.Name, err)
 			continue
 		}
 
 		p.containerMetadataCache.Add(containerID, ContainerMetadata{
 			ContainerID:   containerID,
-			PodName:       podName,
+			PodName:       pod.Name,
 			ContainerName: pod.Status.ContainerStatuses[i].Name,
 		})
 	}
-}
-
-func getPodName(pod *corev1.Pod) string {
-	podName := pod.Name
-
-	for j := range pod.OwnerReferences {
-		if strings.HasPrefix(podName, pod.OwnerReferences[j].Name) {
-			switch pod.OwnerReferences[j].Kind {
-			case "ReplicaSet":
-				// For replicaSet the Owner references Name contains the replicaset version
-				// ie 'deployment-replicaset' which we want to remove.
-				lastIndex := strings.LastIndex(pod.OwnerReferences[j].Name, "-")
-				if lastIndex < 0 {
-					// pod.OwnerReferences[j].Name does not contain a '-' so
-					// we take the full name as PodName and avoid to panic.
-					podName = pod.OwnerReferences[j].Name
-				} else {
-					podName = pod.OwnerReferences[j].Name[:lastIndex]
-				}
-			default:
-				podName = pod.OwnerReferences[j].Name
-			}
-		}
-	}
-
-	return podName
 }
 
 func matchContainerID(containerIDStr string) (string, error) {
@@ -546,7 +519,7 @@ func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID stri
 	}
 
 	for j := range pods.Items {
-		podName := getPodName(&pods.Items[j])
+		podName := pods.Items[j].Name
 		containers := pods.Items[j].Status.ContainerStatuses
 		for i := range containers {
 			var containerID string
