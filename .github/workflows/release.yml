@@ -78,7 +78,7 @@ jobs:
           tar czf dd-otel-host-profiler-${RELEASE_VERSION}-x86_64.tar.gz -C agent-x86_64 .
           sha256sum dd-otel-host-profiler-${RELEASE_VERSION}-aarch64.tar.gz dd-otel-host-profiler-${RELEASE_VERSION}-x86_64.tar.gz > sha256sums.txt
       - name: Create Release
-        uses: ncipollo/release-action@2c591bcc8ecdcd2db72b97d6147f871fcd833ba5 # v1.14.0
+        uses: ncipollo/release-action@cdcc88a9acf3ca41c16c37bb7d21b9ad48560d87 # v1.15.0
         with:
           artifacts: "dd-otel-host-profiler-v*.tar.gz,sha256sums.txt"
           allowUpdates: true
