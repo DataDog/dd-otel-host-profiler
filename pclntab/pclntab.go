@@ -595,7 +595,7 @@ func FindGoPCLnTab(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
 	}
 
 	if data == nil {
-		return nil, nil
+		return nil, errors.New("file does not contain any of the gopclntab expected sections")
 	}
 
 	goPCLnTabInfo, err = parseGoPCLnTab(data)

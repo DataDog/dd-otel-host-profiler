@@ -609,7 +609,7 @@ func (e *elfWrapper) findSymbols(uploadGoPCLnTab bool) (*elfWrapper, SymbolSourc
 	var goPCLnTabInfo *pclntab.GoPCLnTabInfo
 
 	// Check if the elf file has a GoPCLnTab
-	if uploadGoPCLnTab {
+	if uploadGoPCLnTab && e.elfFile.IsGolang() {
 		var err error
 		goPCLnTabInfo, err = pclntab.FindGoPCLnTab(e.elfFile)
 		if err != nil {
