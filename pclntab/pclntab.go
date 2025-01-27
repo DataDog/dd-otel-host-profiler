@@ -35,8 +35,10 @@ const (
 	magicGo1_16 = 0xfffffffa
 	magicGo1_18 = 0xfffffff0
 	magicGo1_20 = 0xfffffff1
+)
 
-	disableRecover = true
+var (
+	disableRecover = false
 )
 
 type GoPCLnTabInfo struct {
