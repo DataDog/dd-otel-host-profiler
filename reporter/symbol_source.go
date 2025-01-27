@@ -13,8 +13,8 @@ const (
 	None SymbolSource = iota
 	DynamicSymbolTable
 	SymbolTable
-	DebugInfo
 	GoPCLnTab
+	DebugInfo
 )
 
 func (s SymbolSource) String() string {
