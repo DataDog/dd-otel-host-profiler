@@ -50,14 +50,6 @@ const (
 	buildIDSectionName = ".note.gnu.build-id"
 )
 
-type GoPCLnTabSearchMode int64
-
-const (
-	NoPCLnTabSearch GoPCLnTabSearchMode = iota
-	PCLnTabSearchWithSectionAndSymbols
-	FullPCLnTabSearch
-)
-
 var debugStrSectionNames = []string{".debug_str", ".zdebug_str", ".debug_str.dwo"}
 var debugInfoSectionNames = []string{".debug_info", ".zdebug_info"}
 var globalDebugDirectories = []string{"/usr/lib/debug"}
