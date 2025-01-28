@@ -63,7 +63,7 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 				require.NoError(t, err)
 				defer ef.Close()
 
-				goPCLnTabInfo, err := FindGoPCLnTab(ef)
+				goPCLnTabInfo, err := findGoPCLnTab(ef, true)
 				require.NoError(t, err)
 				require.NotNil(t, goPCLnTabInfo)
 
@@ -75,7 +75,7 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 				out, err = exec.Command("objcopy", "-S", "--rename-section", ".data.rel.ro.gopclntab=.foo1", "--rename-section", ".gopclntab=.foo2", exe, exeStripped).CombinedOutput() // #nosec G204
 				require.NoError(t, err, "failed to rename section: %s\n%s", err, out)
 
-				goPCLnTabInfo2, err := FindGoPCLnTab(ef)
+				goPCLnTabInfo2, err := findGoPCLnTab(ef, true)
 				require.NoError(t, err)
 				require.NotNil(t, goPCLnTabInfo2)
 

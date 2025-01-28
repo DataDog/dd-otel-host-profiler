@@ -396,6 +396,10 @@ func (g *GoPCLnTabInfo) findMaxInlineTreeOffset() int {
 	return maxInlineTreeOffset
 }
 
+func alignUp(v, align int) int {
+	return (v + align - 1) &^ (align - 1)
+}
+
 func (g *GoPCLnTabInfo) findFuncDataSize() int {
 	maxFuncOffset := -1
 	maxFuncOffsetIdx := -1
@@ -414,7 +418,47 @@ func (g *GoPCLnTabInfo) findFuncDataSize() int {
 
 	nfuncdata := getUint8(g.funcdata, maxFuncOffset+g.funcNfuncdataOffset)
 	npcdata := getUInt32(g.funcdata, maxFuncOffset+g.funcNpcdataOffset)
-	return maxFuncOffset + g.funcSize + (npcdata+nfuncdata)*4
+	return maxFuncOffset + g.funcSize + npcdata*4 + nfuncdata*g.fieldSize
+}
+
+func (g *GoPCLnTabInfo) computePCLnTabSize() int {
+	if g.Version < ver116 {
+		return -1
+	}
+
+	funcDataSize := g.findFuncDataSize()
+	if funcDataSize == -1 {
+		return -1
+	}
+	return alignUp(int(g.Offsets.FuncTabOffset)+funcDataSize, ptrSize)
+}
+
+func (g *GoPCLnTabInfo) trimGoFunc(goFuncData []byte, goFuncAddr uint64, symtab *libpf.SymbolMap) ([]byte, error) {
+	if symtab != nil {
+		// symbol runtime.gcbits.* follows goFunc, try to use it to determine the end of goFunc.
+		nextSymAddr, err := symtab.LookupSymbolAddress("runtime.gcbits.*")
+		if err == nil && uint64(nextSymAddr) > goFuncAddr {
+			fmt.Printf("nextSymAddr: 0x%x\n", nextSymAddr)
+			dist := uint64(nextSymAddr) - goFuncAddr
+			if dist < uint64(len(goFuncData)) {
+				return goFuncData[:dist], nil
+			}
+		}
+	}
+
+	// Iterate over the functions to find the maximum offset of the inline tree.
+	maxInlineTreeOffset := g.findMaxInlineTreeOffset()
+
+	if maxInlineTreeOffset == -1 || maxInlineTreeOffset >= len(goFuncData) {
+		return nil, fmt.Errorf("invalid inline tree offset: %v", maxInlineTreeOffset)
+	}
+
+	// maxInlineTreeOffset is the base address of the inlined calls for a function
+	// find the end of the goFunc by finding heuristically the end of the last inlined call.
+	goFuncEndOffset := findGoFuncEnd(goFuncData[maxInlineTreeOffset:], g.Version)
+	goFuncSize := maxInlineTreeOffset + goFuncEndOffset
+
+	return goFuncData[:goFuncSize], nil
 }
 
 func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
@@ -533,6 +577,10 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 }
 
 func FindGoPCLnTab(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
+	return findGoPCLnTab(ef, false)
+}
+
+func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
 	if !disableRecover {
 		// gopclntab parsing code might panic if the data is corrupt.
 		defer func() {
@@ -605,13 +653,20 @@ func FindGoPCLnTab(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
 
 	goPCLnTabInfo.Address = goPCLnTabAddr
 
-	if !goPCLnTabEndKnown && goPCLnTabInfo.Version >= ver116 {
-		funcDataSize := goPCLnTabInfo.findFuncDataSize()
-		if funcDataSize != -1 {
-			goPCLnTabSize := int(goPCLnTabInfo.Offsets.FuncTabOffset) + funcDataSize
-			if goPCLnTabSize < len(goPCLnTabInfo.Data) {
-				goPCLnTabInfo.Data = goPCLnTabInfo.Data[:goPCLnTabSize]
+	if (!goPCLnTabEndKnown || additionalChecks) && goPCLnTabInfo.Version >= ver116 {
+		// Do not try to find the size of the .gopclntab for older versions because pclntab layout is different.
+		// Failure to find the size of the .gopclntab is not critical because gopclntab is in .data.rel.ro which
+		// most likely does not contain sensitive information.
+		goPCLnTabSize := goPCLnTabInfo.computePCLnTabSize()
+		if additionalChecks && goPCLnTabEndKnown {
+			// check that the computed size matches the known size
+			if len(goPCLnTabInfo.Data) != goPCLnTabSize {
+				return nil, fmt.Errorf("invalid computed .gopclntab size: %v (computed) vs %v (expected)", goPCLnTabSize, len(goPCLnTabInfo.Data))
 			}
+		}
+
+		if goPCLnTabSize != -1 && goPCLnTabSize < len(goPCLnTabInfo.Data) {
+			goPCLnTabInfo.Data = goPCLnTabInfo.Data[:goPCLnTabSize]
 		}
 	}
 
@@ -623,31 +678,19 @@ func FindGoPCLnTab(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
 
 		goFuncData, goFuncAddr, err := FindGoFunc(ef, goPCLnTabInfo, symtab)
 		if err == nil {
-			goFuncEndFound := false
-			if symtab != nil {
-				// symbol runtime.gcbits.* follows goFunc, try to use it to determine the end of goFunc.
-				nextSymAddr, err := symtab.LookupSymbolAddress("runtime.gcbits.*")
-				if err == nil && uint64(nextSymAddr) > goFuncAddr {
-					dist := uint64(nextSymAddr) - goFuncAddr
-					if dist < uint64(len(goFuncData)) {
-						goFuncData = goFuncData[:dist]
-						goFuncEndFound = true
-					}
+			goFuncData, err = goPCLnTabInfo.trimGoFunc(goFuncData, goFuncAddr, symtab)
+			if err == nil {
+				goPCLnTabInfo.GoFuncAddr = goFuncAddr
+				goPCLnTabInfo.GoFuncData = goFuncData
+			} else {
+				// if we failed to trim goFunc, return an error only if additionalChecks is enabled
+				// otherwise discard goFunc and continue.
+				// goFunc in this case is discarded because goFunc is in .rodata section that may contain
+				// sensitive information past the end of the goFunc.
+				if additionalChecks {
+					return nil, fmt.Errorf("failed to trim goFunc: %w", err)
 				}
 			}
-
-			if !goFuncEndFound {
-				// Iterate over the functions to find the maximum offset of the inline tree.
-				maxInlineTreeOffset := goPCLnTabInfo.findMaxInlineTreeOffset()
-				// If the inline tree offset is found, truncate the goFunc data.
-				if maxInlineTreeOffset != -1 && maxInlineTreeOffset < len(goFuncData) {
-					goFuncEnd := maxInlineTreeOffset + findGoFuncEnd(goFuncData[maxInlineTreeOffset:], goPCLnTabInfo.Version)
-					goFuncData = goFuncData[:goFuncEnd]
-				}
-			}
-
-			goPCLnTabInfo.GoFuncAddr = goFuncAddr
-			goPCLnTabInfo.GoFuncData = goFuncData
 		}
 	}
 	return goPCLnTabInfo, nil
