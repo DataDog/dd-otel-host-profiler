@@ -13,8 +13,8 @@ const (
 	None SymbolSource = iota
 	DynamicSymbolTable
 	SymbolTable
-	DebugInfo
 	GoPCLnTab
+	DebugInfo
 )
 
 func (s SymbolSource) String() string {
@@ -25,10 +25,10 @@ func (s SymbolSource) String() string {
 		return "dynamic_symbol_table"
 	case SymbolTable:
 		return "symbol_table"
-	case DebugInfo:
-		return "debug_info"
 	case GoPCLnTab:
 		return "gopclntab"
+	case DebugInfo:
+		return "debug_info"
 	}
 
 	return "unknown"
