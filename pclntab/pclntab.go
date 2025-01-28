@@ -245,6 +245,7 @@ func findGoFuncEnd112(data []byte) int {
 	nbElem := len(data) / elemSize
 	inlineCalls := unsafe.Slice((*rawInlinedCall112)(unsafe.Pointer(&data[0])), nbElem)
 	for i, ic := range inlineCalls {
+		// all inlined functions FuncID seem to be 0, but to be safe we just check that it is not greater than maxGoFuncID
 		if ic.padding != 0 || ic.FuncID > maxGoFuncID || ic.Line < 0 || ic.ParentPC < 0 || ic.Func < 0 {
 			return i * elemSize
 		}
@@ -257,6 +258,7 @@ func findGoFuncEnd120(data []byte) int {
 	nbElem := len(data) / elemSize
 	inlineCalls := unsafe.Slice((*rawInlinedCall120)(unsafe.Pointer(&data[0])), nbElem)
 	for i, ic := range inlineCalls {
+		// all inlined functions FuncID seem to be 0, but to be safe we just check that it is not greater than maxGoFuncID
 		if ic.padding[0] != 0 || ic.padding[1] != 0 || ic.padding[2] != 0 || ic.FuncID > maxGoFuncID || ic.StartLine < 0 || ic.ParentPC < 0 || ic.NameOff < 0 {
 			return i * elemSize
 		}
