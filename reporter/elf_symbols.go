@@ -17,8 +17,7 @@ type elfWrapperWithSource struct {
 }
 
 type elfSymbols struct {
-	wrapper *elfWrapper
-	source  SymbolSource
+	elfWrapperWithSource
 
 	arch       string
 	isGolang   bool
@@ -43,8 +42,10 @@ func newElfSymbols(filePath string, fileID libpf.FileID, opener process.FileOpen
 	}
 
 	symbols := &elfSymbols{
-		wrapper:  wrapper,
-		source:   wrapper.symbolSource(),
+		elfWrapperWithSource: elfWrapperWithSource{
+			wrapper: wrapper,
+			source:  wrapper.symbolSource(),
+		},
 		arch:     runtime.GOARCH,
 		isGolang: wrapper.elfFile.IsGolang(),
 		filePath: filePath,
