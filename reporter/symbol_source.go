@@ -13,6 +13,7 @@ const (
 	None SymbolSource = iota
 	DynamicSymbolTable
 	SymbolTable
+	GoPCLnTab
 	DebugInfo
 )
 
@@ -24,9 +25,12 @@ func (s SymbolSource) String() string {
 		return "dynamic_symbol_table"
 	case SymbolTable:
 		return "symbol_table"
+	case GoPCLnTab:
+		return "gopclntab"
 	case DebugInfo:
 		return "debug_info"
 	}
+
 	return "unknown"
 }
 
@@ -40,6 +44,8 @@ func NewSymbolSource(s string) (SymbolSource, error) {
 		return SymbolTable, nil
 	case "debug_info":
 		return DebugInfo, nil
+	case "gopclntab":
+		return GoPCLnTab, nil
 	}
 	return None, fmt.Errorf("unknown symbol source: %s", s)
 }

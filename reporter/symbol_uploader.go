@@ -33,18 +33,22 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/readatbuf"
 	"go.opentelemetry.io/ebpf-profiler/process"
+
+	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 )
 
-const uploadCacheSize = 16384
-const uploadQueueSize = 1000
-const uploadWorkerCount = 10
+const (
+	uploadCacheSize   = 16384
+	uploadQueueSize   = 1000
+	uploadWorkerCount = 10
 
-const sourceMapEndpoint = "/api/v2/srcmap"
+	sourceMapEndpoint = "/api/v2/srcmap"
 
-const symbolCopyTimeout = 10 * time.Second
-const uploadTimeout = 15 * time.Second
+	symbolCopyTimeout = 10 * time.Second
+	uploadTimeout     = 15 * time.Second
 
-const buildIDSectionName = ".note.gnu.build-id"
+	buildIDSectionName = ".note.gnu.build-id"
+)
 
 var debugStrSectionNames = []string{".debug_str", ".zdebug_str", ".debug_str.dwo"}
 var debugInfoSectionNames = []string{".debug_info", ".zdebug_info"}
@@ -64,6 +68,7 @@ type DatadogSymbolUploader struct {
 	version              string
 	dryRun               bool
 	uploadDynamicSymbols bool
+	uploadGoPCLnTab      bool
 	workerCount          int
 
 	uploadCache   *lru.SyncedLRU[libpf.FileID, struct{}]
@@ -112,6 +117,7 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		version:              cfg.Version,
 		dryRun:               cfg.DryRun,
 		uploadDynamicSymbols: cfg.UploadDynamicSymbols,
+		uploadGoPCLnTab:      cfg.UploadGoPCLnTab,
 		workerCount:          uploadWorkerCount,
 		client:               &http.Client{Timeout: uploadTimeout},
 		uploadCache:          uploadCache,
@@ -191,7 +197,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	}
 	defer elfWrapper.Close()
 
-	debugElf, symbolSource := elfWrapper.findSymbols()
+	debugElf, symbolSource, goPCLNTabData := elfWrapper.findSymbols(d.uploadGoPCLnTab)
 	if debugElf == nil {
 		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", filePath)
 		return false
@@ -225,7 +231,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 		return true
 	}
 
-	err = d.handleSymbols(ctx, symbolPath, e)
+	err = d.handleSymbols(ctx, symbolPath, e, goPCLNTabData)
 	if err != nil {
 		log.Errorf("Failed to handle symbols: %v for executable: %s", err, e)
 		return false
@@ -316,7 +322,7 @@ func (e *executableMetadata) String() string {
 }
 
 func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath string,
-	e *executableMetadata) error {
+	e *executableMetadata, goPCLnTabInfo *pclntab.GoPCLnTabInfo) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file to extract symbols: %w", err)
@@ -326,9 +332,16 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 
 	ctx, cancel := context.WithTimeout(ctx, symbolCopyTimeout)
 	defer cancel()
-	err = d.copySymbols(ctx, symbolPath, symbolFile.Name())
-	if err != nil {
-		return fmt.Errorf("failed to copy symbols: %w", err)
+	if goPCLnTabInfo != nil {
+		err = CopySymbolsAndGoPCLnTab(ctx, symbolPath, symbolFile.Name(), goPCLnTabInfo)
+		if err != nil {
+			return fmt.Errorf("failed to copy GoPCLnTab: %w", err)
+		}
+	} else {
+		err = CopySymbols(ctx, symbolPath, symbolFile.Name())
+		if err != nil {
+			return fmt.Errorf("failed to copy symbols: %w", err)
+		}
 	}
 
 	err = d.uploadSymbols(ctx, symbolFile, e)
@@ -339,7 +352,68 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 	return nil
 }
 
-func (d *DatadogSymbolUploader) copySymbols(ctx context.Context, inputPath, outputPath string) error {
+func CopySymbolsAndGoPCLnTab(ctx context.Context, inputPath, outputPath string,
+	goPCLnTabInfo *pclntab.GoPCLnTabInfo) error {
+	// Dump gopclntab data to a temporary file
+	gopclntabFile, err := os.CreateTemp("", "gopclntab")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file to extract GoPCLnTab: %w", err)
+	}
+	defer os.Remove(gopclntabFile.Name())
+	defer gopclntabFile.Close()
+
+	_, err = gopclntabFile.Write(goPCLnTabInfo.Data)
+	if err != nil {
+		return fmt.Errorf("failed to write GoPCLnTab: %w", err)
+	}
+
+	var gofuncFile *os.File
+	if goPCLnTabInfo.GoFuncData != nil {
+		// Dump gofunc data to a temporary file
+		gofuncFile, err = os.CreateTemp("", "gofunc")
+		if err != nil {
+			return fmt.Errorf("failed to create temp file to extract GoFunc: %w", err)
+		}
+		defer os.Remove(gofuncFile.Name())
+		defer gofuncFile.Close()
+		_, err = gofuncFile.Write(goPCLnTabInfo.GoFuncData)
+		if err != nil {
+			return fmt.Errorf("failed to write GoFunc: %w", err)
+		}
+	}
+
+	// objcopy does not support extracting debug information (with `--only-keep-debug`) and keeping
+	// some non-debug sections (like gopclntab) at the same time.
+	// `--only-keep-debug` does not really remove non-debug sections, it keeps their memory size
+	// but makes their file size 0 by marking them NOBITS (effectively zeroing them).
+	// That's why we extract debug information and at the same time remove `.gopclntab` section (with
+	// with `--remove-section=.gopclntab`) and add it back from the temporary file.
+	args := []string{
+		"--only-keep-debug",
+		"--remove-section=.gdb_index",
+		"--remove-section=.gopclntab",
+		"--remove-section=.data.rel.ro.gopclntab",
+		"--add-section", ".gopclntab=" + gopclntabFile.Name(),
+		"--set-section-flags", ".gopclntab=readonly",
+		fmt.Sprintf("--change-section-address=.gopclntab=%d", goPCLnTabInfo.Address),
+	}
+	if gofuncFile != nil {
+		args = append(args, "--add-section", ".gofunc="+gofuncFile.Name(),
+			"--set-section-flags", ".gofunc=readonly",
+			fmt.Sprintf("--change-section-address=.gofunc=%d", goPCLnTabInfo.GoFuncAddr),
+			"--strip-symbol", "go:func.*",
+			"--add-symbol", "go:func.*=.gofunc:0")
+	}
+	args = append(args, inputPath, outputPath)
+
+	_, err = exec.CommandContext(ctx, "objcopy", args...).Output()
+	if err != nil {
+		return fmt.Errorf("failed to extract debug symbols: %w", cleanCmdError(err))
+	}
+	return nil
+}
+
+func CopySymbols(ctx context.Context, inputPath, outputPath string) error {
 	args := []string{
 		"--only-keep-debug",
 		"--remove-section=.gdb_index",
@@ -523,9 +597,20 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 
 // findSymbols attempts to find a symbol source for the elf file, it returns an elfWrapper around the elf file
 // with symbols if found, or nil if no symbols were found.
-func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
+func (e *elfWrapper) findSymbols(uploadGoPCLnTab bool) (*elfWrapper, SymbolSource, *pclntab.GoPCLnTabInfo) {
+	var goPCLnTabInfo *pclntab.GoPCLnTabInfo
+
+	// Check if the elf file has a GoPCLnTab
+	if uploadGoPCLnTab && e.elfFile.IsGolang() {
+		var err error
+		goPCLnTabInfo, err = pclntab.FindGoPCLnTab(e.elfFile)
+		if err != nil {
+			log.Warnf("Failed to find .gopclntab in %s: %v", e.filePath, err)
+		}
+	}
+
 	if HasDWARFData(e.elfFile) {
-		return e, DebugInfo
+		return e, DebugInfo, goPCLnTabInfo
 	}
 
 	log.Debugf("No debug symbols found in %s", e.filePath)
@@ -538,7 +623,7 @@ func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 	debugElf := e.findDebugSymbolsWithBuildID()
 	if debugElf != nil {
 		if HasDWARFData(debugElf.elfFile) {
-			return debugElf, DebugInfo
+			return debugElf, DebugInfo, goPCLnTabInfo
 		}
 		debugElf.Close()
 		log.Debugf("No debug symbols found in buildID link file %s", debugElf.filePath)
@@ -548,23 +633,27 @@ func (e *elfWrapper) findSymbols() (*elfWrapper, SymbolSource) {
 	debugElf = e.findDebugSymbolsWithDebugLink()
 	if debugElf != nil {
 		if HasDWARFData(debugElf.elfFile) {
-			return debugElf, DebugInfo
+			return debugElf, DebugInfo, goPCLnTabInfo
 		}
 		log.Debugf("No debug symbols found in debug link file %s", debugElf.filePath)
 		debugElf.Close()
 	}
 
+	if goPCLnTabInfo != nil {
+		return e, GoPCLnTab, goPCLnTabInfo
+	}
+
 	// Check if initial elf file has a symbol table
 	if e.elfFile.Section(".symtab") != nil {
-		return e, SymbolTable
+		return e, SymbolTable, nil
 	}
 
 	// Check if initial elf file has a dynamic symbol table
 	if e.elfFile.Section(".dynsym") != nil {
-		return e, DynamicSymbolTable
+		return e, DynamicSymbolTable, nil
 	}
 
-	return nil, None
+	return nil, None, nil
 }
 
 func (e *elfWrapper) findDebugSymbolsWithBuildID() *elfWrapper {
