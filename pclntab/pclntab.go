@@ -682,14 +682,12 @@ func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLn
 			if err == nil {
 				goPCLnTabInfo.GoFuncAddr = goFuncAddr
 				goPCLnTabInfo.GoFuncData = goFuncData
-			} else {
+			} else if additionalChecks {
 				// if we failed to trim goFunc, return an error only if additionalChecks is enabled
 				// otherwise discard goFunc and continue.
 				// goFunc in this case is discarded because goFunc is in .rodata section that may contain
 				// sensitive information past the end of the goFunc.
-				if additionalChecks {
-					return nil, fmt.Errorf("failed to trim goFunc: %w", err)
-				}
+				return nil, fmt.Errorf("failed to trim goFunc: %w", err)
 			}
 		}
 	}
