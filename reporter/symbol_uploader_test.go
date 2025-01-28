@@ -74,7 +74,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	assert.NotNil(t, goPCLnTabInfo)
 
 	outputFile := filepath.Join(tmpDir, "output.dbg")
-	err = CopySymbolsAndGoPCLnTab(context.Background(), filename, outputFile, goPCLnTabInfo)
+	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo)
 	require.NoError(t, err)
 	checkGoPCLnTab(t, outputFile, true)
 }

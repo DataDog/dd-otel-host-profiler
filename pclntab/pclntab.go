@@ -35,8 +35,10 @@ const (
 	magicGo1_16 = 0xfffffffa
 	magicGo1_18 = 0xfffffff0
 	magicGo1_20 = 0xfffffff1
+)
 
-	disableRecover = true
+var (
+	disableRecover = false
 )
 
 type GoPCLnTabInfo struct {
@@ -593,7 +595,7 @@ func FindGoPCLnTab(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
 	}
 
 	if data == nil {
-		return nil, nil
+		return nil, errors.New("file does not contain any of the gopclntab expected sections")
 	}
 
 	goPCLnTabInfo, err = parseGoPCLnTab(data)

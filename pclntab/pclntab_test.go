@@ -24,6 +24,7 @@ func getGoToolChain(goMinorVersion int) string {
 
 func TestGoPCLnTabExtraction(t *testing.T) {
 	t.Parallel()
+	disableRecover = true
 	testDataDir := "../testdata"
 	srcFile := "helloworld.go"
 	tests := map[string]struct {
