@@ -55,6 +55,8 @@ type SymbolUploaderConfig struct {
 	Enabled bool
 	// UploadDynamicSymbols defines whether the agent should upload dynamic symbols to the backend.
 	UploadDynamicSymbols bool
+	// UploadGoPCLnTab defines whether the agent should upload GoPCLnTab section for Go binaries to the backend.
+	UploadGoPCLnTab bool
 	// DryRun defines whether the agent should upload debug symbols to the backend in dry-run mode.
 	DryRun bool
 	// DataDog API key

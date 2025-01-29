@@ -1,4 +1,4 @@
-.PHONY: all build build-debug
+.PHONY: all build extract_symbols
 
 VERSION ?= v0.0.0
 VERSION_LD_FLAGS := -X github.com/DataDog/dd-otel-host-profiler/version.version=$(VERSION)
@@ -37,3 +37,6 @@ docker-image:
 profiler-in-docker: docker-image
 	docker run -v "$$PWD":/app -it --rm --user $(shell id -u):$(shell id -g) dd-otel-host-profiler \
 	   bash -c "cd /app && make VERSION=$(VERSION)"
+
+extract_symbols:
+	go build $(GO_FLAGS) ./tools/extract_symbols
