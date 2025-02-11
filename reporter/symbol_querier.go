@@ -12,8 +12,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/DataDog/jsonapi"
+	"golang.org/x/time/rate"
 )
 
 const symbolQueryEndpoint = "/api/v2/profiles/symbols/query"
@@ -97,4 +99,150 @@ func (d *DatadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []stri
 	}
 
 	return response, nil
+}
+
+type batchedQuery struct {
+	buildIDs []string
+	arch     string
+
+	results []SymbolFile
+	err     error
+}
+
+type BatchSymbolQuerier struct {
+	waitForMoreQueriesDuration time.Duration
+	maxQueryLatency            time.Duration
+
+	querier *DatadogSymbolQuerier
+
+	rateLimiter *rate.Limiter
+	batchChan   chan *batchedQuery
+	done        chan struct{}
+}
+
+type BatchSymbolQuerierConfig struct {
+	// Time to wait for more queries before executing the current batch.
+	WaitForMoreQueriesDuration time.Duration
+	// Average wait time between batches: QPS for rate limiter is derived from this, and it also limits the total wait time for new queries.
+	AvgMinDurationBetwenBatches time.Duration
+
+	// Allowed burst for rate limiting.
+	Burst int
+
+	Querier *DatadogSymbolQuerier
+}
+
+func NewBatchSymbolQuerier(config BatchSymbolQuerierConfig) *BatchSymbolQuerier {
+	return &BatchSymbolQuerier{
+		waitForMoreQueriesDuration: config.WaitForMoreQueriesDuration,
+		maxQueryLatency:            config.AvgMinDurationBetwenBatches,
+		rateLimiter:                rate.NewLimiter(rate.Limit(time.Second/config.AvgMinDurationBetwenBatches), config.Burst),
+		querier:                    config.Querier,
+		batchChan:                  make(chan *batchedQuery),
+	}
+}
+
+func (b *BatchSymbolQuerier) doQuery(ctx context.Context, buildIDs []string, arch string, queries []*batchedQuery) {
+	symbolFiles, err := b.querier.QuerySymbols(ctx, buildIDs, arch)
+
+	if err != nil {
+		for _, query := range queries {
+			if query.arch == arch {
+				query.err = err
+			}
+		}
+	}
+
+	m := make(map[string][]*SymbolFile)
+	for i, symbolFile := range symbolFiles {
+		m[symbolFile.BuildID] = append(m[symbolFile.BuildID], &symbolFiles[i])
+	}
+
+	for _, query := range queries {
+		if query.arch == arch {
+			for _, buildID := range query.buildIDs {
+				if symbolFiles, ok := m[buildID]; ok {
+					for _, symbolFile := range symbolFiles {
+						query.results = append(query.results, *symbolFile)
+					}
+				}
+			}
+		}
+	}
+}
+
+func (b *BatchSymbolQuerier) doQueries(ctx context.Context, queries []*batchedQuery) {
+	// There should be only a single arch, but be safe
+	buildIDsByArch := make(map[string][]string)
+
+	for _, query := range queries {
+		buildIDsByArch[query.arch] = append(buildIDsByArch[query.arch], query.buildIDs...)
+	}
+
+	for arch, buildIDs := range buildIDsByArch {
+		b.doQuery(ctx, buildIDs, arch, queries)
+	}
+	close(b.done)
+	b.done = make(chan struct{})
+}
+
+func (b *BatchSymbolQuerier) Start(ctx context.Context) {
+	go func() {
+		var queries []*batchedQuery
+		b.done = make(chan struct{})
+
+		var limiterChan <-chan time.Time
+		var lastQueryTime time.Time
+		var firstQueryTime time.Time
+
+		for {
+			doCall := false
+			select {
+			case <-ctx.Done():
+				return
+			case query := <-b.batchChan:
+				if len(queries) == 0 {
+					firstQueryTime = time.Now()
+				}
+				queries = append(queries, query)
+				if limiterChan == nil {
+					r := b.rateLimiter.Reserve()
+					delay := r.Delay()
+					if delay > 0 {
+						limiterChan = time.After(delay)
+					} else {
+						limiterChan = time.After(b.waitForMoreQueriesDuration)
+					}
+				}
+				lastQueryTime = time.Now()
+			case <-limiterChan:
+				if t := time.Since(lastQueryTime); t < b.waitForMoreQueriesDuration && time.Since(firstQueryTime) < b.maxQueryLatency {
+					limiterChan = time.After(b.waitForMoreQueriesDuration)
+				} else {
+					doCall = true
+					limiterChan = nil
+				}
+			}
+			if doCall {
+				b.doQueries(ctx, queries)
+				queries = queries[:0]
+			}
+		}
+	}()
+}
+
+func (b *BatchSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error) {
+	query := &batchedQuery{
+		buildIDs: buildIDs,
+		arch:     arch,
+	}
+
+	b.batchChan <- query
+
+	select {
+	case <-b.done:
+		return query.results, query.err
+	case <-ctx.Done():
+		return nil, nil
+	}
 }

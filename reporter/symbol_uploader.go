@@ -38,6 +38,10 @@ const (
 	uploadQueueSize   = 1000
 	uploadWorkerCount = 10
 
+	symbolQueryMinDurationBetweenBatches  = 500 * time.Millisecond
+	symbolQueryBurst                      = 5
+	symbolQueryWaitForMoreQueriesDuration = 30 * time.Millisecond
+
 	sourceMapEndpoint = "/api/v2/srcmap"
 
 	symbolCopyTimeout = 10 * time.Second
@@ -66,7 +70,7 @@ type DatadogSymbolUploader struct {
 	uploadCache   *lru.SyncedLRU[libpf.FileID, struct{}]
 	client        *http.Client
 	uploadQueue   chan uploadData
-	symbolQuerier *DatadogSymbolQuerier
+	symbolQuerier *BatchSymbolQuerier
 }
 
 func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
@@ -102,6 +106,13 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
 	}
 
+	batchSymbolQuerier := NewBatchSymbolQuerier(BatchSymbolQuerierConfig{
+		WaitForMoreQueriesDuration:  symbolQueryWaitForMoreQueriesDuration,
+		AvgMinDurationBetwenBatches: symbolQueryMinDurationBetweenBatches,
+		Burst:                       symbolQueryBurst,
+		Querier:                     symbolQuerier,
+	})
+
 	return &DatadogSymbolUploader{
 		ddAPIKey:             cfg.APIKey,
 		ddAPPKey:             cfg.APPKey,
@@ -114,7 +125,7 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		client:               &http.Client{Timeout: uploadTimeout},
 		uploadCache:          uploadCache,
 		uploadQueue:          make(chan uploadData, uploadQueueSize),
-		symbolQuerier:        symbolQuerier,
+		symbolQuerier:        batchSymbolQuerier,
 	}, nil
 }
 
@@ -251,6 +262,8 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 
 func (d *DatadogSymbolUploader) Run(ctx context.Context) {
 	var wg sync.WaitGroup
+
+	d.symbolQuerier.Start(ctx)
 
 	for range d.workerCount {
 		wg.Add(1)
