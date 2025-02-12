@@ -1,6 +1,6 @@
 module github.com/DataDog/dd-otel-host-profiler
 
-go 1.23.1
+go 1.23.6
 
 require (
 	github.com/DataDog/jsonapi v0.10.0
