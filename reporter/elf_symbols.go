@@ -106,6 +106,10 @@ func (e *elfSymbols) symbolSource() SymbolSource {
 	return source
 }
 
+func (e *elfSymbols) hasGoPCLnTabInfo() bool {
+	return e.goPCLnTabInfo != nil
+}
+
 func (e *elfSymbols) getGoPCLnTab() *pclntab.GoPCLnTabInfo {
 	if !e.isGolang {
 		return nil
@@ -134,11 +138,16 @@ func (e *elfSymbols) getPath() string {
 }
 
 func (e *elfSymbols) String() string {
+	hasPCLnTab := e.hasGoPCLnTabInfo()
+	symbolSource := e.symbolSource()
+	if hasPCLnTab {
+		symbolSource = max(symbolSource, GoPCLnTab)
+	}
 	// TODO: add more information
 	return fmt.Sprintf(
 		"%s, arch=%s, gnu_build_id=%s, go_build_id=%s, file_hash=%s"+
-			", symbol_source=%s",
+			", symbol_source=%s, has_gopclntab=%t",
 		e.filePath, e.arch, e.gnuBuildID, e.goBuildID, e.fileHash,
-		e.symbolSource(),
+		symbolSource, hasPCLnTab,
 	)
 }
