@@ -39,6 +39,15 @@ To enable local symbol upload:
 3. Provide a Datadog APP key through the `DD_APP_KEY` environment variable.
 4. Set the `DD_SITE` environment variable to [your Datadog site](https://docs.datadoghq.com/getting_started/site/#access-the-datadog-site) (e.g. `datadoghq.com`, `datadoghq.eu`, `us5.datadoghq.com`, ...).
 
+## Build 
+
+You must first ensure you have the correct version of go installed.
+In order to build the profiler directly on your machine, you can simply run:
+
+```
+make
+```
+
 ## Development
 
 A `docker-compose.yml` file is provided to help run the profiler in a container for local development.
