@@ -39,7 +39,6 @@ const (
 	uploadWorkerCount = 10
 
 	symbolQueryMinDurationBetweenBatches  = 500 * time.Millisecond
-	symbolQueryBurst                      = 5
 	symbolQueryWaitForMoreQueriesDuration = 30 * time.Millisecond
 
 	sourceMapEndpoint = "/api/v2/srcmap"
@@ -107,10 +106,9 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 	}
 
 	batchSymbolQuerier := NewBatchSymbolQuerier(BatchSymbolQuerierConfig{
-		WaitForMoreQueriesDuration:  symbolQueryWaitForMoreQueriesDuration,
-		AvgMinDurationBetwenBatches: symbolQueryMinDurationBetweenBatches,
-		Burst:                       symbolQueryBurst,
-		Querier:                     symbolQuerier,
+		WaitForMoreQueriesDuration: symbolQueryWaitForMoreQueriesDuration,
+		MinDurationBetweenBatches:  symbolQueryMinDurationBetweenBatches,
+		Querier:                    symbolQuerier,
 	})
 
 	return &DatadogSymbolUploader{
@@ -165,7 +163,7 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 		buildIDs = append(buildIDs, e.goBuildID)
 	}
 
-	symbolFiles, err := d.symbolQuerier.QuerySymbols(ctx, buildIDs, e.arch)
+	symbolFiles, err := d.symbolQuerier.QuerySymbolsBlocking(ctx, buildIDs, e.arch)
 	if err != nil {
 		return None, fmt.Errorf("failed to query symbols: %w", err)
 	}

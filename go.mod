@@ -9,6 +9,7 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/elastic/go-freelru v0.16.0
 	github.com/google/pprof v0.0.0-20241101162523-b92577c0c142
+	github.com/jonboulle/clockwork v0.5.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
 	github.com/tklauser/numcpus v0.9.0
@@ -16,7 +17,6 @@ require (
 	github.com/zeebo/xxh3 v1.0.2
 	go.opentelemetry.io/ebpf-profiler v0.0.0-20241114112653-6d846a2023a0
 	golang.org/x/sys v0.27.0
-	golang.org/x/time v0.6.0
 	gopkg.in/DataDog/dd-trace-go.v1 v1.70.1
 	k8s.io/api v0.31.3
 	k8s.io/apimachinery v0.31.3
@@ -103,6 +103,7 @@ require (
 	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/term v0.23.0 // indirect
 	golang.org/x/text v0.17.0 // indirect
+	golang.org/x/time v0.6.0 // indirect
 	google.golang.org/genproto v0.0.0-20240213162025-012b6fc9bca9 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240604185151-ef581f913117 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240604185151-ef581f913117 // indirect

@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/DataDog/jsonapi"
-	"golang.org/x/time/rate"
+	"github.com/jonboulle/clockwork"
 )
 
 const symbolQueryEndpoint = "/api/v2/profiles/symbols/query"
@@ -33,7 +33,11 @@ type SymbolsQueryRequest struct {
 	Arch     string   `json:"arch" jsonapi:"attribute" validate:"required"`
 }
 
-type DatadogSymbolQuerier struct {
+type DatadogSymbolQuerier interface {
+	QuerySymbols(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error)
+}
+
+type datadogSymbolQuerier struct {
 	ddAPIKey       string
 	ddAPPKey       string
 	symbolQueryURL string
@@ -41,13 +45,13 @@ type DatadogSymbolQuerier struct {
 	client *http.Client
 }
 
-func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (*DatadogSymbolQuerier, error) {
+func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (DatadogSymbolQuerier, error) {
 	symbolQueryURL, err := url.JoinPath("https://api."+ddSite, symbolQueryEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
 	}
 
-	return &DatadogSymbolQuerier{
+	return &datadogSymbolQuerier{
 		ddAPIKey:       ddAPIKey,
 		ddAPPKey:       ddAPPKey,
 		symbolQueryURL: symbolQueryURL,
@@ -55,7 +59,7 @@ func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (*DatadogSymbolQ
 	}, nil
 }
 
-func (d *DatadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string,
+func (d *datadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string,
 	arch string) ([]SymbolFile, error) {
 	symbolsQueryRequest := &SymbolsQueryRequest{
 		ID:       "symbols-query-request",
@@ -105,40 +109,49 @@ type batchedQuery struct {
 	buildIDs []string
 	arch     string
 
-	results []SymbolFile
-	err     error
+	result BatchQueryResult
+	done   chan BatchQueryResult
+}
+
+func (q *batchedQuery) reportResult() {
+	q.done <- q.result
+}
+
+type BatchQueryResult struct {
+	SymbolFiles []SymbolFile
+	Err         error
 }
 
 type BatchSymbolQuerier struct {
 	waitForMoreQueriesDuration time.Duration
-	maxQueryLatency            time.Duration
+	minDurationBetweenBatches  time.Duration
 
-	querier *DatadogSymbolQuerier
+	querier DatadogSymbolQuerier
 
-	rateLimiter *rate.Limiter
-	batchChan   chan *batchedQuery
-	done        chan struct{}
+	batchChan chan *batchedQuery
+	clock     clockwork.Clock
 }
 
 type BatchSymbolQuerierConfig struct {
 	// Time to wait for more queries before executing the current batch.
 	WaitForMoreQueriesDuration time.Duration
-	// Average wait time between batches: QPS for rate limiter is derived from this, and it also limits the total wait time for new queries.
-	AvgMinDurationBetwenBatches time.Duration
+	//  Wait time between batches: min elapsed time between call to endpoint and it also limits the total wait time for new queries.
+	MinDurationBetweenBatches time.Duration
 
-	// Allowed burst for rate limiting.
-	Burst int
-
-	Querier *DatadogSymbolQuerier
+	Querier DatadogSymbolQuerier
 }
 
 func NewBatchSymbolQuerier(config BatchSymbolQuerierConfig) *BatchSymbolQuerier {
+	return NewBatchSymbolQuerierWithClock(config, clockwork.NewRealClock())
+}
+
+func NewBatchSymbolQuerierWithClock(config BatchSymbolQuerierConfig, clock clockwork.Clock) *BatchSymbolQuerier {
 	return &BatchSymbolQuerier{
 		waitForMoreQueriesDuration: config.WaitForMoreQueriesDuration,
-		maxQueryLatency:            config.AvgMinDurationBetwenBatches,
-		rateLimiter:                rate.NewLimiter(rate.Limit(time.Second/config.AvgMinDurationBetwenBatches), config.Burst),
+		minDurationBetweenBatches:  config.MinDurationBetweenBatches,
 		querier:                    config.Querier,
 		batchChan:                  make(chan *batchedQuery),
+		clock:                      clock,
 	}
 }
 
@@ -148,9 +161,10 @@ func (b *BatchSymbolQuerier) doQuery(ctx context.Context, buildIDs []string, arc
 	if err != nil {
 		for _, query := range queries {
 			if query.arch == arch {
-				query.err = err
+				query.result = BatchQueryResult{Err: err}
 			}
 		}
+		return
 	}
 
 	m := make(map[string][]*SymbolFile)
@@ -163,7 +177,7 @@ func (b *BatchSymbolQuerier) doQuery(ctx context.Context, buildIDs []string, arc
 			for _, buildID := range query.buildIDs {
 				if symbolFiles, ok := m[buildID]; ok {
 					for _, symbolFile := range symbolFiles {
-						query.results = append(query.results, *symbolFile)
+						query.result.SymbolFiles = append(query.result.SymbolFiles, *symbolFile)
 					}
 				}
 			}
@@ -174,24 +188,33 @@ func (b *BatchSymbolQuerier) doQuery(ctx context.Context, buildIDs []string, arc
 func (b *BatchSymbolQuerier) doQueries(ctx context.Context, queries []*batchedQuery) {
 	// There should be only a single arch, but be safe
 	buildIDsByArch := make(map[string][]string)
+	type key struct {
+		buildID string
+		arch    string
+	}
+	uniqueKeys := make(map[key]struct{})
 
 	for _, query := range queries {
-		buildIDsByArch[query.arch] = append(buildIDsByArch[query.arch], query.buildIDs...)
+		for _, buildID := range query.buildIDs {
+			// deduplicate (buildID,arch) pairs
+			if _, ok := uniqueKeys[key{buildID, query.arch}]; !ok {
+				uniqueKeys[key{buildID, query.arch}] = struct{}{}
+				buildIDsByArch[query.arch] = append(buildIDsByArch[query.arch], buildID)
+			}
+		}
 	}
 
 	for arch, buildIDs := range buildIDsByArch {
 		b.doQuery(ctx, buildIDs, arch, queries)
 	}
-	close(b.done)
-	b.done = make(chan struct{})
 }
 
 func (b *BatchSymbolQuerier) Start(ctx context.Context) {
 	go func() {
 		var queries []*batchedQuery
-		b.done = make(chan struct{})
 
 		var limiterChan <-chan time.Time
+		var lastCallTime time.Time
 		var lastQueryTime time.Time
 		var firstQueryTime time.Time
 
@@ -201,48 +224,59 @@ func (b *BatchSymbolQuerier) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case query := <-b.batchChan:
+				lastQueryTime = b.clock.Now()
 				if len(queries) == 0 {
-					firstQueryTime = time.Now()
+					firstQueryTime = lastQueryTime
 				}
 				queries = append(queries, query)
 				if limiterChan == nil {
-					r := b.rateLimiter.Reserve()
-					delay := r.Delay()
-					if delay > 0 {
-						limiterChan = time.After(delay)
+					durationSinceLastCall := lastQueryTime.Sub(lastCallTime)
+					if durationSinceLastCall < b.minDurationBetweenBatches {
+						// wait for the rate limiter
+						limiterChan = b.clock.After(b.minDurationBetweenBatches - durationSinceLastCall)
 					} else {
-						limiterChan = time.After(b.waitForMoreQueriesDuration)
+						// wait for more queries
+						limiterChan = b.clock.After(b.waitForMoreQueriesDuration)
 					}
 				}
-				lastQueryTime = time.Now()
 			case <-limiterChan:
-				if t := time.Since(lastQueryTime); t < b.waitForMoreQueriesDuration && time.Since(firstQueryTime) < b.maxQueryLatency {
-					limiterChan = time.After(b.waitForMoreQueriesDuration)
-				} else {
-					doCall = true
-					limiterChan = nil
+				if len(queries) > 0 {
+					if t := b.clock.Since(lastQueryTime); t < b.waitForMoreQueriesDuration && b.clock.Since(firstQueryTime) < b.minDurationBetweenBatches {
+						limiterChan = b.clock.After(b.waitForMoreQueriesDuration)
+					} else {
+						doCall = true
+						limiterChan = nil
+					}
 				}
 			}
 			if doCall {
+				lastCallTime = b.clock.Now()
 				b.doQueries(ctx, queries)
+				for _, query := range queries {
+					query.reportResult()
+				}
 				queries = queries[:0]
 			}
 		}
 	}()
 }
 
-func (b *BatchSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error) {
+func (b *BatchSymbolQuerier) QuerySymbols(buildIDs []string, arch string) <-chan BatchQueryResult {
 	query := &batchedQuery{
 		buildIDs: buildIDs,
 		arch:     arch,
+		done:     make(chan BatchQueryResult, 1),
 	}
 
 	b.batchChan <- query
+	return query.done
+}
 
+func (b *BatchSymbolQuerier) QuerySymbolsBlocking(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error) {
 	select {
-	case <-b.done:
-		return query.results, query.err
+	case result := <-b.QuerySymbols(buildIDs, arch):
+		return result.SymbolFiles, result.Err
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ctx.Err()
 	}
 }
