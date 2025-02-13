@@ -35,6 +35,7 @@ type SymbolsQueryRequest struct {
 
 type DatadogSymbolQuerier interface {
 	QuerySymbols(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error)
+	ResetCallCount() int
 }
 
 type datadogSymbolQuerier struct {
@@ -42,7 +43,8 @@ type datadogSymbolQuerier struct {
 	ddAPPKey       string
 	symbolQueryURL string
 
-	client *http.Client
+	client    *http.Client
+	callCount int
 }
 
 func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (DatadogSymbolQuerier, error) {
@@ -59,8 +61,15 @@ func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (DatadogSymbolQu
 	}, nil
 }
 
+func (d *datadogSymbolQuerier) ResetCallCount() int {
+	count := d.callCount
+	d.callCount = 0
+	return count
+}
+
 func (d *datadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string,
 	arch string) ([]SymbolFile, error) {
+	d.callCount++
 	symbolsQueryRequest := &SymbolsQueryRequest{
 		ID:       "symbols-query-request",
 		BuildIDs: buildIDs,
@@ -261,7 +270,7 @@ func (b *BatchSymbolQuerier) Start(ctx context.Context) {
 	}()
 }
 
-func (b *BatchSymbolQuerier) QuerySymbols(buildIDs []string, arch string) <-chan BatchQueryResult {
+func (b *BatchSymbolQuerier) QuerySymbolsChannel(buildIDs []string, arch string) <-chan BatchQueryResult {
 	query := &batchedQuery{
 		buildIDs: buildIDs,
 		arch:     arch,
@@ -272,11 +281,15 @@ func (b *BatchSymbolQuerier) QuerySymbols(buildIDs []string, arch string) <-chan
 	return query.done
 }
 
-func (b *BatchSymbolQuerier) QuerySymbolsBlocking(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error) {
+func (b *BatchSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error) {
 	select {
-	case result := <-b.QuerySymbols(buildIDs, arch):
+	case result := <-b.QuerySymbolsChannel(buildIDs, arch):
 		return result.SymbolFiles, result.Err
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (b *BatchSymbolQuerier) ResetCallCount() int {
+	return b.querier.ResetCallCount()
 }
