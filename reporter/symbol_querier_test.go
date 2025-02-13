@@ -8,6 +8,7 @@ package reporter
 import (
 	"cmp"
 	"context"
+	"errors"
 	"math/rand"
 	"slices"
 	"testing"
@@ -16,6 +17,8 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 )
+
+const symbolQueryInterval = 5 * time.Second
 
 type key struct {
 	buildID string
@@ -56,6 +59,8 @@ func (m *mockSymbolQuerier) ResetCallCount() int {
 	return n
 }
 
+func (m *mockSymbolQuerier) Start(_ context.Context) {}
+
 func sortSymbolFiles(symbolFiles []SymbolFile) []SymbolFile {
 	slices.SortFunc(symbolFiles, func(a, b SymbolFile) int {
 		return cmp.Or(cmp.Compare(a.BuildID, b.BuildID),
@@ -78,9 +83,8 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 
 	clock := clockwork.NewFakeClock()
 	batchQuerier := NewBatchSymbolQuerierWithClock(BatchSymbolQuerierConfig{
-		WaitForMoreQueriesDuration: 50 * time.Millisecond,
-		MinDurationBetweenBatches:  1000 * time.Millisecond,
-		Querier:                    querier,
+		BatchInterval: symbolQueryInterval,
+		Querier:       querier,
 	}, clock)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -91,9 +95,10 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 	chan1 := batchQuerier.QuerySymbolsChannel([]string{"build1", "build2"}, "arch1")
 	chan2 := batchQuerier.QuerySymbolsChannel([]string{"build2", "build3"}, "arch1")
 	chan3 := batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch2")
+	chan4 := batchQuerier.QuerySymbolsChannel([]string{"build4"}, "arch2")
 
 	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(50 * time.Millisecond)
+	clock.Advance(symbolQueryInterval)
 
 	r := <-chan1
 	require.NoError(t, r.Err)
@@ -104,6 +109,34 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 	r = <-chan3
 	require.NoError(t, r.Err)
 	require.Equal(t, []SymbolFile{m[key{"build1", "arch2"}]}, r.SymbolFiles)
+	r = <-chan4
+	require.NoError(t, r.Err)
+	require.Empty(t, r.SymbolFiles)
+
+	require.Equal(t, 2, querier.ResetCallCount()) // 2 calls, one for each arch
+
+	// Query symbols for multiple archs with error for one arch
+	querier.e = errorMap{"arch1": errors.New("error")}
+	chan1 = batchQuerier.QuerySymbolsChannel([]string{"build1", "build2"}, "arch1")
+	chan2 = batchQuerier.QuerySymbolsChannel([]string{"build2", "build3"}, "arch1")
+	chan3 = batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch2")
+	chan4 = batchQuerier.QuerySymbolsChannel([]string{"build4"}, "arch2")
+
+	require.NoError(t, clock.BlockUntilContext(ctx, 1))
+	clock.Advance(symbolQueryInterval)
+
+	r = <-chan1
+	require.Error(t, r.Err)
+	require.Empty(t, r.SymbolFiles)
+	r = <-chan2
+	require.Error(t, r.Err)
+	require.Empty(t, r.SymbolFiles)
+	r = <-chan3
+	require.NoError(t, r.Err)
+	require.Equal(t, []SymbolFile{m[key{"build1", "arch2"}]}, r.SymbolFiles)
+	r = <-chan4
+	require.NoError(t, r.Err)
+	require.Empty(t, r.SymbolFiles)
 
 	require.Equal(t, 2, querier.ResetCallCount()) // 2 calls, one for each arch
 }
@@ -117,9 +150,8 @@ func TestBatchSymbolQuerier_Batching(t *testing.T) {
 
 	clock := clockwork.NewFakeClock()
 	batchQuerier := NewBatchSymbolQuerierWithClock(BatchSymbolQuerierConfig{
-		WaitForMoreQueriesDuration: 50 * time.Millisecond,
-		MinDurationBetweenBatches:  1000 * time.Millisecond,
-		Querier:                    querier,
+		BatchInterval: symbolQueryInterval,
+		Querier:       querier,
 	}, clock)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -128,9 +160,9 @@ func TestBatchSymbolQuerier_Batching(t *testing.T) {
 
 	chan1 := batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
 
-	// Batcher should wait 50ms for more queries
+	// Batcher should wait `symbolQueryInterval` before doing call
 	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(49 * time.Millisecond)
+	clock.Advance(symbolQueryInterval - 1*time.Millisecond)
 	require.NoError(t, clock.BlockUntilContext(ctx, 1))
 	require.Equal(t, 0, querier.ResetCallCount())
 	clock.Advance(1 * time.Millisecond)
@@ -143,9 +175,7 @@ func TestBatchSymbolQuerier_Batching(t *testing.T) {
 	// Batcher should wait 1000ms before sending another batch
 	chan1 = batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
 	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(50 * time.Millisecond)
-	require.Equal(t, 0, querier.ResetCallCount())
-	clock.Advance(949 * time.Millisecond)
+	clock.Advance(symbolQueryInterval - 1*time.Millisecond)
 	require.Equal(t, 0, querier.ResetCallCount())
 	clock.Advance(1 * time.Millisecond)
 	r = <-chan1
@@ -155,13 +185,13 @@ func TestBatchSymbolQuerier_Batching(t *testing.T) {
 	// Batcher should aggregate queries and wait 1000ms before sending another batch
 	chan1 = batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
 	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(30 * time.Millisecond)
+	clock.Advance(symbolQueryInterval / 10)
 	chan2 := batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
 	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(30 * time.Millisecond)
+	clock.Advance(symbolQueryInterval / 10)
 	chan3 := batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
 	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(939 * time.Millisecond)
+	clock.Advance(symbolQueryInterval*8/10 - 1*time.Millisecond)
 	require.Equal(t, 0, querier.ResetCallCount())
 	clock.Advance(1 * time.Millisecond)
 	r = <-chan1
@@ -169,42 +199,6 @@ func TestBatchSymbolQuerier_Batching(t *testing.T) {
 	r = <-chan2
 	require.NoError(t, r.Err)
 	r = <-chan3
-	require.NoError(t, r.Err)
-	require.Equal(t, 1, querier.ResetCallCount())
-
-	// Batcher should aggregate queries and launch query 50ms after the last query if no rate limit
-	clock.Advance(1000 * time.Millisecond)
-	chan1 = batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
-	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(30 * time.Millisecond)
-	chan2 = batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
-	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(30 * time.Millisecond)
-	chan3 = batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
-	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(49 * time.Millisecond)
-	require.Equal(t, 0, querier.ncalls)
-	clock.Advance(1 * time.Millisecond)
-	r = <-chan1
-	require.NoError(t, r.Err)
-	r = <-chan2
-	require.NoError(t, r.Err)
-	r = <-chan3
-	require.NoError(t, r.Err)
-	require.Equal(t, 1, querier.ResetCallCount())
-
-	// Batcher should stop aggregating queries after 1000ms
-	chan1 = batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
-	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(960 * time.Millisecond)
-	chan2 = batchQuerier.QuerySymbolsChannel([]string{"build1"}, "arch1")
-	require.NoError(t, clock.BlockUntilContext(ctx, 1))
-	clock.Advance(39 * time.Millisecond)
-	require.Equal(t, 0, querier.ResetCallCount())
-	clock.Advance(1 * time.Millisecond)
-	r = <-chan1
-	require.NoError(t, r.Err)
-	r = <-chan2
 	require.NoError(t, r.Err)
 	require.Equal(t, 1, querier.ResetCallCount())
 }

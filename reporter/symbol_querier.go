@@ -34,6 +34,7 @@ type SymbolsQueryRequest struct {
 }
 
 type DatadogSymbolQuerier interface {
+	Start(ctx context.Context)
 	QuerySymbols(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error)
 	ResetCallCount() int
 }
@@ -59,6 +60,10 @@ func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (DatadogSymbolQu
 		symbolQueryURL: symbolQueryURL,
 		client:         &http.Client{Timeout: uploadTimeout},
 	}, nil
+}
+
+func (d *datadogSymbolQuerier) Start(_ context.Context) {
+	// No-op
 }
 
 func (d *datadogSymbolQuerier) ResetCallCount() int {
@@ -132,8 +137,7 @@ type BatchQueryResult struct {
 }
 
 type BatchSymbolQuerier struct {
-	waitForMoreQueriesDuration time.Duration
-	minDurationBetweenBatches  time.Duration
+	batchInterval time.Duration
 
 	querier DatadogSymbolQuerier
 
@@ -142,10 +146,8 @@ type BatchSymbolQuerier struct {
 }
 
 type BatchSymbolQuerierConfig struct {
-	// Time to wait for more queries before executing the current batch.
-	WaitForMoreQueriesDuration time.Duration
-	//  Wait time between batches: min elapsed time between call to endpoint and it also limits the total wait time for new queries.
-	MinDurationBetweenBatches time.Duration
+	//  The interval at which to batch queries
+	BatchInterval time.Duration
 
 	Querier DatadogSymbolQuerier
 }
@@ -156,11 +158,10 @@ func NewBatchSymbolQuerier(config BatchSymbolQuerierConfig) *BatchSymbolQuerier 
 
 func NewBatchSymbolQuerierWithClock(config BatchSymbolQuerierConfig, clock clockwork.Clock) *BatchSymbolQuerier {
 	return &BatchSymbolQuerier{
-		waitForMoreQueriesDuration: config.WaitForMoreQueriesDuration,
-		minDurationBetweenBatches:  config.MinDurationBetweenBatches,
-		querier:                    config.Querier,
-		batchChan:                  make(chan *batchedQuery),
-		clock:                      clock,
+		batchInterval: config.BatchInterval,
+		querier:       config.Querier,
+		batchChan:     make(chan *batchedQuery),
+		clock:         clock,
 	}
 }
 
@@ -221,50 +222,23 @@ func (b *BatchSymbolQuerier) doQueries(ctx context.Context, queries []*batchedQu
 func (b *BatchSymbolQuerier) Start(ctx context.Context) {
 	go func() {
 		var queries []*batchedQuery
-
-		var limiterChan <-chan time.Time
-		var lastCallTime time.Time
-		var lastQueryTime time.Time
-		var firstQueryTime time.Time
+		ticker := b.clock.NewTicker(b.batchInterval)
+		defer ticker.Stop()
 
 		for {
-			doCall := false
 			select {
 			case <-ctx.Done():
 				return
 			case query := <-b.batchChan:
-				lastQueryTime = b.clock.Now()
-				if len(queries) == 0 {
-					firstQueryTime = lastQueryTime
-				}
 				queries = append(queries, query)
-				if limiterChan == nil {
-					durationSinceLastCall := lastQueryTime.Sub(lastCallTime)
-					if durationSinceLastCall < b.minDurationBetweenBatches {
-						// wait for the rate limiter
-						limiterChan = b.clock.After(b.minDurationBetweenBatches - durationSinceLastCall)
-					} else {
-						// wait for more queries
-						limiterChan = b.clock.After(b.waitForMoreQueriesDuration)
-					}
-				}
-			case <-limiterChan:
+			case <-ticker.Chan():
 				if len(queries) > 0 {
-					if t := b.clock.Since(lastQueryTime); t < b.waitForMoreQueriesDuration && b.clock.Since(firstQueryTime) < b.minDurationBetweenBatches {
-						limiterChan = b.clock.After(b.waitForMoreQueriesDuration)
-					} else {
-						doCall = true
-						limiterChan = nil
+					b.doQueries(ctx, queries)
+					for _, query := range queries {
+						query.reportResult()
 					}
+					queries = queries[:0]
 				}
-			}
-			if doCall {
-				lastCallTime = b.clock.Now()
-				b.doQueries(ctx, queries)
-				for _, query := range queries {
-					query.reportResult()
-				}
-				queries = queries[:0]
 			}
 		}
 	}()

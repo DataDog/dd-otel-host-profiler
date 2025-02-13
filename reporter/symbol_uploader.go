@@ -38,9 +38,6 @@ const (
 	uploadQueueSize   = 1000
 	uploadWorkerCount = 10
 
-	symbolQueryMinDurationBetweenBatches  = 1 * time.Second
-	symbolQueryWaitForMoreQueriesDuration = 50 * time.Millisecond
-
 	sourceMapEndpoint = "/api/v2/srcmap"
 
 	symbolCopyTimeout = 10 * time.Second
@@ -69,10 +66,10 @@ type DatadogSymbolUploader struct {
 	uploadCache   *lru.SyncedLRU[libpf.FileID, struct{}]
 	client        *http.Client
 	uploadQueue   chan uploadData
-	symbolQuerier *BatchSymbolQuerier
+	symbolQuerier DatadogSymbolQuerier
 }
 
-func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
+func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
 	err := exec.Command("objcopy", "--version").Run()
 	if err != nil {
 		return nil, fmt.Errorf("objcopy is not available: %w", err)
@@ -105,11 +102,12 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
 	}
 
-	batchSymbolQuerier := NewBatchSymbolQuerier(BatchSymbolQuerierConfig{
-		WaitForMoreQueriesDuration: symbolQueryWaitForMoreQueriesDuration,
-		MinDurationBetweenBatches:  symbolQueryMinDurationBetweenBatches,
-		Querier:                    symbolQuerier,
-	})
+	if cfg.SymbolQueryInterval > 0 {
+		symbolQuerier = NewBatchSymbolQuerier(BatchSymbolQuerierConfig{
+			BatchInterval: cfg.SymbolQueryInterval,
+			Querier:       symbolQuerier,
+		})
+	}
 
 	return &DatadogSymbolUploader{
 		ddAPIKey:             cfg.APIKey,
@@ -123,7 +121,7 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		client:               &http.Client{Timeout: uploadTimeout},
 		uploadCache:          uploadCache,
 		uploadQueue:          make(chan uploadData, uploadQueueSize),
-		symbolQuerier:        batchSymbolQuerier,
+		symbolQuerier:        symbolQuerier,
 	}, nil
 }
 
@@ -260,7 +258,6 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 
 func (d *DatadogSymbolUploader) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-
 	d.symbolQuerier.Start(ctx)
 
 	for range d.workerCount {
@@ -487,6 +484,13 @@ func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, sy
 	r.Header.Set("Content-Type", mw.FormDataContentType())
 	r.Header.Set("Content-Encoding", "zstd")
 	return r, nil
+}
+
+func (d *DatadogSymbolUploader) ResetCallCountToSymbolQueryEndpoint() int {
+	if d.symbolQuerier != nil {
+		return d.symbolQuerier.ResetCallCount()
+	}
+	return 0
 }
 
 // cleanCmdError simplifies error messages from os/exec.Cmd.Run.
