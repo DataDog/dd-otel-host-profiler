@@ -61,43 +61,53 @@ type uploadData struct {
 	opener   process.FileOpener
 }
 
+type ExtractedUploadData struct {
+	executableMetadata *executableMetadata
+	goPCLNTabData      *pclntab.GoPCLnTabInfo
+	debugElf           *elfWrapper
+	symbolSource       SymbolSource
+}
+
 type DatadogSymbolUploader struct {
-	ddAPIKey             string
-	ddAPPKey             string
-	intakeURL            string
+	symbolEndpoints      []SymbolEndpoint
+	intakeURLs           []string
 	version              string
 	dryRun               bool
 	uploadDynamicSymbols bool
 	uploadGoPCLnTab      bool
 	workerCount          int
 
-	uploadCache   *lru.SyncedLRU[libpf.FileID, struct{}]
-	client        *http.Client
-	uploadQueue   chan uploadData
-	symbolQuerier *DatadogSymbolQuerier
+	uploadCache    *lru.SyncedLRU[libpf.FileID, struct{}]
+	client         *http.Client
+	uploadQueue    chan uploadData
+	symbolQueriers []*DatadogSymbolQuerier
 }
 
-func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
+func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
 	err := exec.Command("objcopy", "--version").Run()
 	if err != nil {
 		return nil, fmt.Errorf("objcopy is not available: %w", err)
 	}
 
-	if cfg.APIKey == "" {
-		return nil, errors.New("API key is not set")
+	if len(cfg.SymbolEndpoints) == 0 {
+		return nil, errors.New("no endpoints to upload symbols to")
 	}
 
-	if cfg.APPKey == "" {
-		return nil, errors.New("application key is not set")
-	}
+	var intakeURLs = make([]string, len(cfg.SymbolEndpoints))
+	var symbolQueriers = make([]*DatadogSymbolQuerier, len(cfg.SymbolEndpoints))
 
-	if cfg.Site == "" {
-		return nil, errors.New("site is not set")
-	}
+	for i, endpoints := range cfg.SymbolEndpoints {
+		var intakeURL string
+		var symbolQuerier *DatadogSymbolQuerier
+		if intakeURL, err = url.JoinPath("https://sourcemap-intake."+endpoints.Site, sourceMapEndpoint); err != nil {
+			return nil, fmt.Errorf("failed to parse URL: %w", err)
+		}
+		intakeURLs[i] = intakeURL
 
-	intakeURL, err := url.JoinPath("https://sourcemap-intake."+cfg.Site, sourceMapEndpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL: %w", err)
+		if symbolQuerier, err = NewDatadogSymbolQuerier(endpoints.Site, endpoints.APIKey, endpoints.AppKey); err != nil {
+			return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
+		}
+		symbolQueriers[i] = symbolQuerier
 	}
 
 	uploadCache, err := lru.NewSynced[libpf.FileID, struct{}](uploadCacheSize, libpf.FileID.Hash32)
@@ -105,15 +115,9 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
-	symbolQuerier, err := NewDatadogSymbolQuerier(cfg.Site, cfg.APIKey, cfg.APPKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
-	}
-
 	return &DatadogSymbolUploader{
-		ddAPIKey:             cfg.APIKey,
-		ddAPPKey:             cfg.APPKey,
-		intakeURL:            intakeURL,
+		symbolEndpoints:      cfg.SymbolEndpoints,
+		intakeURLs:           intakeURLs,
 		version:              cfg.Version,
 		dryRun:               cfg.DryRun,
 		uploadDynamicSymbols: cfg.UploadDynamicSymbols,
@@ -122,7 +126,7 @@ func NewDatadogSymbolUploader(cfg SymbolUploaderConfig) (*DatadogSymbolUploader,
 		client:               &http.Client{Timeout: uploadTimeout},
 		uploadCache:          uploadCache,
 		uploadQueue:          make(chan uploadData, uploadQueueSize),
-		symbolQuerier:        symbolQuerier,
+		symbolQueriers:       symbolQueriers,
 	}, nil
 }
 
@@ -153,7 +157,7 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, bui
 }
 
 func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
-	e *executableMetadata) (SymbolSource, error) {
+	e *executableMetadata, sQind int) (SymbolSource, error) {
 	buildIDs := []string{e.FileHash}
 	if e.GNUBuildID != "" {
 		buildIDs = append(buildIDs, e.GNUBuildID)
@@ -162,7 +166,7 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 		buildIDs = append(buildIDs, e.GoBuildID)
 	}
 
-	symbolFiles, err := d.symbolQuerier.QuerySymbols(ctx, buildIDs, e.Arch)
+	symbolFiles, err := d.symbolQueriers[sQind].QuerySymbols(ctx, buildIDs, e.Arch)
 	if err != nil {
 		return None, fmt.Errorf("failed to query symbols: %w", err)
 	}
@@ -181,8 +185,7 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 	return symbolSource, nil
 }
 
-// Returns true if the upload was successful, false otherwise
-func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadData) bool {
+func (d *DatadogSymbolUploader) GetSymbolsFromDisk(uploadData uploadData) *ExtractedUploadData {
 	filePath := uploadData.filePath
 	fileID := uploadData.fileID
 
@@ -193,32 +196,45 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 	if err != nil {
 		log.Debugf("Skipping symbol upload for executable %s: %v",
 			uploadData.filePath, err)
-		return false
+		return nil
 	}
 	defer elfWrapper.Close()
 
 	debugElf, symbolSource, goPCLNTabData := elfWrapper.findSymbols(d.uploadGoPCLnTab)
 	if debugElf == nil {
 		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", filePath)
-		return false
+		return nil
 	}
 	if debugElf != elfWrapper {
 		defer debugElf.Close()
 	}
 	if symbolSource == DynamicSymbolTable && !d.uploadDynamicSymbols {
 		log.Debugf("Skipping symbol upload for executable %s: dynamic symbol table upload not allowed", filePath)
-		return false
+		return nil
 	}
 
 	e := newExecutableMetadata(filePath, elfWrapper.elfFile, fileID, symbolSource, d.version)
 
-	existingSymbolSource, err := d.GetExistingSymbolsOnBackend(ctx, e)
+	return &ExtractedUploadData{
+		executableMetadata: e,
+		goPCLNTabData:      goPCLNTabData,
+		debugElf:           debugElf,
+		symbolSource:       symbolSource,
+	}
+}
+
+// Returns true if the upload was successful, false otherwise
+func (d *DatadogSymbolUploader) upload(ctx context.Context, extractedUploadData *ExtractedUploadData, filePath string, ind int) bool {
+	debugElf := extractedUploadData.debugElf
+	e := extractedUploadData.executableMetadata
+
+	existingSymbolSource, err := d.GetExistingSymbolsOnBackend(ctx, extractedUploadData.executableMetadata, ind)
 	if err != nil {
 		log.Warnf("Failed to get existing symbols for executable %s: %v", filePath, err)
 		return false
 	}
 
-	if existingSymbolSource >= symbolSource {
+	if existingSymbolSource >= extractedUploadData.symbolSource {
 		log.Infof("Skipping symbol upload for executable %s: existing symbols with source %v", filePath,
 			existingSymbolSource.String())
 		return true
@@ -231,7 +247,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, uploadData uploadDat
 		return true
 	}
 
-	err = d.handleSymbols(ctx, symbolPath, e, goPCLNTabData)
+	err = d.handleSymbols(ctx, symbolPath, e, extractedUploadData.goPCLNTabData, ind)
 	if err != nil {
 		log.Errorf("Failed to handle symbols: %v for executable: %s", err, e)
 		return false
@@ -253,9 +269,16 @@ func (d *DatadogSymbolUploader) Run(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case uploadData := <-d.uploadQueue:
-					if !d.upload(ctx, uploadData) {
-						// Remove from cache to retry later
+					extractedUploadData := d.GetSymbolsFromDisk(uploadData)
+					if extractedUploadData == nil {
 						d.uploadCache.Remove(uploadData.fileID)
+						break
+					}
+					for i := range d.intakeURLs {
+						if !d.upload(ctx, extractedUploadData, uploadData.filePath, i) {
+							// Remove from cache to retry later
+							d.uploadCache.Remove(uploadData.fileID)
+						}
 					}
 				}
 			}
@@ -322,7 +345,7 @@ func (e *executableMetadata) String() string {
 }
 
 func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath string,
-	e *executableMetadata, goPCLnTabInfo *pclntab.GoPCLnTabInfo) error {
+	e *executableMetadata, goPCLnTabInfo *pclntab.GoPCLnTabInfo, ind int) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file to extract symbols: %w", err)
@@ -344,7 +367,7 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbolPath st
 		}
 	}
 
-	err = d.uploadSymbols(ctx, symbolFile, e)
+	err = d.uploadSymbols(ctx, symbolFile, e, ind)
 	if err != nil {
 		return fmt.Errorf("failed to upload symbols: %w", err)
 	}
@@ -428,8 +451,8 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string) error {
 }
 
 func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *os.File,
-	e *executableMetadata) error {
-	req, err := d.buildSymbolUploadRequest(ctx, symbolFile, e)
+	e *executableMetadata, ind int) error {
+	req, err := d.buildSymbolUploadRequest(ctx, symbolFile, e, ind)
 	if err != nil {
 		return fmt.Errorf("failed to build symbol upload request: %w", err)
 	}
@@ -444,14 +467,14 @@ func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *o
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
 
-		return fmt.Errorf("error while uploading symbols: %s, %s", resp.Status, string(respBody))
+		return fmt.Errorf("error while uploading symbols to %s: %s, %s", d.intakeURLs[ind], resp.Status, string(respBody))
 	}
 
 	return nil
 }
 
 func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, symbolFile *os.File,
-	e *executableMetadata) (*http.Request, error) {
+	e *executableMetadata, ind int) (*http.Request, error) {
 	b := new(bytes.Buffer)
 
 	compressed := zstd.NewWriter(b)
@@ -494,12 +517,12 @@ func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, sy
 		return nil, fmt.Errorf("failed to close zstd writer: %w", err)
 	}
 
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, d.intakeURL, b)
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, d.intakeURLs[ind], b)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	r.Header.Set("Dd-Api-Key", d.ddAPIKey)
+	r.Header.Set("Dd-Api-Key", d.symbolEndpoints[ind].APIKey)
 	r.Header.Set("Dd-Evp-Origin", profilerName)
 	r.Header.Set("Dd-Evp-Origin-Version", d.version)
 	r.Header.Set("Content-Type", mw.FormDataContentType())
