@@ -167,7 +167,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	var symbolUploader *DatadogSymbolUploader
 	if cfg.SymbolUploaderConfig.Enabled {
 		log.Infof("Enabling Datadog local symbol upload")
-		symbolUploader, err = NewDatadogSymbolUploader(cfg.SymbolUploaderConfig)
+		symbolUploader, err = NewDatadogSymbolUploader(&cfg.SymbolUploaderConfig)
 		if err != nil {
 			log.Errorf(
 				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
@@ -435,6 +435,9 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 
 	r.profileSeq++
 
+	if r.symbolUploader != nil {
+		log.Infof("%d calls done to symbol-query endpoints", r.symbolUploader.ResetCallCountToSymbolQueryEndpoint())
+	}
 	log.Infof("Tags: %v", tags.String())
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
 		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), r.intakeURL,

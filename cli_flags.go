@@ -26,6 +26,7 @@ const (
 	defaultClockSyncInterval      = 3 * time.Minute
 	defaultProbabilisticThreshold = tracer.ProbabilisticThresholdMax
 	defaultProbabilisticInterval  = 1 * time.Minute
+	defaultSymbolQueryInterval    = 5 * time.Second
 	defaultArgSendErrorFrames     = false
 	defaultArgAgentURL            = "http://localhost:8126"
 
@@ -36,36 +37,37 @@ const (
 )
 
 type arguments struct {
-	bpfVerifierLogLevel     uint64
-	agentURL                string
-	copyright               bool
-	mapScaleFactor          uint64
-	monitorInterval         time.Duration
-	clockSyncInterval       time.Duration
-	noKernelVersionCheck    bool
-	node                    string
-	probabilisticInterval   time.Duration
-	probabilisticThreshold  uint64
-	reporterInterval        time.Duration
-	samplesPerSecond        uint64
-	pprofPrefix             string
-	sendErrorFrames         bool
-	serviceName             string
-	environment             string
-	uploadSymbols           bool
-	uploadDynamicSymbols    bool
-	uploadGoPCLnTab         bool
-	uploadSymbolsDryRun     bool
-	tags                    string
-	timeline                bool
-	tracers                 string
-	verboseMode             bool
-	apiKey                  string
-	appKey                  string
-	site                    string
-	agentless               bool
-	enableGoRuntimeProfiler bool
-	cmd                     *cli.Command
+	bpfVerifierLogLevel       uint64
+	agentURL                  string
+	copyright                 bool
+	mapScaleFactor            uint64
+	monitorInterval           time.Duration
+	clockSyncInterval         time.Duration
+	noKernelVersionCheck      bool
+	node                      string
+	probabilisticInterval     time.Duration
+	probabilisticThreshold    uint64
+	reporterInterval          time.Duration
+	samplesPerSecond          uint64
+	pprofPrefix               string
+	sendErrorFrames           bool
+	serviceName               string
+	environment               string
+	uploadSymbolQueryInterval time.Duration
+	uploadSymbols             bool
+	uploadDynamicSymbols      bool
+	uploadGoPCLnTab           bool
+	uploadSymbolsDryRun       bool
+	tags                      string
+	timeline                  bool
+	tracers                   string
+	verboseMode               bool
+	apiKey                    string
+	appKey                    string
+	site                      string
+	agentless                 bool
+	enableGoRuntimeProfiler   bool
+	cmd                       *cli.Command
 }
 
 func parseArgs() (*arguments, error) {
@@ -305,6 +307,14 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Enable self-profiling with Go runtime profiler.",
 				Destination: &args.enableGoRuntimeProfiler,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER"),
+			},
+			&cli.DurationFlag{
+				Name:        "symbol-query-interval",
+				Value:       defaultSymbolQueryInterval,
+				Hidden:      true,
+				Usage:       "Symbol query period (queries during a period are batched, 0 means no batching).",
+				Destination: &args.uploadSymbolQueryInterval,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_SYMBOL_QUERY_PERIOD"),
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
