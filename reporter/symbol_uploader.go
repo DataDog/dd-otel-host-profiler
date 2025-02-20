@@ -274,6 +274,7 @@ func (d *DatadogSymbolUploader) Run(ctx context.Context) {
 						d.uploadCache.Remove(uploadData.fileID)
 						break
 					}
+					// TODO: upload symbols to endpoints concurrently
 					for i := range d.intakeURLs {
 						if !d.upload(ctx, extractedUploadData, uploadData.filePath, i) {
 							// Remove from cache to retry later
