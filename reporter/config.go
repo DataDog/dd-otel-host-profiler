@@ -59,12 +59,8 @@ type SymbolUploaderConfig struct {
 	UploadGoPCLnTab bool
 	// DryRun defines whether the agent should upload debug symbols to the backend in dry-run mode.
 	DryRun bool
-	// DataDog API key
-	APIKey string
-	// DataDog APP key
-	APPKey string
-	// Site is the site to upload symbols to.
-	Site string
+	// Sites to upload symbols to.
+	SymbolEndpoints []SymbolEndpoint
 	// Version is the version of the profiler.
 	Version string
 }

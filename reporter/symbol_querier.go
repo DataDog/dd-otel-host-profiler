@@ -83,7 +83,7 @@ func (d *DatadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []stri
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error while querying symbols: %s, %s", resp.Status, string(respBody))
+		return nil, fmt.Errorf("error while querying symbols from %s: %s, %s", d.symbolQueryURL, resp.Status, string(respBody))
 	}
 
 	body, err = io.ReadAll(resp.Body)

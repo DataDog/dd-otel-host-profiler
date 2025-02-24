@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 
+	"github.com/DataDog/dd-otel-host-profiler/reporter"
 	"github.com/DataDog/dd-otel-host-profiler/version"
 )
 
@@ -36,36 +38,37 @@ const (
 )
 
 type arguments struct {
-	bpfVerifierLogLevel     uint64
-	agentURL                string
-	copyright               bool
-	mapScaleFactor          uint64
-	monitorInterval         time.Duration
-	clockSyncInterval       time.Duration
-	noKernelVersionCheck    bool
-	node                    string
-	probabilisticInterval   time.Duration
-	probabilisticThreshold  uint64
-	reporterInterval        time.Duration
-	samplesPerSecond        uint64
-	pprofPrefix             string
-	sendErrorFrames         bool
-	serviceName             string
-	environment             string
-	uploadSymbols           bool
-	uploadDynamicSymbols    bool
-	uploadGoPCLnTab         bool
-	uploadSymbolsDryRun     bool
-	tags                    string
-	timeline                bool
-	tracers                 string
-	verboseMode             bool
-	apiKey                  string
-	appKey                  string
-	site                    string
-	agentless               bool
-	enableGoRuntimeProfiler bool
-	cmd                     *cli.Command
+	bpfVerifierLogLevel       uint64
+	agentURL                  string
+	copyright                 bool
+	mapScaleFactor            uint64
+	monitorInterval           time.Duration
+	clockSyncInterval         time.Duration
+	noKernelVersionCheck      bool
+	node                      string
+	probabilisticInterval     time.Duration
+	probabilisticThreshold    uint64
+	reporterInterval          time.Duration
+	samplesPerSecond          uint64
+	pprofPrefix               string
+	sendErrorFrames           bool
+	serviceName               string
+	environment               string
+	uploadSymbols             bool
+	uploadDynamicSymbols      bool
+	uploadGoPCLnTab           bool
+	uploadSymbolsDryRun       bool
+	tags                      string
+	timeline                  bool
+	tracers                   string
+	verboseMode               bool
+	apiKey                    string
+	appKey                    string
+	site                      string
+	additionalSymbolEndpoints []reporter.SymbolEndpoint
+	agentless                 bool
+	enableGoRuntimeProfiler   bool
+	cmd                       *cli.Command
 }
 
 func parseArgs() (*arguments, error) {
@@ -298,6 +301,36 @@ func parseArgs() (*arguments, error) {
 				Hidden:      true,
 				Destination: &args.site,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SITE", "DD_SITE"),
+			},
+			&cli.StringFlag{
+				Name:   "additional-symbol-endpoints",
+				Usage:  "Additional endpoints to upload symbols to.",
+				Hidden: true,
+				// This is required by urfave/cli in order to run the Action when
+				// this flag is defined outside of the command-line arguments.
+				Local:   true,
+				Sources: cli.EnvVars("DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS"),
+				Action: func(_ context.Context, _ *cli.Command, s string) error {
+					if s == "" {
+						return nil
+					}
+					err := json.Unmarshal([]byte(s), &args.additionalSymbolEndpoints)
+					if err != nil {
+						return errors.New("error parsing DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: invalid JSON")
+					}
+					for _, e := range args.additionalSymbolEndpoints {
+						if e.Site == "" || e.APIKey == "" || e.AppKey == "" {
+							return errors.New("error parsing DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: site, api key and app key should all be set and non-empty strings")
+						}
+						if !isAPIKeyValid(e.APIKey) {
+							return fmt.Errorf("error parsing DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: API key for site %s is not valid", e.Site)
+						}
+						if !isAPPKeyValid(e.AppKey) {
+							return fmt.Errorf("error parsing DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: app key for site %s is not valid", e.Site)
+						}
+					}
+					return nil
+				},
 			},
 			&cli.BoolFlag{
 				Name:        "profile",

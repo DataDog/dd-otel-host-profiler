@@ -176,6 +176,12 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to create container metadata provider: %v", err)
 	}
 
+	var symbolEndpoints = args.additionalSymbolEndpoints
+
+	if args.site != "" && args.apiKey != "" && args.appKey != "" {
+		symbolEndpoints = append(symbolEndpoints, reporter.SymbolEndpoint{Site: args.site, APIKey: args.apiKey, AppKey: args.appKey})
+	}
+
 	var intakeURL string
 	apiKey := ""
 	if args.agentless {
@@ -212,9 +218,7 @@ func mainWithExitCode() exitCode {
 			UploadDynamicSymbols: args.uploadDynamicSymbols,
 			UploadGoPCLnTab:      args.uploadGoPCLnTab,
 			DryRun:               args.uploadSymbolsDryRun,
-			APIKey:               args.apiKey,
-			APPKey:               args.appKey,
-			Site:                 args.site,
+			SymbolEndpoints:      symbolEndpoints,
 			Version:              versionInfo.Version,
 		},
 	}, containerMetadataProvider)

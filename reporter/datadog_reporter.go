@@ -167,7 +167,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	var symbolUploader *DatadogSymbolUploader
 	if cfg.SymbolUploaderConfig.Enabled {
 		log.Infof("Enabling Datadog local symbol upload")
-		symbolUploader, err = NewDatadogSymbolUploader(cfg.SymbolUploaderConfig)
+		symbolUploader, err = NewDatadogSymbolUploader(&cfg.SymbolUploaderConfig)
 		if err != nil {
 			log.Errorf(
 				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
