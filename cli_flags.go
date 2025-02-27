@@ -62,6 +62,7 @@ type arguments struct {
 	timeline                  bool
 	tracers                   string
 	verboseMode               bool
+	verboseeBPF               bool
 	apiKey                    string
 	appKey                    string
 	site                      string
@@ -222,6 +223,13 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Enable verbose logging and debugging capabilities.",
 				Destination: &args.verboseMode,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_VERBOSE"),
+			},
+			&cli.BoolFlag{
+				Name:        "verbose-ebpf",
+				Value:       false,
+				Usage:       "Enable verbose logging and debugging capabilities for eBPF.",
+				Destination: &args.verboseeBPF,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_VERBOSE_EBPF"),
 			},
 			&cli.StringFlag{
 				Name:        "pprof-prefix",
