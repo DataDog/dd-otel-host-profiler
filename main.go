@@ -10,8 +10,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"runtime"
@@ -242,6 +245,7 @@ func mainWithExitCode() exitCode {
 		SamplesPerSecond:       int(args.samplesPerSecond),
 		MapScaleFactor:         int(args.mapScaleFactor),
 		KernelVersionCheck:     !args.noKernelVersionCheck,
+		DebugTracer:            args.verboseeBPF,
 		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
 		ProbabilisticInterval:  args.probabilisticInterval,
 		ProbabilisticThreshold: uint(args.probabilisticThreshold),
@@ -282,6 +286,11 @@ func mainWithExitCode() exitCode {
 
 	if err := startTraceHandling(mainCtx, rep, intervals, trc, traceHandlerCacheSize); err != nil {
 		return failure("Failed to start trace handling: %v", err)
+	}
+
+	if args.verboseeBPF {
+		log.Info("Reading from trace_pipe...")
+		go readTracePipe(mainCtx)
 	}
 
 	// Block waiting for a signal to indicate the program should terminate
@@ -375,6 +384,49 @@ func sanityCheck(args *arguments) exitCode {
 	}
 
 	return exitSuccess
+}
+
+func getTracePipe() (*os.File, error) {
+	for _, mnt := range []string{
+		"/sys/kernel/debug/tracing",
+		"/sys/kernel/tracing"} {
+		t, err := os.Open(mnt + "/trace_pipe")
+		if err == nil {
+			return t, nil
+		}
+		log.Infof("Could not open trace_pipe at %s: %s", mnt, err)
+	}
+	return nil, os.ErrNotExist
+}
+
+func readTracePipe(ctx context.Context) {
+	tp, err := getTracePipe()
+	if err != nil {
+		log.Warning("Could not open trace_pipe, check that debugfs is mounted")
+		return
+	}
+
+	// When we're done kick ReadString out of blocked I/O.
+	go func() {
+		<-ctx.Done()
+		tp.Close()
+	}()
+
+	r := bufio.NewReader(tp)
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				continue
+			}
+			log.Error(err)
+			return
+		}
+		line = strings.TrimSpace(line)
+		if line != "" {
+			log.Infof("ebpf-profiler: %s", line)
+		}
+	}
 }
 
 func parseError(msg string, args ...interface{}) exitCode {
