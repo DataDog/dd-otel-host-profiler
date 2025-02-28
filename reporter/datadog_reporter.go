@@ -95,8 +95,8 @@ type DatadogReporter struct {
 	// profiler version
 	version string
 
-	// stopSignal is the stop signal for shutting down all background tasks.
-	stopSignal chan libpf.Void
+	// runLoop handles the run loop
+	runLoop *runLoop
 
 	// To fill in the OTLP/profiles signal with the relevant information,
 	// this structure holds in long term storage information that might
@@ -177,10 +177,12 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	}
 
 	return &DatadogReporter{
-		config:                    cfg,
-		version:                   cfg.Version,
-		samplesPerSecond:          cfg.SamplesPerSecond,
-		stopSignal:                make(chan libpf.Void),
+		config:           cfg,
+		version:          cfg.Version,
+		samplesPerSecond: cfg.SamplesPerSecond,
+		runLoop: &runLoop{
+			stopSignal: make(chan libpf.Void),
+		},
 		executables:               executables,
 		frames:                    frames,
 		containerMetadataProvider: p,
@@ -334,12 +336,7 @@ func (r *DatadogReporter) ReportMetrics(_ uint32, _ []uint32, _ []int64) {}
 
 // Stop triggers a graceful shutdown of DatadogReporter.
 func (r *DatadogReporter) Stop() {
-	close(r.stopSignal)
-}
-
-// GetMetrics returns internal metrics of DatadogReporter.
-func (r *DatadogReporter) GetMetrics() reporter.Metrics {
-	return reporter.Metrics{}
+	r.runLoop.Stop()
 }
 
 // Start sets up and manages the reporting connection to the Datadog Backend.
@@ -351,35 +348,21 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 		r.symbolUploader.Start(ctx)
 	}
 
-	go func() {
-		tick := time.NewTicker(r.config.ReportInterval)
-		defer tick.Stop()
-		purgeTick := time.NewTicker(5 * time.Minute)
-		defer purgeTick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-r.stopSignal:
-				return
-			case <-tick.C:
-				if err := r.reportProfile(ctx); err != nil {
-					log.Errorf("Request failed: %v", err)
-				}
-				tick.Reset(libpf.AddJitter(r.config.ReportInterval, 0.2))
-			case <-purgeTick.C:
-				// Allow the GC to purge expired entries to avoid memory leaks.
-				r.executables.PurgeExpired()
-				r.frames.PurgeExpired()
-				r.processes.PurgeExpired()
-			}
+	r.runLoop.Start(ctx, r.config.ReportInterval, func() {
+		if err := r.reportProfile(ctx); err != nil {
+			log.Errorf("Request failed: %v", err)
 		}
-	}()
+	}, func() {
+		// Allow the GC to purge expired entries to avoid memory leaks.
+		r.executables.PurgeExpired()
+		r.frames.PurgeExpired()
+		r.processes.PurgeExpired()
+	})
 
 	// When Stop() is called and a signal to 'stop' is received, then:
 	// - cancel the reporting functions currently running (using context)
 	go func() {
-		<-r.stopSignal
+		<-r.runLoop.stopSignal
 		cancelReporting()
 	}()
 
