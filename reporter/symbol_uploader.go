@@ -337,7 +337,26 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbols *elfS
 		}
 	}
 
-	err = CopySymbols(ctx, symbols.getPath(), symbolFile.Name(), goPCLnTabInfo)
+	elfPath := symbols.getPath()
+
+	if elfPath == "" {
+		// No associated file -> probably vdso, dump the ELF data to a file
+		tempElfFile, err2 := os.CreateTemp("", "vdso")
+		if err2 != nil {
+			return fmt.Errorf("failed to create temp file to extract symbols: %w", err)
+		}
+		defer os.Remove(tempElfFile.Name())
+		defer tempElfFile.Close()
+
+		err2 = symbols.dumpElfData(tempElfFile)
+		if err2 != nil {
+			return fmt.Errorf("failed to dump ELF data to file: %w", err)
+		}
+
+		elfPath = tempElfFile.Name()
+	}
+
+	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo)
 	if err != nil {
 		return fmt.Errorf("failed to copy symbols: %w", err)
 	}
