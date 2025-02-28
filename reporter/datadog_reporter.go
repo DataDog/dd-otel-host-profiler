@@ -435,6 +435,9 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 
 	r.profileSeq++
 
+	if r.symbolUploader != nil {
+		log.Infof("%d calls done to symbol-query endpoints", r.symbolUploader.ResetCallCountToSymbolQueryEndpoint())
+	}
 	log.Infof("Tags: %v", tags.String())
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
 		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), r.intakeURL,
