@@ -7,6 +7,7 @@ package reporter
 
 import (
 	"fmt"
+	"io"
 	"runtime"
 
 	log "github.com/sirupsen/logrus"
@@ -135,6 +136,14 @@ func (e *elfSymbols) getPath() string {
 	}
 
 	return e.wrapper.actualFilePath
+}
+
+func (e *elfSymbols) dumpElfData(writer io.Writer) error {
+	_, err := io.Copy(writer, io.NewSectionReader(e.wrapper.reader, 0, 1<<63-1))
+	if err != nil {
+		return fmt.Errorf("failed to dump elf data: %w", err)
+	}
+	return nil
 }
 
 func (e *elfSymbols) String() string {
