@@ -35,6 +35,8 @@ const (
 	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
 	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
 	executableCacheLifetime = 1 * time.Hour   // executable cache items will be removed if unused after this interval
+
+	profileUploadWorkerCount = 5
 )
 
 // execInfo enriches an executable with additional metadata.
@@ -87,6 +89,12 @@ type processMetadata struct {
 	containerMetadata containermetadata.ContainerMetadata
 }
 
+type uploadProfileData struct {
+	startTS uint64
+	endTS   uint64
+	profile *pprofile.Profile
+}
+
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
 type DatadogReporter struct {
 	config *Config
@@ -137,6 +145,8 @@ type DatadogReporter struct {
 
 	// profileSeq is the sequence number of the profile (ie. number of profiles uploaded until now).
 	profileSeq uint64
+
+	profiles chan uploadProfileData
 }
 
 func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, error) {
@@ -192,6 +202,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		tags:                      cfg.Tags,
 		timeline:                  cfg.Timeline,
 		profileSeq:                0,
+		profiles:                  make(chan uploadProfileData, 10),
 	}, nil
 }
 
@@ -363,9 +374,8 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 			case <-r.stopSignal:
 				return
 			case <-tick.C:
-				if err := r.reportProfile(ctx); err != nil {
-					log.Errorf("Request failed: %v", err)
-				}
+				r.getPprofProfile()
+
 				tick.Reset(libpf.AddJitter(r.config.ReportInterval, 0.2))
 			case <-purgeTick.C:
 				// Allow the GC to purge expired entries to avoid memory leaks.
@@ -375,6 +385,23 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 			}
 		}
 	}()
+
+	for i := 0; i < profileUploadWorkerCount; i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-r.stopSignal:
+					return
+				case profile := <-r.profiles:
+					if err := r.reportProfile(ctx, profile); err != nil {
+						log.Errorf("Request failed: %v", err)
+					}
+				}
+			}
+		}()
+	}
 
 	// When Stop() is called and a signal to 'stop' is received, then:
 	// - cancel the reporting functions currently running (using context)
@@ -387,8 +414,10 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 }
 
 // reportProfile creates and sends out a profile.
-func (r *DatadogReporter) reportProfile(ctx context.Context) error {
-	profile, startTS, endTS := r.getPprofProfile()
+func (r *DatadogReporter) reportProfile(ctx context.Context, data uploadProfileData) error {
+	profile := data.profile
+	startTS := data.startTS
+	endTS := data.endTS
 
 	if len(profile.Sample) == 0 {
 		log.Debugf("Skip sending of pprof profile with no samples")
@@ -442,8 +471,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 }
 
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
-func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
-	startTS uint64, endTS uint64) {
+func (r *DatadogReporter) getPprofProfile() {
 	traceEvents := r.traceEvents.WLock()
 	samples := maps.Clone(*traceEvents)
 	for key := range *traceEvents {
@@ -460,7 +488,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 	funcMap := make(map[funcInfo]*pprofile.Function)
 
 	samplingPeriod := 1000000000 / int64(r.samplesPerSecond)
-	profile = &pprofile.Profile{
+	profile := &pprofile.Profile{
 		SampleType: []*pprofile.ValueType{{Type: "cpu-samples", Unit: "count"},
 			{Type: "cpu-time", Unit: "nanoseconds"}},
 		Sample:            make([]*pprofile.Sample, 0, numSamples),
@@ -471,6 +499,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 
 	fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
 	totalSampleCount := 0
+	var startTS, endTS uint64
 
 	for traceKey, traceInfo := range samples {
 		sample := &pprofile.Sample{}
@@ -602,7 +631,15 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 
 	profile = profile.Compact()
 
-	return profile, startTS, endTS
+	select {
+	case r.profiles <- uploadProfileData{
+		profile: profile,
+		startTS: startTS,
+		endTS:   endTS,
+	}:
+	default:
+		log.Warnf("Dropping profile data")
+	}
 }
 
 // createFunctionEntry adds a new function and returns its reference index.
