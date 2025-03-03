@@ -32,6 +32,9 @@ import (
 var _ reporter.Reporter = (*DatadogReporter)(nil)
 
 const (
+	unknownServiceStr = "unknown-service"
+	servicePrefix     = "test-split-"
+
 	profilerName            = "dd-otel-host-profiler"
 	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
 	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
@@ -91,12 +94,15 @@ type processMetadata struct {
 	updatedAt         time.Time
 	executablePath    string
 	containerMetadata containermetadata.ContainerMetadata
+	ddService         string
 }
 
 type uploadProfileData struct {
-	startTS uint64
-	endTS   uint64
-	profile *pprofile.Profile
+	startTS     uint64
+	endTS       uint64
+	profile     *pprofile.Profile
+	containerID string
+	serviceName string
 }
 
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
@@ -207,7 +213,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		tags:                      cfg.Tags,
 		timeline:                  cfg.Timeline,
 		profileSeq:                0,
-		profiles:                  make(chan uploadProfileData, 10),
+		profiles:                  make(chan uploadProfileData, 15),
 	}, nil
 }
 
@@ -357,7 +363,7 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 		r.processes.PurgeExpired()
 	})
 
-	for i := 0; i < profileUploadWorkerCount; i++ {
+	for range profileUploadWorkerCount {
 		go func() {
 			for {
 				select {
@@ -431,49 +437,62 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data uploadProfileD
 		MakeTag("profiler_name", profilerName),
 		MakeTag("profiler_version", r.version),
 		MakeTag("cpu_arch", runtime.GOARCH),
-		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)))
+		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)),
+		MakeTag("service", servicePrefix+data.serviceName))
 
 	r.profileSeq++
 
 	log.Infof("Tags: %v", tags.String())
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
 		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), r.intakeURL,
-		tags, r.version, r.apiKey)
+		tags, r.version, r.apiKey, data.containerID)
 }
 
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
 func (r *DatadogReporter) getPprofProfile() {
-	traceEvents := r.traceEvents.WLock()
-	hostSamples := maps.Clone(*traceEvents)
-	for key := range *traceEvents {
-		delete(*traceEvents, key)
+	events := r.traceEvents.WLock()
+	hostSamples := maps.Clone(*events)
+	for key := range *events {
+		delete(*events, key)
 	}
-	r.traceEvents.WUnlock(&traceEvents)
+	r.traceEvents.WUnlock(&events)
 
-	numSamples := len(hostSamples)
-
-	const unknownStr = "UNKNOWN"
-
-	// funcMap is a temporary helper that will build the Function array
-	// in profile and make sure information is deduplicated.
-	funcMap := make(map[funcInfo]*pprofile.Function)
-
-	samplingPeriod := 1000000000 / int64(r.samplesPerSecond)
-	profile := &pprofile.Profile{
-		SampleType: []*pprofile.ValueType{{Type: "cpu-samples", Unit: "count"},
-			{Type: "cpu-time", Unit: "nanoseconds"}},
-		Sample:            make([]*pprofile.Sample, 0, numSamples),
-		PeriodType:        &pprofile.ValueType{Type: "cpu-time", Unit: "nanoseconds"},
-		Period:            samplingPeriod,
-		DefaultSampleType: "cpu-time",
+	type entity struct {
+		service     string
+		containerID string
 	}
 
-	fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
-	totalSampleCount := 0
-	var startTS, endTS uint64
+	entityToSample := make(map[entity]map[traceAndMetaKey]*traceEvents)
+	startTS, endTS := uint64(0), uint64(0)
 
 	for traceKey, traceInfo := range hostSamples {
-		sample := &pprofile.Sample{}
+		processMeta, ok := r.processes.Get(traceKey.pid)
+		if !ok {
+			log.Infof("No process metadata found for PID %d", traceKey.pid)
+		}
+
+		containerID := processMeta.containerMetadata.ContainerID
+		service := processMeta.ddService
+		execPath := getExecutablePath(&processMeta, &traceKey)
+
+		if service == "" && execPath != "" && execPath != "/" {
+			service = path.Base(execPath)
+		}
+
+		if service == "" && len(traceInfo.frameTypes) > 0 &&
+			traceInfo.frameTypes[len(traceInfo.frameTypes)-1] == libpf.KernelFrame {
+			service = "system"
+		}
+
+		if service == "" {
+			service = unknownServiceStr
+		}
+
+		if _, exists := entityToSample[entity{service, containerID}]; !exists {
+			entityToSample[entity{service, containerID}] = make(map[traceAndMetaKey]*traceEvents)
+		}
+
+		entityToSample[entity{service, containerID}][traceKey] = traceInfo
 
 		for _, ts := range traceInfo.timestamps {
 			if ts < startTS || startTS == 0 {
@@ -484,130 +503,169 @@ func (r *DatadogReporter) getPprofProfile() {
 				endTS = ts
 			}
 		}
+	}
 
-		// Walk every frame of the trace.
-		for i := range traceInfo.frameTypes {
-			loc := createPProfLocation(profile, uint64(traceInfo.linenos[i]))
+	for e, s := range entityToSample {
+		numSamples := len(s)
 
-			switch frameKind := traceInfo.frameTypes[i]; frameKind {
-			case libpf.NativeFrame:
-				// As native frames are resolved in the backend, we use Mapping to
-				// report these frames.
+		const unknownStr = "UNKNOWN"
 
-				if tmpMapping, exists := fileIDtoMapping[traceInfo.files[i]]; exists {
-					loc.Mapping = tmpMapping
-				} else {
-					executionInfo, exists := r.executables.GetAndRefresh(traceInfo.files[i], executableCacheLifetime)
+		// funcMap is a temporary helper that will build the Function array
+		// in profile and make sure information is deduplicated.
+		funcMap := make(map[funcInfo]*pprofile.Function)
 
-					// Next step: Select a proper default value,
-					// if the name of the executable is not known yet.
-					var fileName = unknownStr
-					var buildID = traceInfo.files[i].StringNoQuotes()
-					if exists {
-						fileName = executionInfo.fileName
-						buildID = getBuildID(executionInfo.gnuBuildID, executionInfo.goBuildID, buildID)
-					}
+		samplingPeriod := 1000000000 / int64(r.samplesPerSecond)
+		profile := &pprofile.Profile{
+			SampleType: []*pprofile.ValueType{{Type: "cpu-samples", Unit: "count"},
+				{Type: "cpu-time", Unit: "nanoseconds"}},
+			Sample:            make([]*pprofile.Sample, 0, numSamples),
+			PeriodType:        &pprofile.ValueType{Type: "cpu-time", Unit: "nanoseconds"},
+			Period:            samplingPeriod,
+			DefaultSampleType: "cpu-time",
+		}
 
-					tmpMapping := createPprofMapping(profile, uint64(traceInfo.linenos[i]),
-						fileName, buildID)
-					fileIDtoMapping[traceInfo.files[i]] = tmpMapping
-					loc.Mapping = tmpMapping
+		fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
+		totalSampleCount := 0
+
+		for traceKey, traceInfo := range s {
+			sample := &pprofile.Sample{}
+
+			for _, ts := range traceInfo.timestamps {
+				if ts < startTS || startTS == 0 {
+					startTS = ts
+					continue
 				}
-				line := pprofile.Line{Function: createPprofFunctionEntry(funcMap, profile, "",
-					loc.Mapping.File)}
-				loc.Line = append(loc.Line, line)
-			case libpf.AbortFrame:
-				// Next step: Figure out how the OTLP protocol
-				// could handle artificial frames, like AbortFrame,
-				// that are not originate from a native or interpreted
-				// program.
-			default:
-				// Store interpreted frame information as Line message:
-				line := pprofile.Line{}
+				if ts > endTS {
+					endTS = ts
+				}
+			}
 
-				fileIDInfoLock, exists := r.frames.GetAndRefresh(traceInfo.files[i], framesCacheLifetime)
-				if !exists {
-					// At this point, we do not have enough information for the frame.
-					// Therefore, we report a dummy entry and use the interpreter as filename.
-					line.Function = createPprofFunctionEntry(funcMap, profile,
-						"UNREPORTED", frameKind.String())
-				} else {
-					fileIDInfo := fileIDInfoLock.RLock()
-					if si, exists := (*fileIDInfo)[traceInfo.linenos[i]]; exists {
-						line.Line = int64(si.lineNumber)
-						line.Function = createPprofFunctionEntry(funcMap, profile,
-							si.functionName, si.filePath)
+			// Walk every frame of the trace.
+			for i := range traceInfo.frameTypes {
+				loc := createPProfLocation(profile, uint64(traceInfo.linenos[i]))
+
+				switch frameKind := traceInfo.frameTypes[i]; frameKind {
+				case libpf.NativeFrame:
+					// As native frames are resolved in the backend, we use Mapping to
+					// report these frames.
+
+					if tmpMapping, exists := fileIDtoMapping[traceInfo.files[i]]; exists {
+						loc.Mapping = tmpMapping
 					} else {
+						executionInfo, exists := r.executables.GetAndRefresh(traceInfo.files[i], executableCacheLifetime)
+
+						// Next step: Select a proper default value,
+						// if the name of the executable is not known yet.
+						var fileName = unknownStr
+						var buildID = traceInfo.files[i].StringNoQuotes()
+						if exists {
+							fileName = executionInfo.fileName
+							buildID = getBuildID(executionInfo.gnuBuildID, executionInfo.goBuildID, buildID)
+						}
+
+						tmpMapping := createPprofMapping(profile, uint64(traceInfo.linenos[i]),
+							fileName, buildID)
+						fileIDtoMapping[traceInfo.files[i]] = tmpMapping
+						loc.Mapping = tmpMapping
+					}
+					line := pprofile.Line{Function: createPprofFunctionEntry(funcMap, profile, "",
+						loc.Mapping.File)}
+					loc.Line = append(loc.Line, line)
+				case libpf.AbortFrame:
+					// Next step: Figure out how the OTLP protocol
+					// could handle artificial frames, like AbortFrame,
+					// that are not originate from a native or interpreted
+					// program.
+				default:
+					// Store interpreted frame information as Line message:
+					line := pprofile.Line{}
+
+					fileIDInfoLock, exists := r.frames.GetAndRefresh(traceInfo.files[i], framesCacheLifetime)
+					if !exists {
 						// At this point, we do not have enough information for the frame.
 						// Therefore, we report a dummy entry and use the interpreter as filename.
 						line.Function = createPprofFunctionEntry(funcMap, profile,
-							"UNRESOLVED", frameKind.String())
+							"UNREPORTED", frameKind.String())
+					} else {
+						fileIDInfo := fileIDInfoLock.RLock()
+						if si, exists := (*fileIDInfo)[traceInfo.linenos[i]]; exists {
+							line.Line = int64(si.lineNumber)
+							line.Function = createPprofFunctionEntry(funcMap, profile,
+								si.functionName, si.filePath)
+						} else {
+							// At this point, we do not have enough information for the frame.
+							// Therefore, we report a dummy entry and use the interpreter as filename.
+							line.Function = createPprofFunctionEntry(funcMap, profile,
+								"UNRESOLVED", frameKind.String())
+						}
+						fileIDInfoLock.RUnlock(&fileIDInfo)
 					}
-					fileIDInfoLock.RUnlock(&fileIDInfo)
+					loc.Line = append(loc.Line, line)
+
+					// To be compliant with the protocol generate a dummy mapping entry.
+					loc.Mapping = getDummyMapping(fileIDtoMapping, profile, traceInfo.files[i])
 				}
-				loc.Line = append(loc.Line, line)
-
-				// To be compliant with the protocol generate a dummy mapping entry.
-				loc.Mapping = getDummyMapping(fileIDtoMapping, profile, traceInfo.files[i])
+				sample.Location = append(sample.Location, loc)
 			}
-			sample.Location = append(sample.Location, loc)
-		}
 
-		processMeta, _ := r.processes.Get(traceKey.pid)
-		execPath := getExecutablePath(&processMeta, &traceKey)
+			processMeta, _ := r.processes.Get(traceKey.pid)
+			execPath := getExecutablePath(&processMeta, &traceKey)
 
-		// Check if the last frame is a kernel frame.
-		if len(traceInfo.frameTypes) > 0 &&
-			traceInfo.frameTypes[len(traceInfo.frameTypes)-1] == libpf.KernelFrame {
-			// If the last frame is a kernel frame, we need to add a dummy
-			// location with the kernel as the function name.
-			execPath = "kernel"
-		}
-		baseExec := path.Base(execPath)
+			// Check if the last frame is a kernel frame.
+			if len(traceInfo.frameTypes) > 0 &&
+				traceInfo.frameTypes[len(traceInfo.frameTypes)-1] == libpf.KernelFrame {
+				// If the last frame is a kernel frame, we need to add a dummy
+				// location with the kernel as the function name.
+				execPath = "kernel"
+			}
+			baseExec := path.Base(execPath)
 
-		if execPath != "" {
-			loc := createPProfLocation(profile, 0)
-			m := createPprofFunctionEntry(funcMap, profile, baseExec, execPath)
-			loc.Line = append(loc.Line, pprofile.Line{Function: m})
-			sample.Location = append(sample.Location, loc)
-		}
+			if execPath != "" {
+				loc := createPProfLocation(profile, 0)
+				m := createPprofFunctionEntry(funcMap, profile, baseExec, execPath)
+				loc.Line = append(loc.Line, pprofile.Line{Function: m})
+				sample.Location = append(sample.Location, loc)
+			}
 
-		if !r.timeline {
-			count := int64(len(traceInfo.timestamps))
-			labels := make(map[string][]string)
-			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
-			sample.Value = append(sample.Value, count, count*samplingPeriod)
-			sample.Label = labels
-			profile.Sample = append(profile.Sample, sample)
-		} else {
-			sample.Value = append(sample.Value, 1, samplingPeriod)
-			for _, ts := range traceInfo.timestamps {
-				sampleWithTimestamp := &pprofile.Sample{}
-				*sampleWithTimestamp = *sample
+			if !r.timeline {
+				count := int64(len(traceInfo.timestamps))
 				labels := make(map[string][]string)
-				addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, ts)
-				sampleWithTimestamp.Label = labels
-				profile.Sample = append(profile.Sample, sampleWithTimestamp)
+				addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
+				sample.Value = append(sample.Value, count, count*samplingPeriod)
+				sample.Label = labels
+				profile.Sample = append(profile.Sample, sample)
+			} else {
+				sample.Value = append(sample.Value, 1, samplingPeriod)
+				for _, ts := range traceInfo.timestamps {
+					sampleWithTimestamp := &pprofile.Sample{}
+					*sampleWithTimestamp = *sample
+					labels := make(map[string][]string)
+					addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, ts)
+					sampleWithTimestamp.Label = labels
+					profile.Sample = append(profile.Sample, sampleWithTimestamp)
+				}
 			}
+			totalSampleCount += len(traceInfo.timestamps)
 		}
-		totalSampleCount += len(traceInfo.timestamps)
-	}
-	log.Infof("Reporting pprof profile with %d samples from %v to %v",
-		totalSampleCount, startTS, endTS)
+		log.Infof("Reporting pprof profile with %d samples from %v to %v",
+			totalSampleCount, startTS, endTS)
 
-	profile.DurationNanos = int64(endTS - startTS)
-	profile.TimeNanos = int64(startTS)
+		profile.DurationNanos = int64(endTS - startTS)
+		profile.TimeNanos = int64(startTS)
 
-	profile = profile.Compact()
+		profile = profile.Compact()
 
-	select {
-	case r.profiles <- uploadProfileData{
-		profile: profile,
-		startTS: startTS,
-		endTS:   endTS,
-	}:
-	default:
-		log.Warnf("Dropping profile data")
+		select {
+		case r.profiles <- uploadProfileData{
+			profile:     profile,
+			startTS:     startTS,
+			endTS:       endTS,
+			serviceName: e.service,
+			containerID: e.containerID,
+		}:
+		default:
+			log.Warnf("Dropping profile data")
+		}
 	}
 }
 
@@ -735,18 +793,35 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
 		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
+		// \todo: continue ?
 		return
 	}
+
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
 	if err != nil {
-		log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)
+		log.Infof("Failed to get container metadata for PID %d: %v", pid, err)
 		// Even upon failure, we might still have managed to get the containerID
+	}
+
+	// read DD_SERVICE env var from the process environ
+	envPath, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	if err != nil {
+		log.Debugf("Failed to read environ for PID %d: %v", pid, err)
+	}
+
+	ddService := ""
+	for _, envVar := range bytes.Split(envPath, []byte{0}) {
+		if bytes.HasPrefix(envVar, []byte("DD_SERVICE=")) {
+			ddService = string(envVar[11:])
+			break
+		}
 	}
 
 	r.processes.Add(pid, processMetadata{
 		updatedAt:         time.Now(),
 		executablePath:    execPath,
 		containerMetadata: containerMetadata,
+		ddService:         ddService,
 	})
 }
 

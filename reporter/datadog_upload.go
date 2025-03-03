@@ -23,7 +23,7 @@ type profileData struct {
 }
 
 func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endTime time.Time,
-	url string, tags Tags, profilerVersion string, apiKey string) error {
+	url string, tags Tags, profilerVersion string, apiKey string, containerID string) error {
 	contentType, body, err := buildMultipartForm(profiles, startTime, endTime, tags)
 	if err != nil {
 		return err
@@ -39,6 +39,9 @@ func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endT
 	req.Header.Set("Dd-Evp-Origin-Version", profilerVersion)
 	if apiKey != "" {
 		req.Header.Set("Dd-Api-Key", apiKey)
+	}
+	if containerID != "" {
+		req.Header.Set("Datadog-Container-Id", containerID)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
