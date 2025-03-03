@@ -9,6 +9,7 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/elastic/go-freelru v0.16.0
 	github.com/google/pprof v0.0.0-20241101162523-b92577c0c142
+	github.com/jonboulle/clockwork v0.5.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
 	github.com/tklauser/numcpus v0.9.0
@@ -122,6 +123,6 @@ require (
 )
 
 // To update the Datadog/opentelemetry-ebpf-profiler dependency on latest commit on datadog branch, change the following line to:
-// replace github.com/open-telemetry/opentelemetry-ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler datadog
+// replace go.opentelemetry.io/ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler datadog
 // and run `GOPRIVATE=github.com/Datadog/* go mod tidy`
-replace go.opentelemetry.io/ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20250226180854-ea618b05c65c
+replace go.opentelemetry.io/ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20250228182627-d47869196edf
