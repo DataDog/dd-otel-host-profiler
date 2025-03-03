@@ -95,7 +95,6 @@ type processMetadata struct {
 	executablePath    string
 	containerMetadata containermetadata.ContainerMetadata
 	ddService         string
-	comm              string
 }
 
 type uploadProfileData struct {
@@ -475,8 +474,21 @@ func (r *DatadogReporter) getPprofProfile() {
 		containerID := processMeta.containerMetadata.ContainerID
 		service := processMeta.ddService
 
-		if service == "" && processMeta.executablePath != "" {
-			service = path.Base(processMeta.executablePath)
+		// \todo: factor out the logic for getting the executable path
+		execPath := processMeta.executablePath
+		if execPath == "" {
+			// If we were unable to get the process metadata, we use the executable path
+			// from the trace key.
+			// This can happen if the process has already exited when process metadata
+			// was collected.
+			// We prioritize the executable path from process metadata over the trace key
+			// because in some cases executable path from trace key is taken too early in
+			// the process lifetime, eg. before the process execs into another binary.
+			execPath = traceKey.executablePath
+		}
+
+		if service == "" && execPath != "" && execPath != "/" {
+			service = path.Base(execPath)
 		}
 
 		if service == "" && len(traceInfo.frameTypes) > 0 &&
@@ -506,7 +518,7 @@ func (r *DatadogReporter) getPprofProfile() {
 	}
 
 	for e, s := range entityToSample {
-		numSamples := len(hostSamples)
+		numSamples := len(s)
 
 		const unknownStr = "UNKNOWN"
 
@@ -800,19 +812,11 @@ func getBuildID(gnuBuildID, goBuildID, fileHash string) string {
 }
 
 func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
-	_, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
-	if err != nil {
-		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
-		return
-	}
-
 	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
 		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
-	}
-	comm, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
-	if err != nil {
-		log.Debugf("Failed to get comm for PID %d: %v", pid, err)
+		// \todo: continue ?
+		return
 	}
 
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
@@ -840,6 +844,5 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 		executablePath:    execPath,
 		containerMetadata: containerMetadata,
 		ddService:         ddService,
-		comm:              string(comm),
 	})
 }
