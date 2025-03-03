@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/xsync"
 	"go.opentelemetry.io/ebpf-profiler/reporter"
+	"go.opentelemetry.io/ebpf-profiler/reporter/samples"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 )
@@ -72,6 +73,7 @@ type traceAndMetaKey struct {
 	apmServiceName string
 	pid            libpf.PID
 	tid            libpf.PID
+	executablePath string
 }
 
 // traceEvents holds known information about a trace.
@@ -88,10 +90,8 @@ type traceEvents struct {
 
 type processMetadata struct {
 	updatedAt         time.Time
-	execPath          string
 	containerMetadata containermetadata.ContainerMetadata
 	ddService         string
-	comm              string
 }
 
 type uploadProfileData struct {
@@ -220,7 +220,7 @@ func (r *DatadogReporter) SupportsReportTraceEvent() bool {
 }
 
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
-func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.TraceEventMeta) {
+func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.TraceEventMeta) {
 	traceEventsMap := r.traceEvents.WLock()
 	defer r.traceEvents.WUnlock(&traceEventsMap)
 
@@ -234,6 +234,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 		apmServiceName: meta.APMServiceName,
 		pid:            meta.PID,
 		tid:            meta.TID,
+		executablePath: meta.ExecutablePath,
 	}
 
 	if tr, exists := (*traceEventsMap)[key]; exists {
@@ -257,7 +258,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 func (r *DatadogReporter) ReportFramesForTrace(_ *libpf.Trace) {}
 
 // ReportCountForTrace is a NOP for DatadogReporter.
-func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *reporter.TraceEventMeta) {
+func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *samples.TraceEventMeta) {
 }
 
 // ExecutableKnown returns true if the metadata of the Executable specified by fileID is
@@ -351,11 +352,6 @@ func (r *DatadogReporter) ReportMetrics(_ uint32, _ []uint32, _ []int64) {}
 // Stop triggers a graceful shutdown of DatadogReporter.
 func (r *DatadogReporter) Stop() {
 	close(r.stopSignal)
-}
-
-// GetMetrics returns internal metrics of DatadogReporter.
-func (r *DatadogReporter) GetMetrics() reporter.Metrics {
-	return reporter.Metrics{}
 }
 
 // Start sets up and manages the reporting connection to the Datadog Backend.
@@ -481,7 +477,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data uploadProfileD
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
 func (r *DatadogReporter) getPprofProfile() {
 	events := r.traceEvents.WLock()
-	samples := maps.Clone(*events)
+	hostSamples := maps.Clone(*events)
 	for key := range *events {
 		delete(*events, key)
 	}
@@ -495,7 +491,7 @@ func (r *DatadogReporter) getPprofProfile() {
 	entityToSample := make(map[entity]map[traceAndMetaKey]*traceEvents)
 	startTS, endTS := uint64(0), uint64(0)
 
-	for traceKey, traceInfo := range samples {
+	for traceKey, traceInfo := range hostSamples {
 		processMeta, ok := r.processes.Get(traceKey.pid)
 		if !ok {
 			log.Infof("No process metadata found for PID %d", traceKey.pid)
@@ -504,8 +500,8 @@ func (r *DatadogReporter) getPprofProfile() {
 		containerID := processMeta.containerMetadata.ContainerID
 		service := processMeta.ddService
 
-		if service == "" && processMeta.execPath != "" {
-			service = path.Base(processMeta.execPath)
+		if service == "" && traceKey.executablePath != "" && traceKey.executablePath != "/" {
+			service = path.Base(traceKey.executablePath)
 		}
 
 		if service == "" && len(traceInfo.frameTypes) > 0 &&
@@ -535,7 +531,7 @@ func (r *DatadogReporter) getPprofProfile() {
 	}
 
 	for e, s := range entityToSample {
-		numSamples := len(samples)
+		numSamples := len(s)
 
 		const unknownStr = "UNKNOWN"
 
@@ -640,7 +636,7 @@ func (r *DatadogReporter) getPprofProfile() {
 			}
 
 			processMeta, _ := r.processes.Get(traceKey.pid)
-			execPath := processMeta.execPath
+			execPath := traceKey.executablePath
 
 			// Check if the last frame is a kernel frame.
 			if len(traceInfo.frameTypes) > 0 &&
@@ -810,15 +806,6 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 		return
 	}
 
-	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
-	if err != nil {
-		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
-	}
-	comm, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
-	if err != nil {
-		log.Debugf("Failed to get comm for PID %d: %v", pid, err)
-	}
-
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
 	if err != nil {
 		log.Infof("Failed to get container metadata for PID %d: %v", pid, err)
@@ -841,9 +828,7 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 
 	r.processes.Add(pid, processMetadata{
 		updatedAt:         time.Now(),
-		execPath:          execPath,
 		containerMetadata: containerMetadata,
 		ddService:         ddService,
-		comm:              string(comm),
 	})
 }

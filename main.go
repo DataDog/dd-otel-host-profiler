@@ -234,8 +234,6 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to start reporting: %v", err)
 	}
 
-	metrics.SetReporter(rep)
-
 	// Load the eBPF code and map definitions
 	trc, err := tracer.NewTracer(mainCtx, &tracer.Config{
 		Reporter:               rep,
