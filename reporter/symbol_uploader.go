@@ -79,6 +79,11 @@ type DatadogSymbolUploader struct {
 	mut                 sync.Mutex
 }
 
+type goPCLnTabDump struct {
+	goPCLnTabPath string
+	goFuncPath    string
+}
+
 func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
 	err := exec.Command("objcopy", "--version").Run()
 	if err != nil {
@@ -359,6 +364,22 @@ func newSymbolUploadRequestMetadata(e *symbol.Elf, symbolSource symbol.Source, p
 	}
 }
 
+func (d *DatadogSymbolUploader) dumpElfData(symbols *symbol.Elf) (string, error) {
+	// No associated file -> probably vdso, dump the ELF data to a file
+	tempElfFile, err := os.CreateTemp("", "vdso")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file to extract symbols: %w", err)
+	}
+	defer tempElfFile.Close()
+
+	err = symbols.DumpElfData(tempElfFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to dump ELF data to file: %w", err)
+	}
+
+	return tempElfFile.Name(), nil
+}
+
 func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf, ind int) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
@@ -372,7 +393,27 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf
 
 	symbolSource, goPCLnTabInfo := d.getSymbolSourceWithGoPCLnTab(e)
 
-	err = CopySymbols(ctx, e.SymbolPathOnDisk(), symbolFile.Name(), goPCLnTabInfo)
+	elfPath := e.SymbolPathOnDisk()
+	if elfPath == "" {
+		// No associated file -> probably vdso, dump the ELF data to a file
+		elfPath, err = d.dumpElfData(e)
+		if err != nil {
+			return fmt.Errorf("failed to dump ELF data: %w", err)
+		}
+		defer os.Remove(elfPath)
+	}
+
+	var dynamicSymbols *symbol.DynamicSymbolsDump
+	if symbolSource == symbol.SourceDynamicSymbolTable {
+		// `objcopy --only-keep-debug` does not keep dynamic symbols, so we need to dump them separately and add them back
+		dynamicSymbols, err = e.DumpDynamicSymbols()
+		if err != nil {
+			return fmt.Errorf("failed to dump dynamic symbols: %w", err)
+		}
+		defer dynamicSymbols.Close()
+	}
+
+	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo, dynamicSymbols)
 	if err != nil {
 		return fmt.Errorf("failed to copy symbols: %w", err)
 	}
@@ -385,61 +426,94 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf
 	return nil
 }
 
-func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInfo *pclntab.GoPCLnTabInfo) error {
+func dumpGoPCLnTabData(goPCLnTabInfo *pclntab.GoPCLnTabInfo) (goPCLnTabDump, error) {
+	// Dump gopclntab data to a temporary file
+	gopclntabFile, err := os.CreateTemp("", "gopclntab")
+	if err != nil {
+		return goPCLnTabDump{}, fmt.Errorf("failed to create temp file to extract GoPCLnTab: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(gopclntabFile.Name())
+		}
+	}()
+
+	defer gopclntabFile.Close()
+
+	_, err = gopclntabFile.Write(goPCLnTabInfo.Data)
+	if err != nil {
+		return goPCLnTabDump{}, fmt.Errorf("failed to write GoPCLnTab: %w", err)
+	}
+
+	if goPCLnTabInfo.GoFuncData == nil {
+		return goPCLnTabDump{goPCLnTabPath: gopclntabFile.Name()}, nil
+	}
+
+	// Dump gofunc data to a temporary file
+	gofuncFile, err := os.CreateTemp("", "gofunc")
+	if err != nil {
+		return goPCLnTabDump{}, fmt.Errorf("failed to create temp file to extract GoFunc: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(gopclntabFile.Name())
+		}
+	}()
+
+	defer gofuncFile.Close()
+	_, err = gofuncFile.Write(goPCLnTabInfo.GoFuncData)
+	if err != nil {
+		return goPCLnTabDump{}, fmt.Errorf("failed to write GoFunc: %w", err)
+	}
+
+	return goPCLnTabDump{goPCLnTabPath: gopclntabFile.Name(), goFuncPath: gofuncFile.Name()}, nil
+}
+
+func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInfo *pclntab.GoPCLnTabInfo, dynamicSymbols *symbol.DynamicSymbolsDump) error {
 	args := []string{
 		"--only-keep-debug",
 		"--remove-section=.gdb_index",
 	}
 
 	if goPCLnTabInfo != nil {
-		// Dump gopclntab data to a temporary file
-		gopclntabFile, err := os.CreateTemp("", "gopclntab")
-		if err != nil {
-			return fmt.Errorf("failed to create temp file to extract GoPCLnTab: %w", err)
-		}
-		defer os.Remove(gopclntabFile.Name())
-		defer gopclntabFile.Close()
-
-		_, err = gopclntabFile.Write(goPCLnTabInfo.Data)
-		if err != nil {
-			return fmt.Errorf("failed to write GoPCLnTab: %w", err)
-		}
-
-		var gofuncFile *os.File
-		if goPCLnTabInfo.GoFuncData != nil {
-			// Dump gofunc data to a temporary file
-			gofuncFile, err = os.CreateTemp("", "gofunc")
-			if err != nil {
-				return fmt.Errorf("failed to create temp file to extract GoFunc: %w", err)
-			}
-			defer os.Remove(gofuncFile.Name())
-			defer gofuncFile.Close()
-			_, err = gofuncFile.Write(goPCLnTabInfo.GoFuncData)
-			if err != nil {
-				return fmt.Errorf("failed to write GoFunc: %w", err)
-			}
-		}
-
 		// objcopy does not support extracting debug information (with `--only-keep-debug`) and keeping
 		// some non-debug sections (like gopclntab) at the same time.
 		// `--only-keep-debug` does not really remove non-debug sections, it keeps their memory size
 		// but makes their file size 0 by marking them NOBITS (effectively zeroing them).
 		// That's why we extract debug information and at the same time remove `.gopclntab` section (with
 		// with `--remove-section=.gopclntab`) and add it back from the temporary file.
+		gopclntabDump, err := dumpGoPCLnTabData(goPCLnTabInfo)
+		if err != nil {
+			return fmt.Errorf("failed to dump GoPCLnTab data: %w", err)
+		}
+		defer gopclntabDump.Close()
+
 		args = append(args,
 			"--remove-section=.gopclntab",
 			"--remove-section=.data.rel.ro.gopclntab",
-			"--add-section", ".gopclntab="+gopclntabFile.Name(),
+			"--add-section", ".gopclntab="+gopclntabDump.goPCLnTabPath,
 			"--set-section-flags", ".gopclntab=readonly",
 			fmt.Sprintf("--change-section-address=.gopclntab=%d", goPCLnTabInfo.Address))
 
-		if gofuncFile != nil {
-			args = append(args, "--add-section", ".gofunc="+gofuncFile.Name(),
+		if gopclntabDump.goFuncPath != "" {
+			args = append(args, "--add-section", ".gofunc="+gopclntabDump.goFuncPath,
 				"--set-section-flags", ".gofunc=readonly",
 				fmt.Sprintf("--change-section-address=.gofunc=%d", goPCLnTabInfo.GoFuncAddr),
 				"--strip-symbol", "go:func.*",
 				"--add-symbol", "go:func.*=.gofunc:0")
 		}
+	}
+
+	if dynamicSymbols != nil {
+		args = append(args,
+			"--remove-section=.dynsym",
+			"--remove-section=.dynstr",
+			"--add-section", ".dynsym="+dynamicSymbols.DynSymPath,
+			"--add-section", ".dynstr="+dynamicSymbols.DynStrPath,
+			fmt.Sprintf("--change-section-address=.dynsym=%d", dynamicSymbols.DynSymAddr),
+			fmt.Sprintf("--change-section-address=.dynstr=%d", dynamicSymbols.DynStrAddr),
+			fmt.Sprintf("--set-section-alignment=.dynsym=%d", dynamicSymbols.DynSymAlign),
+			fmt.Sprintf("--set-section-alignment=.dynstr=%d", dynamicSymbols.DynStrAlign))
 	}
 
 	args = append(args, inputPath, outputPath)
@@ -544,4 +618,11 @@ func cleanCmdError(err error) error {
 		}
 	}
 	return err
+}
+
+func (g *goPCLnTabDump) Close() {
+	os.Remove(g.goPCLnTabPath)
+	if g.goFuncPath != "" {
+		os.Remove(g.goFuncPath)
+	}
 }

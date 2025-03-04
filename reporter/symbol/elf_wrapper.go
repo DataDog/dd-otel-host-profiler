@@ -7,6 +7,9 @@ package symbol
 
 import (
 	"debug/elf"
+	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 
@@ -17,6 +20,7 @@ import (
 )
 
 const buildIDSectionName = ".note.gnu.build-id"
+const maxBytesLargeSection = 16 * 1024 * 1024
 
 var debugStrSectionNames = []string{".debug_str", ".zdebug_str", ".debug_str.dwo"}
 var debugInfoSectionNames = []string{".debug_info", ".zdebug_info"}
@@ -166,6 +170,66 @@ func (e *elfWrapper) findDebugSymbolsWithDebugLink() *elfWrapper {
 		return debugELF
 	}
 	return nil
+}
+
+func DumpDynamicSymbols(elfFile *pfelf.File) (*DynamicSymbolsDump, error) {
+	dynSymFile, err := os.CreateTemp("", "dynsym")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(dynSymFile.Name())
+		}
+	}()
+
+	defer dynSymFile.Close()
+	dynStrFile, err := os.CreateTemp("", "dynstr")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(dynStrFile.Name())
+		}
+	}()
+
+	defer dynStrFile.Close()
+
+	dynSymSection := elfFile.Section(".dynsym")
+	if dynSymFile == nil {
+		return nil, errors.New("failed to find .dynsym section")
+	}
+	data, err := dynSymSection.Data(maxBytesLargeSection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .dynsym section: %w", err)
+	}
+	_, err = dynSymFile.Write(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write .dynsym section: %w", err)
+	}
+
+	dynStrSection := elfFile.Section(".dynstr")
+	if dynStrFile == nil {
+		return nil, errors.New("failed to find .dynstr section")
+	}
+	data, err = dynStrSection.Data(maxBytesLargeSection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .dynstr section: %w", err)
+	}
+	_, err = dynStrFile.Write(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write .dynstr section: %w", err)
+	}
+
+	return &DynamicSymbolsDump{
+		DynSymPath:  dynSymFile.Name(),
+		DynStrPath:  dynStrFile.Name(),
+		DynSymAddr:  dynSymSection.Addr,
+		DynStrAddr:  dynStrSection.Addr,
+		DynSymAlign: dynSymSection.Addralign,
+		DynStrAlign: dynStrSection.Addralign,
+	}, nil
 }
 
 // HasDWARFData is a copy of pfelf.HasDWARFData, but for the libpf.File interface.
