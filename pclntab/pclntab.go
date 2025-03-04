@@ -440,7 +440,6 @@ func (g *GoPCLnTabInfo) trimGoFunc(goFuncData []byte, goFuncAddr uint64, symtab 
 		// symbol runtime.gcbits.* follows goFunc, try to use it to determine the end of goFunc.
 		nextSymAddr, err := symtab.LookupSymbolAddress("runtime.gcbits.*")
 		if err == nil && uint64(nextSymAddr) > goFuncAddr {
-			fmt.Printf("nextSymAddr: 0x%x\n", nextSymAddr)
 			dist := uint64(nextSymAddr) - goFuncAddr
 			if dist < uint64(len(goFuncData)) {
 				return goFuncData[:dist], nil
