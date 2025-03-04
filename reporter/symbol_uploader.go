@@ -28,6 +28,7 @@ import (
 	lru "github.com/elastic/go-freelru"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
+	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
@@ -43,7 +44,8 @@ const (
 	symbolCopyTimeout = 10 * time.Second
 	uploadTimeout     = 15 * time.Second
 
-	buildIDSectionName = ".note.gnu.build-id"
+	buildIDSectionName   = ".note.gnu.build-id"
+	maxBytesLargeSection = 16 * 1024 * 1024
 )
 
 type uploadData struct {
@@ -66,6 +68,20 @@ type DatadogSymbolUploader struct {
 	client         *http.Client
 	uploadQueue    chan uploadData
 	symbolQueriers []DatadogSymbolQuerier
+}
+
+type DynamicSymbolsDump struct {
+	DynSymPath  string
+	DynStrPath  string
+	DynSymAddr  uint64
+	DynStrAddr  uint64
+	DynSymAlign uint64
+	DynStrAlign uint64
+}
+
+type goPCLnTabDump struct {
+	goPCLnTabPath string
+	goFuncPath    string
 }
 
 func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
@@ -317,6 +333,22 @@ func newSymbolUploadRequestMetadata(e *elfSymbols, symbolSource SymbolSource, pr
 	}
 }
 
+func (d *DatadogSymbolUploader) dumpElfData(symbols *elfSymbols) (string, error) {
+	// No associated file -> probably vdso, dump the ELF data to a file
+	tempElfFile, err := os.CreateTemp("", "vdso")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file to extract symbols: %w", err)
+	}
+	defer tempElfFile.Close()
+
+	err = symbols.dumpElfData(tempElfFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to dump ELF data to file: %w", err)
+	}
+
+	return tempElfFile.Name(), nil
+}
+
 func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbols *elfSymbols, ind int) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
@@ -341,22 +373,24 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbols *elfS
 
 	if elfPath == "" {
 		// No associated file -> probably vdso, dump the ELF data to a file
-		tempElfFile, err2 := os.CreateTemp("", "vdso")
-		if err2 != nil {
-			return fmt.Errorf("failed to create temp file to extract symbols: %w", err)
+		elfPath, err = d.dumpElfData(symbols)
+		if err != nil {
+			return fmt.Errorf("failed to dump ELF data: %w", err)
 		}
-		defer os.Remove(tempElfFile.Name())
-		defer tempElfFile.Close()
-
-		err2 = symbols.dumpElfData(tempElfFile)
-		if err2 != nil {
-			return fmt.Errorf("failed to dump ELF data to file: %w", err)
-		}
-
-		elfPath = tempElfFile.Name()
+		defer os.Remove(elfPath)
 	}
 
-	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo)
+	var dynamicSymbols *DynamicSymbolsDump
+	if symbolSource == DynamicSymbolTable {
+		// `objcopy --only-keep-debug` does not keep dynamic symbols, so we need to dump them separately and add them back
+		dynamicSymbols, err = DumpDynamicSymbols(symbols.wrapper.elfFile)
+		if err != nil {
+			return fmt.Errorf("failed to dump dynamic symbols: %w", err)
+		}
+		defer dynamicSymbols.Close()
+	}
+
+	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo, dynamicSymbols)
 	if err != nil {
 		return fmt.Errorf("failed to copy symbols: %w", err)
 	}
@@ -369,61 +403,94 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbols *elfS
 	return nil
 }
 
-func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInfo *pclntab.GoPCLnTabInfo) error {
+func dumpGoPCLnTabData(goPCLnTabInfo *pclntab.GoPCLnTabInfo) (goPCLnTabDump, error) {
+	// Dump gopclntab data to a temporary file
+	gopclntabFile, err := os.CreateTemp("", "gopclntab")
+	if err != nil {
+		return goPCLnTabDump{}, fmt.Errorf("failed to create temp file to extract GoPCLnTab: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(gopclntabFile.Name())
+		}
+	}()
+
+	defer gopclntabFile.Close()
+
+	_, err = gopclntabFile.Write(goPCLnTabInfo.Data)
+	if err != nil {
+		return goPCLnTabDump{}, fmt.Errorf("failed to write GoPCLnTab: %w", err)
+	}
+
+	if goPCLnTabInfo.GoFuncData == nil {
+		return goPCLnTabDump{goPCLnTabPath: gopclntabFile.Name()}, nil
+	}
+
+	// Dump gofunc data to a temporary file
+	gofuncFile, err := os.CreateTemp("", "gofunc")
+	if err != nil {
+		return goPCLnTabDump{}, fmt.Errorf("failed to create temp file to extract GoFunc: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(gopclntabFile.Name())
+		}
+	}()
+
+	defer gofuncFile.Close()
+	_, err = gofuncFile.Write(goPCLnTabInfo.GoFuncData)
+	if err != nil {
+		return goPCLnTabDump{}, fmt.Errorf("failed to write GoFunc: %w", err)
+	}
+
+	return goPCLnTabDump{goPCLnTabPath: gopclntabFile.Name(), goFuncPath: gofuncFile.Name()}, nil
+}
+
+func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInfo *pclntab.GoPCLnTabInfo, dynamicSymbols *DynamicSymbolsDump) error {
 	args := []string{
 		"--only-keep-debug",
 		"--remove-section=.gdb_index",
 	}
 
 	if goPCLnTabInfo != nil {
-		// Dump gopclntab data to a temporary file
-		gopclntabFile, err := os.CreateTemp("", "gopclntab")
-		if err != nil {
-			return fmt.Errorf("failed to create temp file to extract GoPCLnTab: %w", err)
-		}
-		defer os.Remove(gopclntabFile.Name())
-		defer gopclntabFile.Close()
-
-		_, err = gopclntabFile.Write(goPCLnTabInfo.Data)
-		if err != nil {
-			return fmt.Errorf("failed to write GoPCLnTab: %w", err)
-		}
-
-		var gofuncFile *os.File
-		if goPCLnTabInfo.GoFuncData != nil {
-			// Dump gofunc data to a temporary file
-			gofuncFile, err = os.CreateTemp("", "gofunc")
-			if err != nil {
-				return fmt.Errorf("failed to create temp file to extract GoFunc: %w", err)
-			}
-			defer os.Remove(gofuncFile.Name())
-			defer gofuncFile.Close()
-			_, err = gofuncFile.Write(goPCLnTabInfo.GoFuncData)
-			if err != nil {
-				return fmt.Errorf("failed to write GoFunc: %w", err)
-			}
-		}
-
 		// objcopy does not support extracting debug information (with `--only-keep-debug`) and keeping
 		// some non-debug sections (like gopclntab) at the same time.
 		// `--only-keep-debug` does not really remove non-debug sections, it keeps their memory size
 		// but makes their file size 0 by marking them NOBITS (effectively zeroing them).
 		// That's why we extract debug information and at the same time remove `.gopclntab` section (with
 		// with `--remove-section=.gopclntab`) and add it back from the temporary file.
+		gopclntabDump, err := dumpGoPCLnTabData(goPCLnTabInfo)
+		if err != nil {
+			return fmt.Errorf("failed to dump GoPCLnTab data: %w", err)
+		}
+		defer gopclntabDump.Close()
+
 		args = append(args,
 			"--remove-section=.gopclntab",
 			"--remove-section=.data.rel.ro.gopclntab",
-			"--add-section", ".gopclntab="+gopclntabFile.Name(),
+			"--add-section", ".gopclntab="+gopclntabDump.goPCLnTabPath,
 			"--set-section-flags", ".gopclntab=readonly",
 			fmt.Sprintf("--change-section-address=.gopclntab=%d", goPCLnTabInfo.Address))
 
-		if gofuncFile != nil {
-			args = append(args, "--add-section", ".gofunc="+gofuncFile.Name(),
+		if gopclntabDump.goFuncPath != "" {
+			args = append(args, "--add-section", ".gofunc="+gopclntabDump.goFuncPath,
 				"--set-section-flags", ".gofunc=readonly",
 				fmt.Sprintf("--change-section-address=.gofunc=%d", goPCLnTabInfo.GoFuncAddr),
 				"--strip-symbol", "go:func.*",
 				"--add-symbol", "go:func.*=.gofunc:0")
 		}
+	}
+
+	if dynamicSymbols != nil {
+		args = append(args,
+			"--remove-section=.dynsym",
+			"--remove-section=.dynstr",
+			"--add-section", ".dynsym="+dynamicSymbols.DynSymPath,
+			"--add-section", ".dynstr="+dynamicSymbols.DynStrPath,
+			fmt.Sprintf("--change-section-address=.dynsym=%d", dynamicSymbols.DynSymAddr),
+			fmt.Sprintf("--change-section-address=.dynstr=%d", dynamicSymbols.DynStrAddr),
+			fmt.Sprintf("--set-section-alignment=.dynsym=%d", dynamicSymbols.DynSymAlign),
+			fmt.Sprintf("--set-section-alignment=.dynstr=%d", dynamicSymbols.DynStrAlign))
 	}
 
 	args = append(args, inputPath, outputPath)
@@ -536,4 +603,76 @@ func cleanCmdError(err error) error {
 		}
 	}
 	return err
+}
+
+func DumpDynamicSymbols(elfFile *pfelf.File) (*DynamicSymbolsDump, error) {
+	dynSymFile, err := os.CreateTemp("", "dynsym")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(dynSymFile.Name())
+		}
+	}()
+
+	defer dynSymFile.Close()
+	dynStrFile, err := os.CreateTemp("", "dynstr")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(dynStrFile.Name())
+		}
+	}()
+
+	defer dynStrFile.Close()
+
+	dynSymSection := elfFile.Section(".dynsym")
+	if dynSymFile == nil {
+		return nil, errors.New("failed to find .dynsym section")
+	}
+	data, err := dynSymSection.Data(maxBytesLargeSection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .dynsym section: %w", err)
+	}
+	_, err = dynSymFile.Write(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write .dynsym section: %w", err)
+	}
+
+	dynStrSection := elfFile.Section(".dynstr")
+	if dynStrFile == nil {
+		return nil, errors.New("failed to find .dynstr section")
+	}
+	data, err = dynStrSection.Data(maxBytesLargeSection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .dynstr section: %w", err)
+	}
+	_, err = dynStrFile.Write(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write .dynstr section: %w", err)
+	}
+
+	return &DynamicSymbolsDump{
+		DynSymPath:  dynSymFile.Name(),
+		DynStrPath:  dynStrFile.Name(),
+		DynSymAddr:  dynSymSection.Addr,
+		DynStrAddr:  dynStrSection.Addr,
+		DynSymAlign: dynSymSection.Addralign,
+		DynStrAlign: dynStrSection.Addralign,
+	}, nil
+}
+
+func (d *DynamicSymbolsDump) Close() {
+	os.Remove(d.DynSymPath)
+	os.Remove(d.DynStrPath)
+}
+
+func (g *goPCLnTabDump) Close() {
+	os.Remove(g.goPCLnTabPath)
+	if g.goFuncPath != "" {
+		os.Remove(g.goFuncPath)
+	}
 }
