@@ -103,6 +103,8 @@ type uploadProfileData struct {
 	profile     *pprofile.Profile
 	containerID string
 	serviceName string
+	runtime     string
+	family      string
 }
 
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
@@ -432,7 +434,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data uploadProfileD
 	}
 	// The profiler_name tag allows us to differentiate the source of the profiles.
 	tags = append(tags,
-		MakeTag("runtime", "native"),
+		MakeTag("runtime", data.runtime),
 		MakeTag("remote_symbols", "yes"),
 		MakeTag("profiler_name", profilerName),
 		MakeTag("profiler_version", r.version),
@@ -445,7 +447,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data uploadProfileD
 	log.Infof("Tags: %v", tags.String())
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
 		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), r.intakeURL,
-		tags, r.version, r.apiKey, data.containerID)
+		tags, r.version, r.apiKey, data.containerID, data.family)
 }
 
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
@@ -538,7 +540,8 @@ func (r *DatadogReporter) getPprofProfile() {
 
 		fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
 		totalSampleCount := 0
-
+		var sampleRuntime string
+		var sampleFamily string
 		for traceKey, traceInfo := range s {
 			sample := &pprofile.Sample{}
 
@@ -620,6 +623,14 @@ func (r *DatadogReporter) getPprofProfile() {
 				sample.Location = append(sample.Location, loc)
 			}
 
+			if len(sampleRuntime) == 0 && len(traceInfo.frameTypes) > 0 {
+				sampleRuntime = frameTypeToRuntime(traceInfo.frameTypes[len(traceInfo.frameTypes)-1])
+			}
+
+			if len(sampleFamily) == 0 && len(traceInfo.frameTypes) > 0 {
+				sampleFamily = frameTypeToFamily(traceInfo.frameTypes[len(traceInfo.frameTypes)-1])
+			}
+
 			processMeta, _ := r.processes.Get(traceKey.pid)
 			execPath := processMeta.executablePath
 			if execPath == "" {
@@ -669,6 +680,7 @@ func (r *DatadogReporter) getPprofProfile() {
 			}
 			totalSampleCount += len(traceInfo.timestamps)
 		}
+
 		log.Infof("Reporting pprof profile with %d samples from %v to %v",
 			totalSampleCount, startTS, endTS)
 
@@ -684,6 +696,8 @@ func (r *DatadogReporter) getPprofProfile() {
 			endTS:       endTS,
 			serviceName: e.service,
 			containerID: e.containerID,
+			runtime:     sampleRuntime,
+			family:      sampleFamily,
 		}:
 		default:
 			log.Warnf("Dropping profile data")
@@ -845,4 +859,56 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 		containerMetadata: containerMetadata,
 		ddService:         ddService,
 	})
+}
+
+func frameTypeToRuntime(frameType libpf.FrameType) string {
+	def := "native"
+
+	switch frameType {
+	case libpf.NativeFrame:
+		return def
+	case libpf.KernelFrame:
+		return def
+	case libpf.HotSpotFrame:
+		return "jvm"
+	case libpf.PHPFrame:
+		return "zendengine"
+	case libpf.V8Frame:
+		return "nodejs"
+	case libpf.PythonFrame:
+		return "CPython"
+	case libpf.RubyFrame:
+		return "ruby"
+	case libpf.DotnetFrame:
+		return "dotnet"
+
+	default:
+		return def
+	}
+}
+
+func frameTypeToFamily(frameType libpf.FrameType) string {
+	def := "native"
+
+	switch frameType {
+	case libpf.NativeFrame:
+		return def
+	case libpf.KernelFrame:
+		return def
+	case libpf.HotSpotFrame:
+		return "java"
+	case libpf.PHPFrame:
+		return "php"
+	case libpf.V8Frame:
+		return "node"
+	case libpf.PythonFrame:
+		return "python"
+	case libpf.RubyFrame:
+		return "ruby"
+	case libpf.DotnetFrame:
+		return "dotnet"
+
+	default:
+		return def
+	}
 }
