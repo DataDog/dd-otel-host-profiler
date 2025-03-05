@@ -8,21 +8,46 @@ package reporter
 import (
 	"context"
 	"debug/elf"
+	"fmt"
+	"mime"
+	"mime/multipart"
+	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/DataDog/zstd"
+	"github.com/jarcoal/httpmock"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
+	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 )
 
 func findSymbol(f *elf.File, name string) *elf.Symbol {
 	syms, err := f.Symbols()
+	if err != nil {
+		return nil
+	}
+	for _, sym := range syms {
+		if sym.Name == name {
+			return &sym
+		}
+	}
+	return nil
+}
+
+func findDynamicSymbol(f *elf.File, name string) *elf.Symbol {
+	syms, err := f.DynamicSymbols()
 	if err != nil {
 		return nil
 	}
@@ -74,7 +99,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	assert.NotNil(t, goPCLnTabInfo)
 
 	outputFile := filepath.Join(tmpDir, "output.dbg")
-	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo)
+	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo, nil)
 	require.NoError(t, err)
 	checkGoPCLnTab(t, outputFile, true)
 }
@@ -112,4 +137,95 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 			checkGoPCLnTabExtraction(t, exeStripped, tmpDir)
 		})
 	}
+}
+
+func newTestUploader() (*DatadogSymbolUploader, error) {
+	cfg := &SymbolUploaderConfig{
+		Enabled:              true,
+		UploadDynamicSymbols: true,
+		SymbolQueryInterval:  0,
+		SymbolEndpoints: []SymbolEndpoint{
+			{
+				Site:   "foobar.com",
+				APIKey: "api_key",
+				AppKey: "app_key",
+			},
+		},
+	}
+	return NewDatadogSymbolUploader(cfg)
+}
+
+type DummyOpener struct{}
+
+func (o *DummyOpener) Open(path string) (reader process.ReadAtCloser, actualPath string, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return f, fmt.Sprintf("/proc/%v/fd/%v", os.Getpid(), f.Fd()), nil
+}
+
+func checkRequest(t *testing.T, req *http.Request) {
+	reader := zstd.NewReader(req.Body)
+	defer reader.Close()
+
+	require.Equal(t, "zstd", req.Header.Get("Content-Encoding"))
+	_, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	boundary, ok := params["boundary"]
+	require.True(t, ok)
+	mr := multipart.NewReader(reader, boundary)
+	form, err := mr.ReadForm(1 << 20) // 1 MiB
+	require.NoError(t, err)
+	fhs, ok := form.File["elf_symbol_file"]
+	require.True(t, ok)
+	f, err := fhs[0].Open()
+	require.NoError(t, err)
+	defer f.Close()
+
+	elfFile, err := elf.NewFile(f)
+	require.NoError(t, err)
+	defer elfFile.Close()
+
+	require.NoError(t, err)
+	require.NotNil(t, findDynamicSymbol(elfFile, "foo"), "failed to find symbol foo")
+}
+
+func TestDynamicSymbolExtraction(t *testing.T) {
+	t.Parallel()
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
+	c := make(chan *http.Request, 1)
+
+	log.SetLevel(log.DebugLevel)
+	httpmock.RegisterResponder("POST", buildSymbolQueryURL("foobar.com"),
+		httpmock.NewStringResponder(200, `{"data": []}`))
+	httpmock.RegisterResponder("POST", buildSourcemapIntakeURL("foobar.com"),
+		func(req *http.Request) (*http.Response, error) {
+			fmt.Printf("Received request\n")
+			c <- req
+			return httpmock.NewStringResponse(200, ""), nil
+		})
+
+	srcFile := "../testdata/foo.c"
+	tmpDir := t.TempDir()
+	exe := filepath.Join(tmpDir, "libfoo.so")
+	cmd := exec.Command("gcc", "-Wl,--strip-all", "-shared", "-o", exe, srcFile)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
+
+	uploader, err := newTestUploader()
+	require.NoError(t, err)
+	go func() { uploader.Run(context.Background()) }()
+
+	uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
+
+	select {
+	case req := <-c:
+		checkRequest(t, req)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for request")
+	}
+	assert.Equal(t, 2, httpmock.GetTotalCallCount())
 }

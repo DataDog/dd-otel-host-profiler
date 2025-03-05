@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/DataDog/jsonapi"
@@ -49,10 +48,7 @@ type datadogSymbolQuerier struct {
 }
 
 func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (DatadogSymbolQuerier, error) {
-	symbolQueryURL, err := url.JoinPath("https://api."+ddSite, symbolQueryEndpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL: %w", err)
-	}
+	symbolQueryURL := buildSymbolQueryURL(ddSite)
 
 	return &datadogSymbolQuerier{
 		ddAPIKey:       ddAPIKey,
@@ -60,6 +56,10 @@ func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (DatadogSymbolQu
 		symbolQueryURL: symbolQueryURL,
 		client:         &http.Client{Timeout: uploadTimeout},
 	}, nil
+}
+
+func buildSymbolQueryURL(ddSite string) string {
+	return fmt.Sprintf("https://api.%s%s", ddSite, symbolQueryEndpoint)
 }
 
 func (d *datadogSymbolQuerier) Start(_ context.Context) {
