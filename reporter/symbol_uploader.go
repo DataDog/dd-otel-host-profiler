@@ -189,7 +189,7 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 		}
 	}
 
-	log.Debugf("Existing symbols for executable %s with build: %v", e, symbolSource)
+	log.Debugf("Existing symbols for executable %s: %v", e, symbolSource)
 	return symbolSource, nil
 }
 
@@ -221,7 +221,7 @@ func (d *DatadogSymbolUploader) getSymbolsFromDisk(uploadData uploadData) *elfSy
 func (d *DatadogSymbolUploader) upload(ctx context.Context, symbols *elfSymbols, ind int) bool {
 	existingSymbolSource, err := d.GetExistingSymbolsOnBackend(ctx, symbols, ind)
 	if err != nil {
-		log.Warnf("Failed to get existing symbols for executable %s: %v", symbols.fileHash, err)
+		log.Warnf("Failed to get existing symbols for executable %s: %v", symbols.filePath, err)
 		return false
 	}
 
