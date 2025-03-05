@@ -15,7 +15,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,6 +83,10 @@ type goPCLnTabDump struct {
 	goFuncPath    string
 }
 
+func buildSourcemapIntakeURL(site string) string {
+	return fmt.Sprintf("https://sourcemap-intake.%s%s", site, sourceMapEndpoint)
+}
+
 func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
 	err := exec.Command("objcopy", "--version").Run()
 	if err != nil {
@@ -98,12 +101,8 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 	var symbolQueriers = make([]DatadogSymbolQuerier, len(cfg.SymbolEndpoints))
 
 	for i, endpoints := range cfg.SymbolEndpoints {
-		var intakeURL string
 		var symbolQuerier DatadogSymbolQuerier
-		if intakeURL, err = url.JoinPath("https://sourcemap-intake."+endpoints.Site, sourceMapEndpoint); err != nil {
-			return nil, fmt.Errorf("failed to parse URL: %w", err)
-		}
-		intakeURLs[i] = intakeURL
+		intakeURLs[i] = buildSourcemapIntakeURL(endpoints.Site)
 
 		if symbolQuerier, err = NewDatadogSymbolQuerier(endpoints.Site, endpoints.APIKey, endpoints.AppKey); err != nil {
 			return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
