@@ -96,5 +96,9 @@ func (d *DatadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []stri
 		return nil, fmt.Errorf("error unmarshalling symbols query response: %w", err)
 	}
 
+	for i := range response {
+		response[i].SymbolSource = "none"
+	}
+
 	return response, nil
 }
