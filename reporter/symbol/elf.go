@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package reporter
+package symbol
 
 import (
 	"fmt"
@@ -17,11 +17,11 @@ import (
 )
 
 type elfWrapperWithSource struct {
-	wrapper *elfWrapper
-	source  SymbolSource
+	wrapper      *elfWrapper
+	symbolSource Source
 }
 
-type elfSymbols struct {
+type Elf struct {
 	elfWrapperWithSource
 
 	arch       string
@@ -29,7 +29,7 @@ type elfSymbols struct {
 	goBuildID  string
 	gnuBuildID string
 	fileHash   string
-	filePath   string
+	path       string
 
 	separateSymbols *elfWrapperWithSource
 
@@ -37,58 +37,82 @@ type elfSymbols struct {
 	goPCLnTabInfo *pclntab.GoPCLnTabInfo
 }
 
-func newElfSymbols(filePath string, fileID libpf.FileID, opener process.FileOpener) (*elfSymbols, error) {
-	wrapper, err := openELF(filePath, opener)
+func NewElf(path string, fileID libpf.FileID, opener process.FileOpener) (*Elf, error) {
+	wrapper, err := openELF(path, opener)
 
 	// This can happen for short-lived processes that are already gone by the time
 	// we try to upload symbols
 	if err != nil {
-		return nil, fmt.Errorf("executable not found: %s, %w", filePath, err)
+		return nil, fmt.Errorf("executable not found: %s, %w", path, err)
 	}
 
-	symbols := &elfSymbols{
+	elf := &Elf{
 		elfWrapperWithSource: elfWrapperWithSource{
-			wrapper: wrapper,
-			source:  wrapper.symbolSource(),
+			wrapper:      wrapper,
+			symbolSource: wrapper.symbolSource(),
 		},
 		arch:     runtime.GOARCH,
 		isGolang: wrapper.elfFile.IsGolang(),
-		filePath: filePath,
+		path:     path,
 		fileHash: fileID.StringNoQuotes(),
 	}
 
 	buildID, err := wrapper.elfFile.GetBuildID()
 	if err != nil {
 		log.Debugf(
-			"Unable to get GNU build ID for executable %s: %s", filePath, err)
+			"Unable to get GNU build ID for executable %s: %s", path, err)
 	} else {
-		symbols.gnuBuildID = buildID
+		elf.gnuBuildID = buildID
 	}
 
-	if symbols.isGolang {
+	if elf.isGolang {
 		goBuildID, err := wrapper.elfFile.GetGoBuildID()
 		if err != nil {
 			log.Debugf(
-				"Unable to get Go build ID for executable %s: %s", filePath, err)
+				"Unable to get Go build ID for executable %s: %s", path, err)
 		} else {
-			symbols.goBuildID = goBuildID
+			elf.goBuildID = goBuildID
 		}
 	}
 
-	if symbols.source < DebugInfo {
+	if elf.symbolSource < SourceDebugInfo {
 		separateSymbols := wrapper.findSeparateSymbolsWithDebugInfo()
 		if separateSymbols != nil {
-			symbols.separateSymbols = &elfWrapperWithSource{
-				wrapper: separateSymbols,
-				source:  DebugInfo,
+			elf.separateSymbols = &elfWrapperWithSource{
+				wrapper:      separateSymbols,
+				symbolSource: SourceDebugInfo,
 			}
 		}
 	}
 
-	return symbols, nil
+	return elf, nil
 }
 
-func (e *elfSymbols) close() {
+func (e *Elf) FileHash() string {
+	return e.fileHash
+}
+
+func (e *Elf) GnuBuildID() string {
+	return e.gnuBuildID
+}
+
+func (e *Elf) GoBuildID() string {
+	return e.goBuildID
+}
+
+func (e *Elf) IsGolang() bool {
+	return e.isGolang
+}
+
+func (e *Elf) Arch() string {
+	return e.arch
+}
+
+func (e *Elf) Path() string {
+	return e.path
+}
+
+func (e *Elf) Close() {
 	e.wrapper.Close()
 
 	if e.separateSymbols != nil {
@@ -96,21 +120,21 @@ func (e *elfSymbols) close() {
 	}
 }
 
-func (e *elfSymbols) symbolSource() SymbolSource {
-	source := e.source
+func (e *Elf) SymbolSource() Source {
+	source := e.symbolSource
 
 	if e.separateSymbols != nil {
-		source = max(source, e.separateSymbols.source)
+		source = max(source, e.separateSymbols.symbolSource)
 	}
 
 	return source
 }
 
-func (e *elfSymbols) hasGoPCLnTabInfo() bool {
+func (e *Elf) HasGoPCLnTabInfo() bool {
 	return e.goPCLnTabInfo != nil
 }
 
-func (e *elfSymbols) getGoPCLnTab() *pclntab.GoPCLnTabInfo {
+func (e *Elf) GoPCLnTab() *pclntab.GoPCLnTabInfo {
 	if !e.isGolang {
 		return nil
 	}
@@ -120,7 +144,7 @@ func (e *elfSymbols) getGoPCLnTab() *pclntab.GoPCLnTabInfo {
 
 	goPCLnTab, err := pclntab.FindGoPCLnTab(e.wrapper.elfFile)
 	if err != nil {
-		log.Debugf("Failed to find GoPCLnTab for executable %s: %v", e.filePath, err)
+		log.Debugf("Failed to find SourceGoPCLnTab for executable %s: %v", e.path, err)
 		return nil
 	}
 
@@ -129,25 +153,24 @@ func (e *elfSymbols) getGoPCLnTab() *pclntab.GoPCLnTabInfo {
 	return goPCLnTab
 }
 
-func (e *elfSymbols) getPath() string {
-	if e.separateSymbols != nil && e.separateSymbols.source > e.source {
+func (e *Elf) SymbolPathOnDisk() string {
+	if e.separateSymbols != nil && e.separateSymbols.symbolSource > e.symbolSource {
 		return e.separateSymbols.wrapper.actualFilePath
 	}
 
 	return e.wrapper.actualFilePath
 }
 
-func (e *elfSymbols) String() string {
-	hasPCLnTab := e.hasGoPCLnTabInfo()
-	symbolSource := e.symbolSource()
+func (e *Elf) String() string {
+	hasPCLnTab := e.HasGoPCLnTabInfo()
+	symbolSource := e.SymbolSource()
 	if hasPCLnTab {
-		symbolSource = max(symbolSource, GoPCLnTab)
+		symbolSource = max(symbolSource, SourceGoPCLnTab)
 	}
-	// TODO: add more information
 	return fmt.Sprintf(
 		"%s, arch=%s, gnu_build_id=%s, go_build_id=%s, file_hash=%s"+
 			", symbol_source=%s, has_gopclntab=%t",
-		e.filePath, e.arch, e.gnuBuildID, e.goBuildID, e.fileHash,
+		e.path, e.arch, e.gnuBuildID, e.goBuildID, e.fileHash,
 		symbolSource, hasPCLnTab,
 	)
 }
