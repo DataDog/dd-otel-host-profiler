@@ -3,7 +3,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package reporter
+package symbol
 
 import (
 	"debug/elf"
@@ -15,6 +15,8 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf/readatbuf"
 	"go.opentelemetry.io/ebpf-profiler/process"
 )
+
+const buildIDSectionName = ".note.gnu.build-id"
 
 var debugStrSectionNames = []string{".debug_str", ".zdebug_str", ".debug_str.dwo"}
 var debugInfoSectionNames = []string{".debug_info", ".zdebug_info"}
@@ -54,20 +56,20 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 	return &elfWrapper{reader: r, elfFile: ef, filePath: filePath, actualFilePath: actualFilePath, opener: opener}, nil
 }
 
-func (e *elfWrapper) symbolSource() SymbolSource {
+func (e *elfWrapper) symbolSource() Source {
 	if HasDWARFData(e.elfFile) {
-		return DebugInfo
+		return SourceDebugInfo
 	}
 
 	if e.elfFile.Section(".symtab") != nil {
-		return SymbolTable
+		return SourceSymbolTable
 	}
 
 	if e.elfFile.Section(".dynsym") != nil {
-		return DynamicSymbolTable
+		return SourceDynamicSymbolTable
 	}
 
-	return None
+	return SourceNone
 }
 
 // findSeparateSymbolsWithDebugInfo attempts to find a separate symbol source for the elf file,

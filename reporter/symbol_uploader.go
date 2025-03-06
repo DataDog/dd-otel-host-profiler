@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
 const (
@@ -42,8 +43,6 @@ const (
 
 	symbolCopyTimeout = 10 * time.Second
 	uploadTimeout     = 15 * time.Second
-
-	buildIDSectionName = ".note.gnu.build-id"
 )
 
 type uploadData struct {
@@ -142,24 +141,28 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, bui
 }
 
 func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
-	e *elfSymbols, sQind int) (SymbolSource, error) {
-	buildIDs := []string{e.fileHash}
-	if e.gnuBuildID != "" {
-		buildIDs = append(buildIDs, e.gnuBuildID)
-	}
-	if e.goBuildID != "" {
-		buildIDs = append(buildIDs, e.goBuildID)
+	e *symbol.Elf, sQind int) (symbol.Source, error) {
+	buildIDs := []string{e.FileHash()}
+
+	gnuBuildID := e.GnuBuildID()
+	if gnuBuildID != "" {
+		buildIDs = append(buildIDs, gnuBuildID)
 	}
 
-	symbolFiles, err := d.symbolQueriers[sQind].QuerySymbols(ctx, buildIDs, e.arch)
-	if err != nil {
-		return None, fmt.Errorf("failed to query symbols: %w", err)
+	goBuildID := e.GoBuildID()
+	if goBuildID != "" {
+		buildIDs = append(buildIDs, goBuildID)
 	}
-	symbolSource := None
+
+	symbolFiles, err := d.symbolQueriers[sQind].QuerySymbols(ctx, buildIDs, e.Arch())
+	if err != nil {
+		return symbol.SourceNone, fmt.Errorf("failed to query symbols: %w", err)
+	}
+	symbolSource := symbol.SourceNone
 	for _, symbolFile := range symbolFiles {
-		src, err := NewSymbolSource(symbolFile.SymbolSource)
+		src, err := symbol.NewSource(symbolFile.SymbolSource)
 		if err != nil {
-			return None, fmt.Errorf("failed to parse symbol source: %w", err)
+			return symbol.SourceNone, fmt.Errorf("failed to parse symbol source: %w", err)
 		}
 		if src > symbolSource {
 			symbolSource = src
@@ -170,63 +173,63 @@ func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
 	return symbolSource, nil
 }
 
-func (d *DatadogSymbolUploader) getSymbolSource(symbols *elfSymbols) SymbolSource {
-	source := symbols.symbolSource()
+func (d *DatadogSymbolUploader) getSymbolSource(e *symbol.Elf) symbol.Source {
+	source := e.SymbolSource()
 
-	if source == DynamicSymbolTable && !d.uploadDynamicSymbols {
-		source = None
+	if source == symbol.SourceDynamicSymbolTable && !d.uploadDynamicSymbols {
+		source = symbol.SourceNone
 	}
 
 	return source
 }
 
-func (d *DatadogSymbolUploader) getSymbolsFromDisk(uploadData uploadData) *elfSymbols {
+func (d *DatadogSymbolUploader) getSymbolsFromDisk(uploadData uploadData) *symbol.Elf {
 	filePath := uploadData.filePath
 	fileID := uploadData.fileID
 
-	symbols, err := newElfSymbols(filePath, fileID, uploadData.opener)
+	elf, err := symbol.NewElf(filePath, fileID, uploadData.opener)
 	if err != nil {
 		log.Debugf("Skipping symbol upload for executable %s: %v",
 			uploadData.filePath, err)
 		return nil
 	}
 
-	return symbols
+	return elf
 }
 
 // Returns true if the upload was successful, false otherwise
-func (d *DatadogSymbolUploader) upload(ctx context.Context, symbols *elfSymbols, ind int) bool {
-	existingSymbolSource, err := d.GetExistingSymbolsOnBackend(ctx, symbols, ind)
+func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, ind int) bool {
+	existingSymbolSource, err := d.GetExistingSymbolsOnBackend(ctx, e, ind)
 	if err != nil {
-		log.Warnf("Failed to get existing symbols for executable %s: %v", symbols.fileHash, err)
+		log.Warnf("Failed to get existing symbols for executable %s: %v", e.FileHash(), err)
 		return false
 	}
 
-	symbolSource := d.getSymbolSource(symbols)
-	if symbols.isGolang && d.uploadGoPCLnTab {
-		symbolSource = max(symbolSource, GoPCLnTab)
+	symbolSource := d.getSymbolSource(e)
+	if e.IsGolang() && d.uploadGoPCLnTab {
+		symbolSource = max(symbolSource, symbol.SourceGoPCLnTab)
 	}
 
-	if symbolSource == None {
-		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", symbols.filePath)
+	if symbolSource == symbol.SourceNone {
+		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", e.Path())
 		return false
 	}
 
 	if existingSymbolSource >= symbolSource {
-		log.Infof("Skipping symbol upload for executable %s: existing symbols with source %v", symbols.filePath,
+		log.Infof("Skipping symbol upload for executable %s: existing symbols with source %v", e.Path(),
 			existingSymbolSource.String())
 		return true
 	}
 
-	if symbols.isGolang && d.uploadGoPCLnTab {
-		if symbols.getGoPCLnTab() == nil {
-			symbolSource = d.getSymbolSource(symbols)
-			if symbolSource == None {
-				log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", symbols.filePath)
+	if e.IsGolang() && d.uploadGoPCLnTab {
+		if e.GoPCLnTab() == nil {
+			symbolSource = d.getSymbolSource(e)
+			if symbolSource == symbol.SourceNone {
+				log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", e.Path())
 				return false
 			}
 			if existingSymbolSource >= symbolSource {
-				log.Infof("Skipping symbol upload for executable %s: existing symbols with source %v", symbols.filePath,
+				log.Infof("Skipping symbol upload for executable %s: existing symbols with source %v", e.Path(),
 					existingSymbolSource.String())
 				return true
 			}
@@ -234,17 +237,17 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, symbols *elfSymbols,
 	}
 
 	if d.dryRun {
-		log.Infof("Dry run: would upload symbols for executable: %s", symbols)
+		log.Infof("Dry run: would upload symbols for executable: %s", e)
 		return true
 	}
 
-	err = d.handleSymbols(ctx, symbols, ind)
+	err = d.handleSymbols(ctx, e, ind)
 	if err != nil {
-		log.Errorf("Failed to handle symbols: %v for executable: %s", err, symbols)
+		log.Errorf("Failed to handle symbols: %v for executable: %s", err, e)
 		return false
 	}
 
-	log.Infof("Symbols uploaded successfully for executable: %s", symbols)
+	log.Infof("Symbols uploaded successfully for executable: %s", e)
 	return true
 }
 
@@ -272,7 +275,7 @@ func (d *DatadogSymbolUploader) Run(ctx context.Context) {
 							d.uploadCache.Remove(uploadData.fileID)
 						}
 					}
-					symbols.close()
+					symbols.Close()
 				}
 			}
 		}()
@@ -293,21 +296,21 @@ type symbolUploadRequestMetadata struct {
 	FileName      string `json:"filename"`
 }
 
-func newSymbolUploadRequestMetadata(e *elfSymbols, symbolSource SymbolSource, profilerVersion string) *symbolUploadRequestMetadata {
+func newSymbolUploadRequestMetadata(e *symbol.Elf, symbolSource symbol.Source, profilerVersion string) *symbolUploadRequestMetadata {
 	return &symbolUploadRequestMetadata{
 		Arch:          runtime.GOARCH,
-		GNUBuildID:    e.gnuBuildID,
-		GoBuildID:     e.goBuildID,
-		FileHash:      e.fileHash,
+		GNUBuildID:    e.GnuBuildID(),
+		GoBuildID:     e.GoBuildID(),
+		FileHash:      e.FileHash(),
 		Type:          "elf_symbol_file",
 		Origin:        "dd-otel-host-profiler",
 		OriginVersion: profilerVersion,
 		SymbolSource:  symbolSource.String(),
-		FileName:      filepath.Base(e.filePath),
+		FileName:      filepath.Base(e.Path()),
 	}
 }
 
-func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbols *elfSymbols, ind int) error {
+func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf, ind int) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file to extract symbols: %w", err)
@@ -318,21 +321,21 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, symbols *elfS
 	ctx, cancel := context.WithTimeout(ctx, symbolCopyTimeout)
 	defer cancel()
 
-	symbolSource := d.getSymbolSource(symbols)
+	symbolSource := d.getSymbolSource(e)
 	var goPCLnTabInfo *pclntab.GoPCLnTabInfo
-	if symbols.isGolang && d.uploadGoPCLnTab {
-		goPCLnTabInfo = symbols.getGoPCLnTab()
+	if e.IsGolang() && d.uploadGoPCLnTab {
+		goPCLnTabInfo = e.GoPCLnTab()
 		if goPCLnTabInfo != nil {
-			symbolSource = max(symbolSource, GoPCLnTab)
+			symbolSource = max(symbolSource, symbol.SourceGoPCLnTab)
 		}
 	}
 
-	err = CopySymbols(ctx, symbols.getPath(), symbolFile.Name(), goPCLnTabInfo)
+	err = CopySymbols(ctx, e.SymbolPathOnDisk(), symbolFile.Name(), goPCLnTabInfo)
 	if err != nil {
 		return fmt.Errorf("failed to copy symbols: %w", err)
 	}
 
-	err = d.uploadSymbols(ctx, symbolFile, newSymbolUploadRequestMetadata(symbols, symbolSource, d.version), ind)
+	err = d.uploadSymbols(ctx, symbolFile, newSymbolUploadRequestMetadata(e, symbolSource, d.version), ind)
 	if err != nil {
 		return fmt.Errorf("failed to upload symbols: %w", err)
 	}
