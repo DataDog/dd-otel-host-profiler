@@ -391,7 +391,7 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 		}
 	}()
 
-	for i := 0; i < profileUploadWorkerCount; i++ {
+	for range profileUploadWorkerCount {
 		go func() {
 			for {
 				select {
