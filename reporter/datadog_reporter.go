@@ -365,7 +365,7 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 		r.processes.PurgeExpired()
 	})
 
-	for i := 0; i < profileUploadWorkerCount; i++ {
+	for range profileUploadWorkerCount {
 		go func() {
 			for {
 				select {
