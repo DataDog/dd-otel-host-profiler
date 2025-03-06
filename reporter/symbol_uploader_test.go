@@ -8,15 +8,24 @@ package reporter
 import (
 	"context"
 	"debug/elf"
+	"fmt"
+	"mime"
+	"mime/multipart"
+	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/DataDog/zstd"
+	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
+	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 )
@@ -34,10 +43,7 @@ func findSymbol(f *elf.File, name string) *elf.Symbol {
 	return nil
 }
 
-func checkGoPCLnTab(t *testing.T, filename string, checkGoFunc bool) {
-	f, err := elf.Open(filename)
-	require.NoError(t, err)
-	defer f.Close()
+func checkGoPCLnTab(t *testing.T, f *elf.File, checkGoFunc bool) {
 	section := f.Section(".gopclntab")
 	require.NotNil(t, section)
 	require.Equal(t, elf.SHT_PROGBITS, section.Type)
@@ -76,7 +82,36 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	outputFile := filepath.Join(tmpDir, "output.dbg")
 	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo)
 	require.NoError(t, err)
-	checkGoPCLnTab(t, outputFile, true)
+	f, err := elf.Open(outputFile)
+	require.NoError(t, err)
+	defer f.Close()
+	checkGoPCLnTab(t, f, true)
+}
+
+func checkRequest(t *testing.T, req *http.Request) {
+	reader := zstd.NewReader(req.Body)
+	defer reader.Close()
+
+	require.Equal(t, "zstd", req.Header.Get("Content-Encoding"))
+	_, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	boundary, ok := params["boundary"]
+	require.True(t, ok)
+	mr := multipart.NewReader(reader, boundary)
+	form, err := mr.ReadForm(1 << 20) // 1 MiB
+	require.NoError(t, err)
+	fhs, ok := form.File["elf_symbol_file"]
+	require.True(t, ok)
+	f, err := fhs[0].Open()
+	require.NoError(t, err)
+	defer f.Close()
+
+	elfFile, err := elf.NewFile(f)
+	require.NoError(t, err)
+	defer elfFile.Close()
+
+	require.NoError(t, err)
+	checkGoPCLnTab(t, elfFile, true)
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
@@ -112,4 +147,84 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 			checkGoPCLnTabExtraction(t, exeStripped, tmpDir)
 		})
 	}
+}
+
+func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbolUploader, error) {
+	cfg := &SymbolUploaderConfig{
+		Enabled:              true,
+		UploadDynamicSymbols: uploadDynamicSymbols,
+		UploadGoPCLnTab:      uploadGoPCLnTab,
+		SymbolQueryInterval:  0,
+		SymbolEndpoints: []SymbolEndpoint{
+			{
+				Site:   "foobar.com",
+				APIKey: "api_key",
+				AppKey: "app_key",
+			},
+		},
+	}
+	return NewDatadogSymbolUploader(cfg)
+}
+
+type DummyOpener struct{}
+
+func (o *DummyOpener) Open(path string) (reader process.ReadAtCloser, actualPath string, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return f, fmt.Sprintf("/proc/%v/fd/%v", os.Getpid(), f.Fd()), nil
+}
+
+func buildGoExeWithoutDebugInfos(t *testing.T, tmpDir string) string {
+	f, err := os.CreateTemp(tmpDir, "helloworld")
+	require.NoError(t, err)
+	defer f.Close()
+
+	exe := f.Name()
+	cmd := exec.Command("go", "build", "-o", exe, "-ldflags=-s -w", "../testdata/helloworld.go") // #nosec G204
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
+	return exe
+}
+
+//nolint:tparallel
+func TestSymbolUpload(t *testing.T) {
+	t.Parallel()
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
+	c := make(chan *http.Request)
+	httpmock.RegisterResponder("POST", buildSymbolQueryURL("foobar.com"),
+		httpmock.NewStringResponder(200, `{"data": []}`))
+	httpmock.RegisterResponder("POST", buildSourcemapIntakeURL("foobar.com"),
+		func(req *http.Request) (*http.Response, error) {
+			c <- req
+			return httpmock.NewStringResponse(200, ""), nil
+		})
+
+	exe := buildGoExeWithoutDebugInfos(t, t.TempDir())
+
+	t.Run("No upload when no symbols", func(t *testing.T) {
+		uploader, err := newTestUploader(false, false)
+		require.NoError(t, err)
+		require.NoError(t, uploader.Start(context.Background()))
+
+		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
+		uploader.Stop()
+
+		assert.Equal(t, 0, httpmock.GetTotalCallCount())
+	})
+
+	t.Run("Upload pclntab when enabled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		uploader, err := newTestUploader(false, true)
+		require.NoError(t, err)
+		require.NoError(t, uploader.Start(ctx))
+		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
+		req := <-c
+		checkRequest(t, req)
+		assert.Equal(t, 2, httpmock.GetTotalCallCount())
+	})
 }

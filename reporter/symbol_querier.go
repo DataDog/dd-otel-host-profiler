@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 
 	"github.com/DataDog/jsonapi"
 )
@@ -31,7 +30,11 @@ type SymbolsQueryRequest struct {
 	Arch     string   `json:"arch" jsonapi:"attribute" validate:"required"`
 }
 
-type DatadogSymbolQuerier struct {
+type SymbolQuerier interface {
+	QuerySymbols(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error)
+}
+
+type datadogSymbolQuerier struct {
 	ddAPIKey       string
 	ddAPPKey       string
 	symbolQueryURL string
@@ -39,13 +42,10 @@ type DatadogSymbolQuerier struct {
 	client *http.Client
 }
 
-func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (*DatadogSymbolQuerier, error) {
-	symbolQueryURL, err := url.JoinPath("https://api."+ddSite, symbolQueryEndpoint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL: %w", err)
-	}
+func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (SymbolQuerier, error) {
+	symbolQueryURL := buildSymbolQueryURL(ddSite)
 
-	return &DatadogSymbolQuerier{
+	return &datadogSymbolQuerier{
 		ddAPIKey:       ddAPIKey,
 		ddAPPKey:       ddAPPKey,
 		symbolQueryURL: symbolQueryURL,
@@ -53,7 +53,11 @@ func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (*DatadogSymbolQ
 	}, nil
 }
 
-func (d *DatadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string,
+func buildSymbolQueryURL(ddSite string) string {
+	return fmt.Sprintf("https://api.%s%s", ddSite, symbolQueryEndpoint)
+}
+
+func (d *datadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string,
 	arch string) ([]SymbolFile, error) {
 	symbolsQueryRequest := &SymbolsQueryRequest{
 		ID:       "symbols-query-request",
