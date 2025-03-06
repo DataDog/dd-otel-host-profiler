@@ -167,10 +167,7 @@ func (e *Elf) String() string {
 	if hasPCLnTab {
 		symbolSource = max(symbolSource, SourceGoPCLnTab)
 	}
-	return fmt.Sprintf(
-		"%s, arch=%s, gnu_build_id=%s, go_build_id=%s, file_hash=%s"+
-			", symbol_source=%s, has_gopclntab=%t",
-		e.path, e.arch, e.gnuBuildID, e.goBuildID, e.fileHash,
-		symbolSource, hasPCLnTab,
+	return fmt.Sprintf("%s, arch=%s, gnu_build_id=%s, go_build_id=%s, file_hash=%s, symbol_source=%s, has_gopclntab=%t",
+		e.path, e.arch, e.gnuBuildID, e.goBuildID, e.fileHash, symbolSource, hasPCLnTab,
 	)
 }
