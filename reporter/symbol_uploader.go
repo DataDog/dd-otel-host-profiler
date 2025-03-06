@@ -34,9 +34,10 @@ import (
 )
 
 const (
-	uploadCacheSize   = 16384
-	uploadQueueSize   = 1000
-	uploadWorkerCount = 10
+	uploadCacheSize      = 16384
+	uploadQueueSize      = 1000
+	retrievalWorkerCount = 10
+	uploadWorkerCount    = 10
 
 	sourceMapEndpoint = "/api/v2/srcmap"
 
@@ -46,7 +47,7 @@ const (
 	buildIDSectionName = ".note.gnu.build-id"
 )
 
-type uploadData struct {
+type symbolData struct {
 	filePath string
 	fileID   libpf.FileID
 	buildID  string
@@ -60,12 +61,13 @@ type DatadogSymbolUploader struct {
 	dryRun               bool
 	uploadDynamicSymbols bool
 	uploadGoPCLnTab      bool
-	workerCount          int
+	retrievalWorkerCount int
+	uploadWorkerCount    int
 
 	uploadCache    *lru.SyncedLRU[libpf.FileID, struct{}]
 	client         *http.Client
-	uploadQueue    chan uploadData
-	symbolQueriers []DatadogSymbolQuerier
+	retrievalQueue chan symbolData
+	symbolQueriers []SymbolQuerier
 }
 
 func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
@@ -79,11 +81,11 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 	}
 
 	var intakeURLs = make([]string, len(cfg.SymbolEndpoints))
-	var symbolQueriers = make([]DatadogSymbolQuerier, len(cfg.SymbolEndpoints))
+	var symbolQueriers = make([]SymbolQuerier, len(cfg.SymbolEndpoints))
 
 	for i, endpoints := range cfg.SymbolEndpoints {
 		var intakeURL string
-		var symbolQuerier DatadogSymbolQuerier
+		var symbolQuerier SymbolQuerier
 		if intakeURL, err = url.JoinPath("https://sourcemap-intake."+endpoints.Site, sourceMapEndpoint); err != nil {
 			return nil, fmt.Errorf("failed to parse URL: %w", err)
 		}
@@ -114,12 +116,110 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 		dryRun:               cfg.DryRun,
 		uploadDynamicSymbols: cfg.UploadDynamicSymbols,
 		uploadGoPCLnTab:      cfg.UploadGoPCLnTab,
-		workerCount:          uploadWorkerCount,
+		uploadWorkerCount:    uploadWorkerCount,
 		client:               &http.Client{Timeout: uploadTimeout},
 		uploadCache:          uploadCache,
-		uploadQueue:          make(chan uploadData, uploadQueueSize),
+		retrievalQueue:       make(chan symbolData, uploadQueueSize),
 		symbolQueriers:       symbolQueriers,
 	}, nil
+}
+
+func (d *DatadogSymbolUploader) Run(ctx context.Context) {
+	batchingInputChannels := make([]chan *elfSymbols, 0)
+	batchingOutputChannels := make([]chan SymbolsQueryResponse, 0)
+
+	for _, querier := range d.symbolQueriers {
+		batchingInputChan := make(chan *elfSymbols, 1000)
+		batchingInputChannels = append(batchingInputChannels, batchingInputChan)
+
+		batchingOutputChan := make(chan SymbolsQueryResponse, 1000)
+		batchingOutputChannels = append(batchingOutputChannels, batchingOutputChan)
+		querier.Start(ctx, batchingInputChan, batchingOutputChan)
+	}
+
+	var wg sync.WaitGroup
+
+	for range d.retrievalWorkerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case symbol := <-d.retrievalQueue:
+					// Record immediately to avoid duplicate uploads
+					d.uploadCache.Add(symbol.fileID, struct{}{})
+					symbols := d.getSymbolsFromDisk(symbol)
+					if symbols == nil {
+						d.uploadCache.Remove(symbol.fileID)
+						break
+					}
+					for _, batchChan := range batchingInputChannels {
+						batchChan <- symbols
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		for i, outputChan := range batchingOutputChannels {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case queryResponse := <-outputChan:
+					if queryResponse.Error != nil {
+						log.Errorf("Failed to query symbols: %v", queryResponse.Error)
+						queryResponse.Symbol.close()
+						break
+					}
+
+					if !d.upload(ctx, queryResponse.Symbol, i) {
+						// Remove from cache to retry later
+						d.uploadCache.Remove(queryResponse.Symbol.fileID)
+					}
+
+					queryResponse.Symbol.close()
+				}
+			}
+		}
+	}()
+
+	for i, outputChan := range batchingOutputChannels {
+
+		for range d.uploadWorkerCount {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case queryResponse := <-outputChan:
+						// TODO: upload symbols to endpoints concurrently (beware of gopclntab extraction that is not thread-safe)
+
+						if queryResponse.Error != nil {
+							log.Errorf("Failed to query symbols: %v", queryResponse.Error)
+							queryResponse.Symbol.close()
+							break
+						}
+
+						if !d.upload(ctx, queryResponse.Symbol, i) {
+							// Remove from cache to retry later
+							d.uploadCache.Remove(queryResponse.Symbol.fileID)
+						}
+
+						queryResponse.Symbol.close()
+					}
+				}
+			}()
+		}
+	}
+
+	wg.Wait()
 }
 
 func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, buildID string,
@@ -139,42 +239,11 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, bui
 	// do not seem to be worth it.
 	// We can revisit this choice later if we switch to a different symbol extraction method.
 	select {
-	case d.uploadQueue <- uploadData{filePath, fileID, buildID, opener}:
-		// Record immediately to avoid duplicate uploads
-		d.uploadCache.Add(fileID, struct{}{})
+	case d.retrievalQueue <- symbolData{filePath, fileID, buildID, opener}:
 	default:
 		log.Warnf("Symbol upload queue is full, skipping symbol upload for file %q with file ID %q and build ID %q",
 			filePath, fileID.StringNoQuotes(), buildID)
 	}
-}
-
-func (d *DatadogSymbolUploader) GetExistingSymbolsOnBackend(ctx context.Context,
-	e *elfSymbols, sQind int) (SymbolSource, error) {
-	buildIDs := []string{e.fileHash}
-	if e.gnuBuildID != "" {
-		buildIDs = append(buildIDs, e.gnuBuildID)
-	}
-	if e.goBuildID != "" {
-		buildIDs = append(buildIDs, e.goBuildID)
-	}
-
-	symbolFiles, err := d.symbolQueriers[sQind].QuerySymbols(ctx, buildIDs, e.arch)
-	if err != nil {
-		return None, fmt.Errorf("failed to query symbols: %w", err)
-	}
-	symbolSource := None
-	for _, symbolFile := range symbolFiles {
-		src, err := NewSymbolSource(symbolFile.SymbolSource)
-		if err != nil {
-			return None, fmt.Errorf("failed to parse symbol source: %w", err)
-		}
-		if src > symbolSource {
-			symbolSource = src
-		}
-	}
-
-	log.Debugf("Existing symbols for executable %s with build: %v", e, symbolSource)
-	return symbolSource, nil
 }
 
 func (d *DatadogSymbolUploader) getSymbolSource(symbols *elfSymbols) SymbolSource {
@@ -187,14 +256,14 @@ func (d *DatadogSymbolUploader) getSymbolSource(symbols *elfSymbols) SymbolSourc
 	return source
 }
 
-func (d *DatadogSymbolUploader) getSymbolsFromDisk(uploadData uploadData) *elfSymbols {
-	filePath := uploadData.filePath
-	fileID := uploadData.fileID
+func (d *DatadogSymbolUploader) getSymbolsFromDisk(data symbolData) *elfSymbols {
+	filePath := data.filePath
+	fileID := data.fileID
 
-	symbols, err := newElfSymbols(filePath, fileID, uploadData.opener)
+	symbols, err := newElfSymbols(filePath, fileID, data.opener)
 	if err != nil {
 		log.Debugf("Skipping symbol upload for executable %s: %v",
-			uploadData.filePath, err)
+			data.filePath, err)
 		return nil
 	}
 
@@ -203,12 +272,6 @@ func (d *DatadogSymbolUploader) getSymbolsFromDisk(uploadData uploadData) *elfSy
 
 // Returns true if the upload was successful, false otherwise
 func (d *DatadogSymbolUploader) upload(ctx context.Context, symbols *elfSymbols, ind int) bool {
-	existingSymbolSource, err := d.GetExistingSymbolsOnBackend(ctx, symbols, ind)
-	if err != nil {
-		log.Warnf("Failed to get existing symbols for executable %s: %v", symbols.fileHash, err)
-		return false
-	}
-
 	symbolSource := d.getSymbolSource(symbols)
 	if symbols.isGolang && d.uploadGoPCLnTab {
 		symbolSource = max(symbolSource, GoPCLnTab)
@@ -253,42 +316,6 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, symbols *elfSymbols,
 
 	log.Infof("Symbols uploaded successfully for executable: %s", symbols)
 	return true
-}
-
-func (d *DatadogSymbolUploader) Run(ctx context.Context) {
-	var wg sync.WaitGroup
-	for _, querier := range d.symbolQueriers {
-		querier.Start(ctx)
-	}
-
-	for range d.workerCount {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case uploadData := <-d.uploadQueue:
-					symbols := d.getSymbolsFromDisk(uploadData)
-					if symbols == nil {
-						d.uploadCache.Remove(uploadData.fileID)
-						break
-					}
-					// TODO: upload symbols to endpoints concurrently (beware of gopclntab extraction that is not thread-safe)
-					for i := range d.intakeURLs {
-						if !d.upload(ctx, symbols, i) {
-							// Remove from cache to retry later
-							d.uploadCache.Remove(uploadData.fileID)
-						}
-					}
-					symbols.close()
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
 }
 
 type symbolUploadRequestMetadata struct {

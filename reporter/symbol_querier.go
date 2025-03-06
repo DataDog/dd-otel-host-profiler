@@ -16,6 +16,7 @@ import (
 
 	"github.com/DataDog/jsonapi"
 	"github.com/jonboulle/clockwork"
+	log "github.com/sirupsen/logrus"
 )
 
 const symbolQueryEndpoint = "/api/v2/profiles/symbols/query"
@@ -33,10 +34,14 @@ type SymbolsQueryRequest struct {
 	Arch     string   `json:"arch" jsonapi:"attribute" validate:"required"`
 }
 
-type DatadogSymbolQuerier interface {
-	Start(ctx context.Context)
-	QuerySymbols(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error)
-	ResetCallCount() int
+type SymbolsQueryResponse struct {
+	Symbol        *elfSymbols
+	BackendSource SymbolSource
+	Error         error
+}
+
+type SymbolQuerier interface {
+	Start(ctx context.Context, inputChan <-chan *elfSymbols, outputChan chan<- SymbolsQueryResponse)
 }
 
 type datadogSymbolQuerier struct {
@@ -46,9 +51,10 @@ type datadogSymbolQuerier struct {
 
 	client    *http.Client
 	callCount int
+	inputChan <-chan SymbolsQueryRequest
 }
 
-func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (DatadogSymbolQuerier, error) {
+func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (SymbolQuerier, error) {
 	symbolQueryURL, err := url.JoinPath("https://api."+ddSite, symbolQueryEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
@@ -62,8 +68,54 @@ func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (DatadogSymbolQu
 	}, nil
 }
 
-func (d *datadogSymbolQuerier) Start(_ context.Context) {
-	// No-op
+func (d *datadogSymbolQuerier) Start(ctx context.Context, inputChan <-chan *elfSymbols, outputChan chan<- SymbolsQueryResponse) {
+	go func() {
+		for {
+		OUTPUT:
+			select {
+			case <-ctx.Done():
+				return
+			case e := <-inputChan:
+				buildIDs := []string{e.fileHash}
+				if e.gnuBuildID != "" {
+					buildIDs = append(buildIDs, e.gnuBuildID)
+				}
+				if e.goBuildID != "" {
+					buildIDs = append(buildIDs, e.goBuildID)
+				}
+
+				symbolFiles, err := d.QuerySymbols(ctx, buildIDs, e.arch)
+				if err != nil {
+					outputChan <- SymbolsQueryResponse{
+						Error: err,
+					}
+					break
+				}
+
+				symbolSource := None
+				for _, symbolFile := range symbolFiles {
+					src, err := NewSymbolSource(symbolFile.SymbolSource)
+					if err != nil {
+						outputChan <- SymbolsQueryResponse{
+							Error: err,
+						}
+						goto OUTPUT
+					}
+
+					if src > symbolSource {
+						symbolSource = src
+					}
+				}
+
+				log.Debugf("Existing symbols for executable %s with build: %v", e, symbolSource)
+
+				outputChan <- SymbolsQueryResponse{
+					Symbol:        e,
+					BackendSource: symbolSource,
+				}
+			}
+		}
+	}()
 }
 
 func (d *datadogSymbolQuerier) ResetCallCount() int {
@@ -139,7 +191,7 @@ type BatchQueryResult struct {
 type BatchSymbolQuerier struct {
 	batchInterval time.Duration
 
-	querier DatadogSymbolQuerier
+	querier SymbolQuerier
 
 	batchChan chan *batchedQuery
 	clock     clockwork.Clock
@@ -149,14 +201,14 @@ type BatchSymbolQuerierConfig struct {
 	//  The interval at which to batch queries
 	BatchInterval time.Duration
 
-	Querier DatadogSymbolQuerier
+	Querier SymbolQuerier
 }
 
-func NewBatchSymbolQuerier(config BatchSymbolQuerierConfig) *BatchSymbolQuerier {
+func NewBatchSymbolQuerier(config BatchSymbolQuerierConfig) SymbolQuerier {
 	return NewBatchSymbolQuerierWithClock(config, clockwork.NewRealClock())
 }
 
-func NewBatchSymbolQuerierWithClock(config BatchSymbolQuerierConfig, clock clockwork.Clock) *BatchSymbolQuerier {
+func NewBatchSymbolQuerierWithClock(config BatchSymbolQuerierConfig, clock clockwork.Clock) SymbolQuerier {
 	return &BatchSymbolQuerier{
 		batchInterval: config.BatchInterval,
 		querier:       config.Querier,

@@ -30,6 +30,7 @@ type elfSymbols struct {
 	gnuBuildID string
 	fileHash   string
 	filePath   string
+	fileID     libpf.FileID
 
 	separateSymbols *elfWrapperWithSource
 
@@ -55,6 +56,7 @@ func newElfSymbols(filePath string, fileID libpf.FileID, opener process.FileOpen
 		isGolang: wrapper.elfFile.IsGolang(),
 		filePath: filePath,
 		fileHash: fileID.StringNoQuotes(),
+		fileID:   fileID,
 	}
 
 	buildID, err := wrapper.elfFile.GetBuildID()
