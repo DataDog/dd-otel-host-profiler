@@ -170,16 +170,37 @@ func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
 
 type nullOutput struct{}
 
-func NewSinkStage[In any](fun func(context.Context, In)) *StageWorker[In, nullOutput] {
-	return &StageWorker[In, nullOutput]{
+type SinkStageWorker[In any] struct {
+	baseWorker[In, nullOutput]
+	processingFunc func(context.Context, In)
+}
+
+func NewSinkStage[In any](fun func(context.Context, In)) *SinkStageWorker[In] {
+	return &SinkStageWorker[In]{
 		baseWorker: baseWorker[In, nullOutput]{
-			outputChan:  nil,
 			concurrency: 1,
 		},
-		processingFunc: func(ctx context.Context, input In) []nullOutput {
-			fun(ctx, input)
-			return nil
-		},
+		processingFunc: fun,
+	}
+}
+
+func (w *SinkStageWorker[In]) Start(ctx context.Context) {
+	for range w.concurrency {
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case input, ok := <-w.inputChan:
+					if !ok {
+						return
+					}
+					w.processingFunc(ctx, input)
+				}
+			}
+		}()
 	}
 }
 
