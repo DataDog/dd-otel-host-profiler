@@ -16,11 +16,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DataDog/zstd"
 	"github.com/jarcoal/httpmock"
+	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -28,6 +31,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
 func findSymbol(f *elf.File, name string) *elf.Symbol {
@@ -149,12 +153,12 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 	}
 }
 
-func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbolUploader, error) {
+func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool, batchingInterval time.Duration) (*DatadogSymbolUploader, error) {
 	cfg := &SymbolUploaderConfig{
 		Enabled:              true,
 		UploadDynamicSymbols: uploadDynamicSymbols,
 		UploadGoPCLnTab:      uploadGoPCLnTab,
-		SymbolQueryInterval:  0,
+		SymbolQueryInterval:  batchingInterval,
 		SymbolEndpoints: []SymbolEndpoint{
 			{
 				Site:   "foobar.com",
@@ -166,9 +170,9 @@ func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbol
 	return NewDatadogSymbolUploader(cfg)
 }
 
-type DummyOpener struct{}
+type TestOpener struct{}
 
-func (o *DummyOpener) Open(path string) (reader process.ReadAtCloser, actualPath string, err error) {
+func (o *TestOpener) Open(path string) (reader process.ReadAtCloser, actualPath string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, "", err
@@ -194,37 +198,176 @@ func TestSymbolUpload(t *testing.T) {
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
-	c := make(chan *http.Request)
-	httpmock.RegisterResponder("POST", buildSymbolQueryURL("foobar.com"),
-		httpmock.NewStringResponder(200, `{"data": []}`))
-	httpmock.RegisterResponder("POST", buildSourcemapIntakeURL("foobar.com"),
-		func(req *http.Request) (*http.Response, error) {
-			c <- req
-			return httpmock.NewStringResponse(200, ""), nil
-		})
+	symbolQueryURL := buildSymbolQueryURL("foobar.com")
+	sourcemapIntakeURL := buildSourcemapIntakeURL("foobar.com")
+
+	symbolUploadChannel := make(chan *http.Request)
+
+	registerResponders := func(symbolQueryStatus int, sourcemapIntakeStatus int) {
+		symbolUploadChannel = make(chan *http.Request)
+
+		httpmock.RegisterResponder("POST", symbolQueryURL,
+			httpmock.NewStringResponder(symbolQueryStatus, `{"data": []}`))
+		httpmock.RegisterResponder("POST", sourcemapIntakeURL,
+			func(req *http.Request) (*http.Response, error) {
+				symbolUploadChannel <- req
+				return httpmock.NewStringResponse(sourcemapIntakeStatus, ""), nil
+			})
+	}
 
 	exe := buildGoExeWithoutDebugInfos(t, t.TempDir())
 
 	t.Run("No upload when no symbols", func(t *testing.T) {
-		uploader, err := newTestUploader(false, false)
-		require.NoError(t, err)
-		require.NoError(t, uploader.Start(context.Background()))
+		registerResponders(http.StatusOK, http.StatusOK)
 
-		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
+		uploader, err := newTestUploader(false, false, 0)
+		require.NoError(t, err)
+		uploader.Start(context.Background())
+
+		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &TestOpener{})
 		uploader.Stop()
 
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
 	})
 
 	t.Run("Upload pclntab when enabled", func(t *testing.T) {
+		registerResponders(http.StatusOK, http.StatusOK)
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		uploader, err := newTestUploader(false, true)
+		uploader, err := newTestUploader(false, true, 0)
 		require.NoError(t, err)
-		require.NoError(t, uploader.Start(ctx))
-		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
-		req := <-c
+		uploader.Start(ctx)
+		defer uploader.Stop()
+		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &TestOpener{})
+		req := waitForOrTimeout(t, symbolUploadChannel, 5*time.Second)
 		checkRequest(t, req)
-		assert.Equal(t, 2, httpmock.GetTotalCallCount())
+		info := httpmock.GetCallCountInfo()
+
+		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != 1 {
+			t.Log(fmt.Sprint(info))
+			t.Errorf("Failed to call symbol query endpoint")
+		}
+
+		if info[fmt.Sprintf("POST %s", sourcemapIntakeURL)] != 1 {
+			t.Log(fmt.Sprint(info))
+			t.Errorf("Failed to call symbol query endpoint")
+		}
 	})
+
+	t.Run("Re-upload executable if upload was unsuccessful", func(t *testing.T) {
+		registerResponders(http.StatusOK, http.StatusInternalServerError)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		uploader, err := newTestUploader(false, true, 0)
+		require.NoError(t, err)
+		uploader.Start(ctx)
+		defer uploader.Stop()
+		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &TestOpener{})
+		req := waitForOrTimeout(t, symbolUploadChannel, 5*time.Second)
+		checkRequest(t, req)
+		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &TestOpener{})
+		req = waitForOrTimeout(t, symbolUploadChannel, 5*time.Second)
+		checkRequest(t, req)
+
+		info := httpmock.GetCallCountInfo()
+
+		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != 2 {
+			t.Log(fmt.Sprint(info))
+			t.Errorf("Failed to call symbol query endpoint")
+		}
+
+		if info[fmt.Sprintf("POST %s", sourcemapIntakeURL)] != 2 {
+			t.Log(fmt.Sprint(info))
+			t.Errorf("Failed to call symbol query endpoint")
+		}
+	})
+
+	t.Run("Batch symbol requests", func(t *testing.T) {
+		symbolRequestChannel := make(chan *http.Request)
+
+		httpmock.RegisterResponder(http.MethodPost, symbolQueryURL, func(req *http.Request) (*http.Response, error) {
+			symbolRequestChannel <- req
+			return httpmock.NewStringResponse(http.StatusNotFound, `{"data\": []}`), nil
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		batchingInterval := time.Nanosecond
+		uploader, err := newTestUploader(false, true, batchingInterval)
+		require.NoError(t, err)
+
+		fakeClock := clockwork.NewFakeClock()
+		uploader.overrideClock(fakeClock)
+		uploader.Start(ctx)
+
+		uploader.batchingQueue <- symbol.NewElfForTest("amd64", "build_id", "go_build_id", "file_hash")
+		uploader.batchingQueue <- symbol.NewElfForTest("amd64", "build_id2", "go_build_id2", "file_hash2")
+		uploader.batchingQueue <- symbol.NewElfForTest("amd64", "build_id3", "go_build_id3", "file_hash3")
+
+		fakeClock.BlockUntilContext(ctx, 1)
+		fakeClock.Advance(batchingInterval)
+
+		waitForOrTimeout(t, symbolRequestChannel, 5*time.Second)
+
+		uploader.Stop()
+
+		info := httpmock.GetCallCountInfo()
+
+		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != 1 {
+			t.Log(fmt.Sprint(info))
+			t.Errorf("Expected one call for symbol query endpoint")
+		}
+	})
+
+	t.Run("Send batches when maxBatchSize is hit", func(t *testing.T) {
+		symbolRequestChannel := make(chan *http.Request)
+
+		httpmock.RegisterResponder(http.MethodPost, symbolQueryURL, func(req *http.Request) (*http.Response, error) {
+			symbolRequestChannel <- req
+			return httpmock.NewStringResponse(http.StatusNotFound, `{"data\": []}`), nil
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		uploader, err := newTestUploader(false, true, time.Minute)
+		require.NoError(t, err)
+		uploader.Start(ctx)
+
+		numBatches := 2
+
+		for i := range numBatches * uploader.batchingMaxSize {
+			index := strconv.Itoa(i)
+			uploader.batchingQueue <- symbol.NewElfForTest(
+				"amd64",
+				"build_id"+index,
+				"go_build_id"+index,
+				"file_hash"+index,
+			)
+		}
+
+		waitForOrTimeout(t, symbolRequestChannel, 5*time.Second)
+		waitForOrTimeout(t, symbolRequestChannel, 5*time.Second)
+
+		uploader.Stop()
+
+		info := httpmock.GetCallCountInfo()
+
+		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != numBatches {
+			t.Log(fmt.Sprint(info))
+			t.Errorf("Expected one call for symbol query endpoint")
+		}
+	})
+}
+
+func waitForOrTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(timeout):
+		t.Fail()
+		panic("panic waiting for timeout")
+	}
 }

@@ -184,5 +184,21 @@ func NewElfForTest(arch, gnuBuildID, goBuildID, fileHash string) *Elf {
 		gnuBuildID: gnuBuildID,
 		goBuildID:  goBuildID,
 		fileHash:   fileHash,
+
+		elfWrapperWithSource: elfWrapperWithSource{
+			wrapper: &elfWrapper{
+				reader: DummyReader{},
+			},
+		},
 	}
+}
+
+type DummyReader struct{}
+
+func (d DummyReader) ReadAt(p []byte, off int64) (n int, err error) {
+	return len(p), nil
+}
+
+func (d DummyReader) Close() error {
+	return nil
 }

@@ -83,7 +83,7 @@ func getBuildID(e *symbol.Elf) string {
 	return e.FileHash()
 }
 
-func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, queriers []SymbolQuerier) []ElfWithBackendSources {
+func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, queriers []SymbolQuerier) []*ElfWithBackendSources {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -94,13 +94,13 @@ func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, querie
 	// All the elfs in the batch are expected to have the same arch
 	arch := batch[0].Arch()
 
-	elfResults := make([]ElfWithBackendSources, 0, len(batch))
+	elfResults := make([]*ElfWithBackendSources, 0, len(batch))
 
 	for _, e := range batch {
-		elfResults = append(elfResults,
-			ElfWithBackendSources{Elf: e, BackendSymbolSources: make([]SymbolQueryResult, len(queriers))})
+		result := &ElfWithBackendSources{Elf: e, BackendSymbolSources: make([]SymbolQueryResult, len(queriers))}
 
-		result := &elfResults[len(elfResults)-1]
+		elfResults = append(elfResults, result)
+
 		if e.Arch() != arch {
 			result.fillWithError(fmt.Errorf("arch mismatch: expected %s, got %s", arch, e.Arch()))
 			continue

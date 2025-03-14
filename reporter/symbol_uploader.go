@@ -20,32 +20,33 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DataDog/zstd"
 	lru "github.com/elastic/go-freelru"
+	"github.com/jonboulle/clockwork"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
-	"github.com/DataDog/dd-otel-host-profiler/reporter/pipeline"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
 const (
 	uploadCacheSize = 16384
 
-	symbolRetrievalQueueSize = 1000
-	symbolBatcherQueueSize   = 1000
-	symbolQueryQueueSize     = 1000
-	uploadQueueSize          = 1000
+	defaultRetrievalWorkerCount = 10
+	defaultRetrievalQueueSize   = 1000
 
-	retrievalWorkerCount = 10
-	queryWorkerCount     = 10
-	uploadWorkerCount    = 10
+	defaultBatcherQueueSize        = 1000
+	defaultSymbolQueryMaxBatchSize = 100
 
-	symbolQueryMaxBatchSize = 100
+	defaultQueryQueueSize = 1000
+
+	defaultUploadWorkerCount = 10
+	defaultUploadQueueSize   = 1000
 
 	sourceMapEndpoint = "/api/v2/srcmap"
 
@@ -68,12 +69,26 @@ type DatadogSymbolUploader struct {
 	uploadDynamicSymbols bool
 	uploadGoPCLnTab      bool
 
-	uploadCache         *lru.SyncedLRU[libpf.FileID, struct{}]
-	client              *http.Client
-	retrievalQueue      chan fileData
-	symbolQueriers      []SymbolQuerier
-	symbolQueryInterval time.Duration
-	pipeline            pipeline.Pipeline
+	uploadCache    *lru.SyncedLRU[libpf.FileID, struct{}]
+	client         *http.Client
+	symbolQueriers []SymbolQuerier
+
+	retrievalWorkerCount int
+	retrievalQueue       chan fileData
+	retrievalWg          sync.WaitGroup
+
+	clock            clockwork.Clock
+	batchingQueue    chan *symbol.Elf
+	batchingInterval time.Duration
+	batchingMaxSize  int
+	batchingWg       sync.WaitGroup
+
+	queryQueue chan []*symbol.Elf
+	queryWg    sync.WaitGroup
+
+	uploadWorkerCount int
+	uploadQueue       chan *ElfWithBackendSources
+	uploadWg          sync.WaitGroup
 }
 
 func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
@@ -104,6 +119,11 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
+	symbolQueryMaxBatchSize := defaultSymbolQueryMaxBatchSize
+	if cfg.SymbolQueryInterval <= 0 {
+		symbolQueryMaxBatchSize = 1
+	}
+
 	return &DatadogSymbolUploader{
 		symbolEndpoints:      cfg.SymbolEndpoints,
 		intakeURLs:           intakeURLs,
@@ -114,7 +134,19 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 		client:               &http.Client{Timeout: uploadTimeout},
 		uploadCache:          uploadCache,
 		symbolQueriers:       symbolQueriers,
-		symbolQueryInterval:  cfg.SymbolQueryInterval,
+
+		retrievalWorkerCount: defaultRetrievalWorkerCount,
+		retrievalQueue:       make(chan fileData, defaultRetrievalQueueSize),
+
+		clock:            clockwork.NewRealClock(),
+		batchingQueue:    make(chan *symbol.Elf, defaultBatcherQueueSize),
+		batchingInterval: cfg.SymbolQueryInterval,
+		batchingMaxSize:  symbolQueryMaxBatchSize,
+
+		queryQueue: make(chan []*symbol.Elf, defaultQueryQueueSize),
+
+		uploadWorkerCount: defaultUploadWorkerCount,
+		uploadQueue:       make(chan *ElfWithBackendSources, defaultUploadQueueSize),
 	}, nil
 }
 
@@ -122,83 +154,160 @@ func buildSourcemapIntakeURL(site string) string {
 	return fmt.Sprintf("https://sourcemap-intake.%s%s", site, sourceMapEndpoint)
 }
 
-func (d *DatadogSymbolUploader) symbolSourceWorker(_ context.Context, file fileData) []*symbol.Elf {
-	// Record immediately to avoid duplicate uploads
-	d.uploadCache.Add(file.fileID, struct{}{})
-	elf := d.getSymbolsFromDisk(file)
-	if elf == nil {
-		// Remove from cache because we might have symbols for this exe in another context
-		d.uploadCache.Remove(file.fileID)
-		return nil
-	}
-
-	return []*symbol.Elf{elf}
+func (d *DatadogSymbolUploader) overrideClock(clock clockwork.Clock) {
+	d.clock = clock
 }
 
-func (d *DatadogSymbolUploader) queryWorker(ctx context.Context, batch []*symbol.Elf) []ElfWithBackendSources {
-	return ExecuteSymbolQueryBatch(ctx, batch, d.symbolQueriers)
-}
+func (d *DatadogSymbolUploader) retrievalWorker(ctx context.Context) {
+	for {
+		select {
+		case file, ok := <-d.retrievalQueue:
+			if !ok {
+				d.retrievalWg.Done()
+				return
+			}
+			// Record immediately to avoid duplicate uploads
+			d.uploadCache.Add(file.fileID, struct{}{})
+			elf := d.getSymbolsFromDisk(file)
+			if elf == nil {
+				// Remove from cache because we might have symbols for this exe in another context
+				d.uploadCache.Remove(file.fileID)
+				continue
+			}
 
-func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elf ElfWithBackendSources) {
-	// TODO: upload symbols to endpoints concurrently (beware of gopclntab extraction that is not thread-safe)
-	removeFromCache := false
-	for i, backendSymbolSource := range elf.BackendSymbolSources {
-		if backendSymbolSource.Err != nil {
-			log.Warnf("Failed to query symbols for executable %s: %v", elf, backendSymbolSource.Err)
-			removeFromCache = true
-			continue
-		}
-
-		log.Debugf("Existing symbols for executable %s: %v", elf, backendSymbolSource)
-
-		if !d.upload(ctx, elf.Elf, backendSymbolSource.SymbolSource, i) {
-			// Remove from cache to retry later
-			removeFromCache = true
+			d.batchingQueue <- elf
+		case <-ctx.Done():
+			d.retrievalWg.Done()
+			return
 		}
 	}
-
-	if removeFromCache {
-		d.uploadCache.Remove(elf.FileID())
-	}
-	elf.Close()
 }
 
-func (d *DatadogSymbolUploader) Start(ctx context.Context) error {
-	d.retrievalQueue = make(chan fileData, symbolRetrievalQueueSize)
-
-	queryWorkerCount := queryWorkerCount
-	symbolQueryMaxBatchSize := symbolQueryMaxBatchSize
-	if d.symbolQueryInterval > 0 {
-		queryWorkerCount = 1
-	} else {
-		symbolQueryMaxBatchSize = 1
+func (d *DatadogSymbolUploader) batchingWorker(ctx context.Context) {
+	var batch []*symbol.Elf
+	var ticker <-chan time.Time
+	if d.batchingInterval > 0 {
+		ticker = d.clock.NewTicker(d.batchingInterval).Chan()
 	}
 
-	builder := pipeline.NewPipelineBuilder(d.retrievalQueue).
-		AddStage(pipeline.NewStage(d.symbolSourceWorker),
-			pipeline.WithConcurrency(retrievalWorkerCount),
-			pipeline.WithOutputChanSize(symbolBatcherQueueSize)).
-		AddStage(pipeline.NewBatchingStage[*symbol.Elf](d.symbolQueryInterval, symbolQueryMaxBatchSize),
-			pipeline.WithOutputChanSize(symbolQueryQueueSize)).
-		AddStage(pipeline.NewStage(d.queryWorker),
-			pipeline.WithConcurrency(queryWorkerCount),
-			pipeline.WithOutputChanSize(uploadQueueSize)).
-		AddStage(pipeline.NewSinkStage(d.uploadWorker),
-			pipeline.WithConcurrency(uploadWorkerCount))
-
-	p, err := builder.Build()
-	if err != nil {
-		return fmt.Errorf("failed to build upload pipeline: %w", err)
+	flush := func() {
+		if len(batch) > 0 {
+			d.queryQueue <- batch
+			batch = nil
+		}
 	}
 
-	d.pipeline = p
-	d.pipeline.Start(ctx)
-	return nil
+	flushThenStop := func() {
+		flush()
+		d.batchingWg.Done()
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			flushThenStop()
+			return
+		case in, ok := <-d.batchingQueue:
+			if !ok {
+				flushThenStop()
+				return
+			}
+			batch = append(batch, in)
+			if d.batchingMaxSize > 0 && len(batch) >= d.batchingMaxSize {
+				flush()
+			}
+		case <-ticker:
+			flush()
+		}
+	}
+}
+
+func (d *DatadogSymbolUploader) queryWorker(ctx context.Context) {
+	for {
+		select {
+		case batch, ok := <-d.queryQueue:
+			if !ok {
+				d.queryWg.Done()
+				return
+			}
+			batchRes := ExecuteSymbolQueryBatch(ctx, batch, d.symbolQueriers)
+			for _, res := range batchRes {
+				d.uploadQueue <- res
+			}
+		case <-ctx.Done():
+			d.queryWg.Done()
+			return
+		}
+	}
+}
+
+func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context) {
+	for {
+		select {
+		case elf, ok := <-d.uploadQueue:
+			if !ok {
+				d.uploadWg.Done()
+				return
+			}
+			// TODO: upload symbols to endpoints concurrently (beware of gopclntab extraction that is not thread-safe)
+			removeFromCache := false
+			for i, backendSymbolSource := range elf.BackendSymbolSources {
+				if backendSymbolSource.Err != nil {
+					log.Warnf("Failed to query symbols for executable %s: %v", elf, backendSymbolSource.Err)
+					removeFromCache = true
+					continue
+				}
+
+				log.Debugf("Existing symbols for executable %s: %v", elf, backendSymbolSource)
+
+				if !d.upload(ctx, elf.Elf, backendSymbolSource.SymbolSource, i) {
+					// Remove from cache to retry later
+					removeFromCache = true
+				}
+			}
+
+			if removeFromCache {
+				d.uploadCache.Remove(elf.FileID())
+			}
+			elf.Close()
+
+		case <-ctx.Done():
+			d.uploadWg.Done()
+			return
+		}
+	}
+}
+
+func (d *DatadogSymbolUploader) Start(ctx context.Context) {
+	for range d.retrievalWorkerCount {
+		d.retrievalWg.Add(1)
+		go d.retrievalWorker(ctx)
+	}
+
+	d.batchingWg.Add(1)
+	go d.batchingWorker(ctx)
+
+	d.queryWg.Add(1)
+	go d.queryWorker(ctx)
+
+	for range d.uploadWorkerCount {
+		d.uploadWg.Add(1)
+		go d.uploadWorker(ctx)
+	}
 }
 
 func (d *DatadogSymbolUploader) Stop() {
-	d.pipeline.Stop()
-	d.retrievalQueue = nil
+	close(d.retrievalQueue)
+	d.retrievalWg.Wait()
+
+	close(d.batchingQueue)
+	d.batchingWg.Wait()
+
+	close(d.queryQueue)
+	d.queryWg.Wait()
+
+	close(d.uploadQueue)
+	d.uploadWg.Wait()
 }
 
 func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, buildID string,
