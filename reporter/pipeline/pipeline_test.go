@@ -1,0 +1,139 @@
+// Unless explicitly stated otherwise all files in this repository are licensed
+// under the Apache License Version 2.0.
+// This product includes software developed at Datadog (https://www.datadoghq.com/).
+// Copyright 2024 Datadog, Inc.
+
+package pipeline
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/jonboulle/clockwork"
+	"github.com/stretchr/testify/require"
+)
+
+func TestPipeline(t *testing.T) {
+	t.Run("EmptyPipeline", func(t *testing.T) {
+		input := make(chan int)
+		p, err := NewPipelineBuilder(input).Build()
+		require.NoError(t, err)
+		p.Start(context.Background())
+		p.Stop()
+	})
+
+	t.Run("PipelineWithOneSink", func(t *testing.T) {
+		input := make(chan int)
+		output := make(chan int)
+		p, err := NewPipelineBuilder(input).AddStage(NewSinkStage(func(_ context.Context, x int) {
+			output <- x * 2
+		})).Build()
+		require.NoError(t, err)
+		p.Start(context.Background())
+		input <- 1
+		require.Equal(t, 2, <-output)
+		p.Stop()
+	})
+
+	t.Run("PipelineWithMultipleStages", func(t *testing.T) {
+		input := make(chan int)
+		output := make(chan int)
+		p, err := NewPipelineBuilder(input).
+			AddStage(NewStage(func(_ context.Context, x int) [][]int {
+				return [][]int{{x * 2, x * 3}}
+			})).
+			AddStage(NewSinkStage(func(_ context.Context, x []int) {
+				var sum int
+				for _, v := range x {
+					sum += v
+				}
+				output <- sum
+			})).
+			Build()
+		require.NoError(t, err)
+		p.Start(context.Background())
+		go func() {
+			input <- 1
+			input <- 2
+		}()
+		require.Equal(t, 5, <-output)
+		require.Equal(t, 10, <-output)
+		p.Stop()
+	})
+
+	t.Run("GracefulShutdown", func(t *testing.T) {
+		input := make(chan int, 1000)
+		for i := range 1000 {
+			input <- i
+		}
+		var output []int
+		var mut sync.Mutex
+		p, err := NewPipelineBuilder(input).
+			AddStage(NewStage(func(_ context.Context, x int) []int {
+				return []int{x * 2}
+			}), WithConcurrency(10)).
+			AddStage(NewStage(func(_ context.Context, x int) []int {
+				return []int{x + 1}
+			}), WithConcurrency(10)).
+			AddStage(NewSinkStage(func(_ context.Context, x int) {
+				mut.Lock()
+				output = append(output, x)
+				mut.Unlock()
+			}), WithConcurrency(10)).
+			Build()
+		require.NoError(t, err)
+		p.Start(context.Background())
+		p.Stop()
+		require.Len(t, output, 1000)
+	})
+
+	t.Run("PipelineWithBatchingStageNoInterval", func(t *testing.T) {
+		input := make(chan int, 1000)
+		for i := range 999 {
+			input <- i
+		}
+		var output [][]int
+		p, err := NewPipelineBuilder(input).
+			AddStage(NewBatchingStage[int](0, 10)).
+			AddStage(NewSinkStage(func(_ context.Context, x []int) {
+				output = append(output, x)
+			})).
+			Build()
+		require.NoError(t, err)
+		p.Start(context.Background())
+		p.Stop()
+		require.Len(t, output, 100)
+		require.Len(t, output[99], 9)
+	})
+
+	t.Run("PipelineWithBatchingStageWithInterval", func(t *testing.T) {
+		input := make(chan int, 1000)
+		for i := range 9 {
+			input <- i
+		}
+		output := make(chan []int, 1)
+		clock := clockwork.NewFakeClock()
+		p, err := NewPipelineBuilder(input).
+			AddStage(NewBatchingStageWithClock[int](1*time.Second, 10, clock)).
+			AddStage(NewSinkStage(func(_ context.Context, x []int) {
+				output <- x
+			})).
+			Build()
+		require.NoError(t, err)
+		p.Start(context.Background())
+		require.NoError(t, clock.BlockUntilContext(context.Background(), 1))
+		clock.Advance(1 * time.Second)
+		require.Len(t, <-output, 9)
+		for i := range 10 {
+			input <- i
+		}
+		require.Len(t, <-output, 10)
+		for i := range 5 {
+			input <- i
+		}
+		p.Stop()
+		require.Len(t, <-output, 5)
+	})
+}

@@ -57,6 +57,8 @@ type SymbolUploaderConfig struct {
 	UploadDynamicSymbols bool
 	// UploadGoPCLnTab defines whether the agent should upload GoPCLnTab section for Go binaries to the backend.
 	UploadGoPCLnTab bool
+	// BatchSymbolQueries defines whether the uploader should batch symbol queries.
+	SymbolQueryInterval time.Duration
 	// DryRun defines whether the agent should upload debug symbols to the backend in dry-run mode.
 	DryRun bool
 	// Sites to upload symbols to.
