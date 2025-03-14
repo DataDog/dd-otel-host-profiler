@@ -23,100 +23,15 @@ type Stage interface {
 	SetOutputChanSize(size int)
 }
 
-type Pipeline interface {
-	Start(ctx context.Context)
-	Stop()
-}
-
 type Consumer[In any] interface {
 	SetInputChannel(chan In)
 }
-
-var _ Stage = (*StageWorker[any, any])(nil)
-var _ Consumer[any] = (*StageWorker[any, any])(nil)
 
 type baseWorker[In any, Out any] struct {
 	wg          sync.WaitGroup
 	inputChan   <-chan In
 	outputChan  chan Out
 	concurrency int
-}
-
-type StageWorker[In any, Out any] struct {
-	baseWorker[In, Out]
-	processingFunc func(context.Context, In) []Out
-}
-
-type BatchingStageWorker[In any] struct {
-	baseWorker[In, []In]
-	batchSize     int
-	batchInterval time.Duration
-	clock         clockwork.Clock
-}
-
-type nullOutput struct{}
-
-func NewStage[In any, Out any](fun func(context.Context, In) []Out) *StageWorker[In, Out] {
-	output := make(chan Out)
-	return &StageWorker[In, Out]{
-		baseWorker: baseWorker[In, Out]{
-			outputChan:  output,
-			concurrency: 1,
-		},
-		processingFunc: fun,
-	}
-}
-
-func NewSinkStage[In any](fun func(context.Context, In)) *StageWorker[In, nullOutput] {
-	return &StageWorker[In, nullOutput]{
-		baseWorker: baseWorker[In, nullOutput]{
-			outputChan:  nil,
-			concurrency: 1,
-		},
-		processingFunc: func(ctx context.Context, input In) []nullOutput {
-			fun(ctx, input)
-			return nil
-		},
-	}
-}
-
-func NewBatchingStage[In any](batchInterval time.Duration, batchSize int) *BatchingStageWorker[In] {
-	return NewBatchingStageWithClock[In](batchInterval, batchSize, clockwork.NewRealClock())
-}
-
-func NewBatchingStageWithClock[In any](batchInterval time.Duration, batchSize int, clock clockwork.Clock) *BatchingStageWorker[In] {
-	output := make(chan []In)
-	return &BatchingStageWorker[In]{
-		baseWorker: baseWorker[In, []In]{
-			outputChan:  output,
-			concurrency: 1,
-		},
-		batchSize:     batchSize,
-		batchInterval: batchInterval,
-		clock:         clock,
-	}
-}
-
-func (w *StageWorker[In, Out]) Start(ctx context.Context) {
-	for range w.concurrency {
-		w.wg.Add(1)
-		go func() {
-			defer w.wg.Done()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case input, ok := <-w.inputChan:
-					if !ok {
-						return
-					}
-					for _, output := range w.processingFunc(ctx, input) {
-						w.outputChan <- output
-					}
-				}
-			}
-		}()
-	}
 }
 
 func (w *baseWorker[In, Out]) Stop() {
@@ -149,6 +64,71 @@ func (w *baseWorker[In, Out]) Connect(next Stage) error {
 
 	w2.SetInputChannel(w.outputChan)
 	return nil
+}
+
+var _ Stage = (*StageWorker[any, any])(nil)
+var _ Consumer[any] = (*StageWorker[any, any])(nil)
+
+type StageWorker[In any, Out any] struct {
+	baseWorker[In, Out]
+	processingFunc func(context.Context, In) []Out
+}
+
+func NewStage[In any, Out any](fun func(context.Context, In) []Out) *StageWorker[In, Out] {
+	output := make(chan Out)
+	return &StageWorker[In, Out]{
+		baseWorker: baseWorker[In, Out]{
+			outputChan:  output,
+			concurrency: 1,
+		},
+		processingFunc: fun,
+	}
+}
+
+func (w *StageWorker[In, Out]) Start(ctx context.Context) {
+	for range w.concurrency {
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case input, ok := <-w.inputChan:
+					if !ok {
+						return
+					}
+					for _, output := range w.processingFunc(ctx, input) {
+						w.outputChan <- output
+					}
+				}
+			}
+		}()
+	}
+}
+
+type BatchingStageWorker[In any] struct {
+	baseWorker[In, []In]
+	batchSize     int
+	batchInterval time.Duration
+	clock         clockwork.Clock
+}
+
+func NewBatchingStage[In any](batchInterval time.Duration, batchSize int) *BatchingStageWorker[In] {
+	return NewBatchingStageWithClock[In](batchInterval, batchSize, clockwork.NewRealClock())
+}
+
+func NewBatchingStageWithClock[In any](batchInterval time.Duration, batchSize int, clock clockwork.Clock) *BatchingStageWorker[In] {
+	output := make(chan []In)
+	return &BatchingStageWorker[In]{
+		baseWorker: baseWorker[In, []In]{
+			outputChan:  output,
+			concurrency: 1,
+		},
+		batchSize:     batchSize,
+		batchInterval: batchInterval,
+		clock:         clock,
+	}
 }
 
 func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
@@ -186,6 +166,26 @@ func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
 			}
 		}()
 	}
+}
+
+type nullOutput struct{}
+
+func NewSinkStage[In any](fun func(context.Context, In)) *StageWorker[In, nullOutput] {
+	return &StageWorker[In, nullOutput]{
+		baseWorker: baseWorker[In, nullOutput]{
+			outputChan:  nil,
+			concurrency: 1,
+		},
+		processingFunc: func(ctx context.Context, input In) []nullOutput {
+			fun(ctx, input)
+			return nil
+		},
+	}
+}
+
+type Pipeline interface {
+	Start(ctx context.Context)
+	Stop()
 }
 
 type pipeline[In any] struct {
