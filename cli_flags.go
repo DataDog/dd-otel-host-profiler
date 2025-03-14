@@ -28,6 +28,7 @@ const (
 	defaultClockSyncInterval      = 3 * time.Minute
 	defaultProbabilisticThreshold = tracer.ProbabilisticThresholdMax
 	defaultProbabilisticInterval  = 1 * time.Minute
+	defaultSymbolQueryInterval    = 5 * time.Second
 	defaultArgSendErrorFrames     = false
 	defaultArgAgentURL            = "http://localhost:8126"
 
@@ -54,6 +55,7 @@ type arguments struct {
 	sendErrorFrames           bool
 	serviceName               string
 	environment               string
+	uploadSymbolQueryInterval time.Duration
 	uploadSymbols             bool
 	uploadDynamicSymbols      bool
 	uploadGoPCLnTab           bool
@@ -346,6 +348,14 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Enable self-profiling with Go runtime profiler.",
 				Destination: &args.enableGoRuntimeProfiler,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER"),
+			},
+			&cli.DurationFlag{
+				Name:        "symbol-query-interval",
+				Value:       defaultSymbolQueryInterval,
+				Hidden:      true,
+				Usage:       "Symbol query interval (queries during a period are batched, 0 means no batching).",
+				Destination: &args.uploadSymbolQueryInterval,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_SYMBOL_QUERY_INTERVAL"),
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {

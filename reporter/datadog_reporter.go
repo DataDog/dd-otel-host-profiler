@@ -346,9 +346,7 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 	ctx, cancelReporting := context.WithCancel(mainCtx)
 
 	if r.symbolUploader != nil {
-		go func() {
-			r.symbolUploader.Run(ctx)
-		}()
+		r.symbolUploader.Start(ctx)
 	}
 
 	go func() {
