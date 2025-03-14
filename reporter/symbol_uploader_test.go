@@ -208,7 +208,7 @@ func TestSymbolUpload(t *testing.T) {
 	t.Run("No upload when no symbols", func(t *testing.T) {
 		uploader, err := newTestUploader(false, false)
 		require.NoError(t, err)
-		require.NoError(t, uploader.Start(context.Background()))
+		uploader.Start(context.Background())
 
 		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
 		uploader.Stop()
@@ -221,7 +221,7 @@ func TestSymbolUpload(t *testing.T) {
 		defer cancel()
 		uploader, err := newTestUploader(false, true)
 		require.NoError(t, err)
-		require.NoError(t, uploader.Start(ctx))
+		uploader.Start(ctx)
 		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
 		req := <-c
 		checkRequest(t, req)
