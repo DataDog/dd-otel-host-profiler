@@ -7,6 +7,8 @@ package symbol
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"runtime"
 
 	log "github.com/sirupsen/logrus"
@@ -36,6 +38,15 @@ type Elf struct {
 
 	// Cached value set during the first call to getGoPCLnTab
 	goPCLnTabInfo *pclntab.GoPCLnTabInfo
+}
+
+type DynamicSymbolsDump struct {
+	DynSymPath  string
+	DynStrPath  string
+	DynSymAddr  uint64
+	DynStrAddr  uint64
+	DynSymAlign uint64
+	DynStrAlign uint64
 }
 
 func NewElf(path string, fileID libpf.FileID, opener process.FileOpener) (*Elf, error) {
@@ -176,6 +187,23 @@ func (e *Elf) String() string {
 	return fmt.Sprintf("%s, arch=%s, gnu_build_id=%s, go_build_id=%s, file_hash=%s, symbol_source=%s, has_gopclntab=%t",
 		e.path, e.arch, e.gnuBuildID, e.goBuildID, e.fileHash, symbolSource, hasPCLnTab,
 	)
+}
+
+func (e *Elf) DumpElfData(writer io.Writer) error {
+	_, err := io.Copy(writer, io.NewSectionReader(e.wrapper.reader, 0, 1<<63-1))
+	if err != nil {
+		return fmt.Errorf("failed to dump elf data: %w", err)
+	}
+	return nil
+}
+
+func (e *Elf) DumpDynamicSymbols() (*DynamicSymbolsDump, error) {
+	return DumpDynamicSymbols(e.wrapper.elfFile)
+}
+
+func (d *DynamicSymbolsDump) Close() {
+	os.Remove(d.DynSymPath)
+	os.Remove(d.DynStrPath)
 }
 
 func NewElfForTest(arch, gnuBuildID, goBuildID, fileHash string) *Elf {

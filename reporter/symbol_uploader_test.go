@@ -43,6 +43,19 @@ func findSymbol(f *elf.File, name string) *elf.Symbol {
 	return nil
 }
 
+func findDynamicSymbol(f *elf.File, name string) *elf.Symbol {
+	syms, err := f.DynamicSymbols()
+	if err != nil {
+		return nil
+	}
+	for _, sym := range syms {
+		if sym.Name == name {
+			return &sym
+		}
+	}
+	return nil
+}
+
 func checkGoPCLnTab(t *testing.T, f *elf.File, checkGoFunc bool) {
 	section := f.Section(".gopclntab")
 	require.NotNil(t, section)
@@ -80,7 +93,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	assert.NotNil(t, goPCLnTabInfo)
 
 	outputFile := filepath.Join(tmpDir, "output.dbg")
-	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo)
+	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo, nil)
 	require.NoError(t, err)
 	f, err := elf.Open(outputFile)
 	require.NoError(t, err)
@@ -88,7 +101,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	checkGoPCLnTab(t, f, true)
 }
 
-func checkRequest(t *testing.T, req *http.Request) {
+func checkRequest(t *testing.T, req *http.Request, checkFun func(*testing.T, *elf.File)) {
 	reader := zstd.NewReader(req.Body)
 	defer reader.Close()
 
@@ -110,8 +123,7 @@ func checkRequest(t *testing.T, req *http.Request) {
 	require.NoError(t, err)
 	defer elfFile.Close()
 
-	require.NoError(t, err)
-	checkGoPCLnTab(t, elfFile, true)
+	checkFun(t, elfFile)
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
@@ -188,6 +200,20 @@ func buildGoExeWithoutDebugInfos(t *testing.T, tmpDir string) string {
 	return exe
 }
 
+func buildExeWithDynamicSymbols(t *testing.T, tmpDir string) string {
+	f, err := os.CreateTemp(tmpDir, "foo")
+	require.NoError(t, err)
+	defer f.Close()
+	srcFile := "../testdata/foo.c"
+
+	exe := f.Name()
+	cmd := exec.Command("gcc", "-Wl,--strip-all", "-shared", "-o", exe, srcFile)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
+
+	return exe
+}
+
 //nolint:tparallel
 func TestSymbolUpload(t *testing.T) {
 	t.Parallel()
@@ -206,6 +232,7 @@ func TestSymbolUpload(t *testing.T) {
 	exe := buildGoExeWithoutDebugInfos(t, t.TempDir())
 
 	t.Run("No upload when no symbols", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(false, false)
 		require.NoError(t, err)
 		require.NoError(t, uploader.Start(context.Background()))
@@ -217,6 +244,7 @@ func TestSymbolUpload(t *testing.T) {
 	})
 
 	t.Run("Upload pclntab when enabled", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		uploader, err := newTestUploader(false, true)
@@ -224,7 +252,25 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, uploader.Start(ctx))
 		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
 		req := <-c
-		checkRequest(t, req)
+		checkRequest(t, req, func(t *testing.T, f *elf.File) {
+			checkGoPCLnTab(t, f, true)
+		})
+		assert.Equal(t, 2, httpmock.GetTotalCallCount())
+	})
+
+	t.Run("Upload dynamic symbols when enabled", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		uploader, err := newTestUploader(true, false)
+		require.NoError(t, err)
+		require.NoError(t, uploader.Start(ctx))
+		exe := buildExeWithDynamicSymbols(t, t.TempDir())
+		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
+		req := <-c
+		checkRequest(t, req, func(t *testing.T, f *elf.File) {
+			require.NotNil(t, findDynamicSymbol(f, "foo"))
+		})
 		assert.Equal(t, 2, httpmock.GetTotalCallCount())
 	})
 }
