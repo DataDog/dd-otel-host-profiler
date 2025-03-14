@@ -71,10 +71,10 @@ var _ Consumer[any] = (*StageWorker[any, any])(nil)
 
 type StageWorker[In any, Out any] struct {
 	baseWorker[In, Out]
-	processingFunc func(context.Context, In) []Out
+	processingFunc func(context.Context, In) Out
 }
 
-func NewStage[In any, Out any](fun func(context.Context, In) []Out) *StageWorker[In, Out] {
+func NewStage[In any, Out any](fun func(context.Context, In) Out) *StageWorker[In, Out] {
 	output := make(chan Out)
 	return &StageWorker[In, Out]{
 		baseWorker: baseWorker[In, Out]{
@@ -98,9 +98,7 @@ func (w *StageWorker[In, Out]) Start(ctx context.Context) {
 					if !ok {
 						return
 					}
-					for _, output := range w.processingFunc(ctx, input) {
-						w.outputChan <- output
-					}
+					w.outputChan <- w.processingFunc(ctx, input)
 				}
 			}
 		}()

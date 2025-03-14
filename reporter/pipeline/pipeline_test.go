@@ -41,8 +41,8 @@ func TestPipeline(t *testing.T) {
 		input := make(chan int)
 		output := make(chan int)
 		p, err := NewPipelineBuilder(input).
-			AddStage(NewStage(func(_ context.Context, x int) [][]int {
-				return [][]int{{x * 2, x * 3}}
+			AddStage(NewStage(func(_ context.Context, x int) []int {
+				return []int{x * 2, x * 3}
 			})).
 			AddStage(NewSinkStage(func(_ context.Context, x []int) {
 				var sum int
@@ -71,11 +71,11 @@ func TestPipeline(t *testing.T) {
 		var output []int
 		var mut sync.Mutex
 		p, err := NewPipelineBuilder(input).
-			AddStage(NewStage(func(_ context.Context, x int) []int {
-				return []int{x * 2}
+			AddStage(NewStage(func(_ context.Context, x int) int {
+				return x * 2
 			}), WithConcurrency(10)).
-			AddStage(NewStage(func(_ context.Context, x int) []int {
-				return []int{x + 1}
+			AddStage(NewStage(func(_ context.Context, x int) int {
+				return x + 1
 			}), WithConcurrency(10)).
 			AddStage(NewSinkStage(func(_ context.Context, x int) {
 				mut.Lock()

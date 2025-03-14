@@ -122,7 +122,7 @@ func buildSourcemapIntakeURL(site string) string {
 	return fmt.Sprintf("https://sourcemap-intake.%s%s", site, sourceMapEndpoint)
 }
 
-func (d *DatadogSymbolUploader) symbolSourceWorker(_ context.Context, file fileData) []*symbol.Elf {
+func (d *DatadogSymbolUploader) symbolSourceWorker(_ context.Context, file fileData) *symbol.Elf {
 	// Record immediately to avoid duplicate uploads
 	d.uploadCache.Add(file.fileID, struct{}{})
 	elf := d.getSymbolsFromDisk(file)
@@ -132,35 +132,37 @@ func (d *DatadogSymbolUploader) symbolSourceWorker(_ context.Context, file fileD
 		return nil
 	}
 
-	return []*symbol.Elf{elf}
+	return elf
 }
 
 func (d *DatadogSymbolUploader) queryWorker(ctx context.Context, batch []*symbol.Elf) []ElfWithBackendSources {
 	return ExecuteSymbolQueryBatch(ctx, batch, d.symbolQueriers)
 }
 
-func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elf ElfWithBackendSources) {
+func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elfs []ElfWithBackendSources) {
 	// TODO: upload symbols to endpoints concurrently (beware of gopclntab extraction that is not thread-safe)
 	removeFromCache := false
-	for i, backendSymbolSource := range elf.BackendSymbolSources {
-		if backendSymbolSource.Err != nil {
-			log.Warnf("Failed to query symbols for executable %s: %v", elf, backendSymbolSource.Err)
-			removeFromCache = true
-			continue
+	for _, elf := range elfs {
+		for i, backendSymbolSource := range elf.BackendSymbolSources {
+			if backendSymbolSource.Err != nil {
+				log.Warnf("Failed to query symbols for executable %s: %v", elf, backendSymbolSource.Err)
+				removeFromCache = true
+				continue
+			}
+
+			log.Debugf("Existing symbols for executable %s: %v", elf, backendSymbolSource)
+
+			if !d.upload(ctx, elf.Elf, backendSymbolSource.SymbolSource, i) {
+				// Remove from cache to retry later
+				removeFromCache = true
+			}
 		}
 
-		log.Debugf("Existing symbols for executable %s: %v", elf, backendSymbolSource)
-
-		if !d.upload(ctx, elf.Elf, backendSymbolSource.SymbolSource, i) {
-			// Remove from cache to retry later
-			removeFromCache = true
+		if removeFromCache {
+			d.uploadCache.Remove(elf.FileID())
 		}
+		elf.Close()
 	}
-
-	if removeFromCache {
-		d.uploadCache.Remove(elf.FileID())
-	}
-	elf.Close()
 }
 
 func (d *DatadogSymbolUploader) Start(ctx context.Context) error {
