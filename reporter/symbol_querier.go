@@ -31,7 +31,7 @@ type SymbolsQueryRequest struct {
 }
 
 type SymbolQuerier interface {
-	QuerySymbols(ctx context.Context, buildIDs []string, arch string) ([]SymbolFile, error)
+	QuerySymbols(buildIDs []string, arch string) ([]SymbolFile, error)
 }
 
 type datadogSymbolQuerier struct {
@@ -49,7 +49,7 @@ func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (SymbolQuerier, 
 		ddAPIKey:       ddAPIKey,
 		ddAPPKey:       ddAPPKey,
 		symbolQueryURL: symbolQueryURL,
-		client:         &http.Client{Timeout: uploadTimeout},
+		client:         &http.Client{Timeout: defaultHTTPClientTimeout},
 	}, nil
 }
 
@@ -57,7 +57,7 @@ func buildSymbolQueryURL(ddSite string) string {
 	return fmt.Sprintf("https://api.%s%s", ddSite, symbolQueryEndpoint)
 }
 
-func (d *datadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []string,
+func (d *datadogSymbolQuerier) QuerySymbols(buildIDs []string,
 	arch string) ([]SymbolFile, error) {
 	symbolsQueryRequest := &SymbolsQueryRequest{
 		ID:       "symbols-query-request",
@@ -70,7 +70,7 @@ func (d *datadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []stri
 		return nil, fmt.Errorf("error marshaling symbols query request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.symbolQueryURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, d.symbolQueryURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

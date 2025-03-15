@@ -8,6 +8,7 @@ package reporter
 import (
 	"context"
 	"debug/elf"
+	"encoding/json"
 	"fmt"
 	"mime"
 	"mime/multipart"
@@ -92,7 +93,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	checkGoPCLnTab(t, f, true)
 }
 
-func checkRequest(t *testing.T, req *http.Request) {
+func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.Source) {
 	reader := zstd.NewReader(req.Body)
 	defer reader.Close()
 
@@ -110,12 +111,27 @@ func checkRequest(t *testing.T, req *http.Request) {
 	require.NoError(t, err)
 	defer f.Close()
 
+	event, ok := form.File["event"]
+	require.True(t, ok)
+	e, err := event[0].Open()
+	require.NoError(t, err)
+	defer e.Close()
+
+	// unmarshal json into map[string]string
+	// check that the symbol source is correct
+	result := make(map[string]string)
+	err = json.NewDecoder(e).Decode(&result)
+	require.NoError(t, err)
+	require.Equal(t, expectedSymbolSource.String(), result["symbol_source"])
+
 	elfFile, err := elf.NewFile(f)
 	require.NoError(t, err)
 	defer elfFile.Close()
 
 	require.NoError(t, err)
-	checkGoPCLnTab(t, elfFile, true)
+	if expectedSymbolSource == symbol.SourceGoPCLnTab {
+		checkGoPCLnTab(t, elfFile, true)
+	}
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
@@ -180,13 +196,18 @@ func (o *TestOpener) Open(path string) (reader process.ReadAtCloser, actualPath 
 	return f, fmt.Sprintf("/proc/%v/fd/%v", os.Getpid(), f.Fd()), nil
 }
 
-func buildGoExeWithoutDebugInfos(t *testing.T, tmpDir string) string {
+func buildGoExe(t *testing.T, tmpDir string, debugInfo bool) string {
 	f, err := os.CreateTemp(tmpDir, "helloworld")
 	require.NoError(t, err)
 	defer f.Close()
 
 	exe := f.Name()
-	cmd := exec.Command("go", "build", "-o", exe, "-ldflags=-s -w", "../testdata/helloworld.go") // #nosec G204
+	args := []string{"build", "-o", exe}
+	if !debugInfo {
+		args = append(args, "-ldflags=-s -w")
+	}
+	args = append(args, "../testdata/helloworld.go")
+	cmd := exec.Command("go", args...) // #nosec G204
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
 	return exe
@@ -215,14 +236,14 @@ func TestSymbolUpload(t *testing.T) {
 			})
 	}
 
-	exe := buildGoExeWithoutDebugInfos(t, t.TempDir())
+	exe := buildGoExe(t, t.TempDir(), false)
 
 	t.Run("No upload when no symbols", func(t *testing.T) {
 		registerResponders(http.StatusOK, http.StatusOK)
 
 		uploader, err := newTestUploader(false, false, 0)
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start()
 
 		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &TestOpener{})
 		uploader.Stop()
@@ -230,18 +251,41 @@ func TestSymbolUpload(t *testing.T) {
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
 	})
 
+	t.Run("Upload debug_info when available", func(t *testing.T) {
+		registerResponders(http.StatusOK, http.StatusOK)
+
+		exeWithDebugInfo := buildGoExe(t, t.TempDir(), true)
+
+		uploader, err := newTestUploader(false, false, 0)
+		require.NoError(t, err)
+		uploader.Start()
+		defer uploader.Stop()
+		uploader.UploadSymbols(libpf.FileID{}, exeWithDebugInfo, "build_id", &TestOpener{})
+		req := waitForOrTimeout(t, symbolUploadChannel, 5*time.Second)
+		checkRequest(t, req, symbol.SourceDebugInfo)
+		info := httpmock.GetCallCountInfo()
+
+		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != 1 {
+			t.Log(fmt.Sprint(info))
+			t.Errorf("Failed to call symbol query endpoint")
+		}
+
+		if info[fmt.Sprintf("POST %s", sourcemapIntakeURL)] != 1 {
+			t.Log(fmt.Sprint(info))
+			t.Errorf("Failed to call symbol query endpoint")
+		}
+	})
+
 	t.Run("Upload pclntab when enabled", func(t *testing.T) {
 		registerResponders(http.StatusOK, http.StatusOK)
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 		uploader, err := newTestUploader(false, true, 0)
 		require.NoError(t, err)
-		uploader.Start(ctx)
+		uploader.Start()
 		defer uploader.Stop()
 		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &TestOpener{})
 		req := waitForOrTimeout(t, symbolUploadChannel, 5*time.Second)
-		checkRequest(t, req)
+		checkRequest(t, req, symbol.SourceGoPCLnTab)
 		info := httpmock.GetCallCountInfo()
 
 		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != 1 {
@@ -258,18 +302,16 @@ func TestSymbolUpload(t *testing.T) {
 	t.Run("Re-upload executable if upload was unsuccessful", func(t *testing.T) {
 		registerResponders(http.StatusOK, http.StatusInternalServerError)
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 		uploader, err := newTestUploader(false, true, 0)
 		require.NoError(t, err)
-		uploader.Start(ctx)
+		uploader.Start()
 		defer uploader.Stop()
 		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &TestOpener{})
 		req := waitForOrTimeout(t, symbolUploadChannel, 5*time.Second)
-		checkRequest(t, req)
+		checkRequest(t, req, symbol.SourceGoPCLnTab)
 		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &TestOpener{})
 		req = waitForOrTimeout(t, symbolUploadChannel, 5*time.Second)
-		checkRequest(t, req)
+		checkRequest(t, req, symbol.SourceGoPCLnTab)
 
 		info := httpmock.GetCallCountInfo()
 
@@ -292,26 +334,33 @@ func TestSymbolUpload(t *testing.T) {
 			return httpmock.NewStringResponse(http.StatusNotFound, `{"data\": []}`), nil
 		})
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 		batchingInterval := time.Nanosecond
 		uploader, err := newTestUploader(false, true, batchingInterval)
 		require.NoError(t, err)
 
 		fakeClock := clockwork.NewFakeClock()
 		uploader.overrideClock(fakeClock)
-		uploader.Start(ctx)
+		uploader.Start()
+		defer uploader.Stop()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		err = fakeClock.BlockUntilContext(ctx, 1)
+		assert.NoError(t, err)
 
 		uploader.batchingQueue <- symbol.NewElfForTest("amd64", "build_id", "go_build_id", "file_hash")
 		uploader.batchingQueue <- symbol.NewElfForTest("amd64", "build_id2", "go_build_id2", "file_hash2")
 		uploader.batchingQueue <- symbol.NewElfForTest("amd64", "build_id3", "go_build_id3", "file_hash3")
 
-		fakeClock.BlockUntilContext(ctx, 1)
+		// Wait for the first batch to be collected
+		time.Sleep(1 * time.Millisecond)
+
+		err = fakeClock.BlockUntilContext(ctx, 1)
+		assert.NoError(t, err)
 		fakeClock.Advance(batchingInterval)
 
 		waitForOrTimeout(t, symbolRequestChannel, 5*time.Second)
-
-		uploader.Stop()
 
 		info := httpmock.GetCallCountInfo()
 
@@ -329,11 +378,9 @@ func TestSymbolUpload(t *testing.T) {
 			return httpmock.NewStringResponse(http.StatusNotFound, `{"data\": []}`), nil
 		})
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 		uploader, err := newTestUploader(false, true, time.Minute)
 		require.NoError(t, err)
-		uploader.Start(ctx)
+		uploader.Start()
 
 		numBatches := 2
 

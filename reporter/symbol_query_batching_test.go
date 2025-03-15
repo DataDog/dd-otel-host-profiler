@@ -6,7 +6,6 @@
 package reporter
 
 import (
-	"context"
 	"errors"
 	"math/rand"
 	"testing"
@@ -35,7 +34,7 @@ type mockSymbolQuerier struct {
 	ncalls int
 }
 
-func (m *mockSymbolQuerier) QuerySymbols(_ context.Context, buildIDs []string, arch string) ([]SymbolFile, error) {
+func (m *mockSymbolQuerier) QuerySymbols(buildIDs []string, arch string) ([]SymbolFile, error) {
 	m.ncalls++
 	if err, ok := m.e[arch]; ok {
 		return nil, err
@@ -98,11 +97,8 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 
 	queriers := []SymbolQuerier{querier1, querier2}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	t.Run("Empty batch", func(t *testing.T) {
-		results := ExecuteSymbolQueryBatch(ctx, nil, queriers)
+		results := ExecuteSymbolQueryBatch(nil, queriers)
 		require.Empty(t, results)
 	})
 
@@ -114,8 +110,8 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 			symbol.NewElfForTest("arch1", "", "", ""),                 // empty buildID
 			symbol.NewElfForTest("arch1", "buildid2", "", ""),         // multiple matching buildIDs, first one should be used
 		}
-		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
-		require.ElementsMatch(t, []ElfWithBackendSources{
+		results := ExecuteSymbolQueryBatch(elfs, queriers)
+		require.ElementsMatch(t, []*ElfWithBackendSources{
 			{
 				Elf: elfs[0],
 				BackendSymbolSources: []SymbolQueryResult{
@@ -178,7 +174,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 		elfs := []*symbol.Elf{
 			symbol.NewElfForTest("arch0", "buildid1", "", ""),
 		}
-		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
+		results := ExecuteSymbolQueryBatch(elfs, queriers)
 		require.Error(t, results[0].BackendSymbolSources[0].Err)
 		require.Error(t, results[0].BackendSymbolSources[1].Err)
 	})
@@ -187,7 +183,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 		elfs := []*symbol.Elf{
 			symbol.NewElfForTest("arch2", "buildid1", "", ""),
 		}
-		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
+		results := ExecuteSymbolQueryBatch(elfs, queriers)
 		require.Error(t, results[0].BackendSymbolSources[1].Err)
 		require.NoError(t, results[0].BackendSymbolSources[0].Err)
 		require.Equal(t, symbol.SourceDebugInfo, results[0].BackendSymbolSources[0].SymbolSource)

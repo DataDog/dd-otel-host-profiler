@@ -6,7 +6,6 @@
 package reporter
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -28,9 +27,9 @@ type ElfWithBackendSources struct {
 	BackendSymbolSources []SymbolQueryResult
 }
 
-func invokeQuerier(ctx context.Context, buildIDs []string, arch string, querier SymbolQuerier, ind int,
+func invokeQuerier(buildIDs []string, arch string, querier SymbolQuerier, ind int,
 	buildIDToResult map[string][]*ElfWithBackendSources) {
-	symbolFiles, err := querier.QuerySymbols(ctx, buildIDs, arch)
+	symbolFiles, err := querier.QuerySymbols(buildIDs, arch)
 	if err != nil {
 		for _, results := range buildIDToResult {
 			for _, result := range results {
@@ -83,7 +82,7 @@ func getBuildID(e *symbol.Elf) string {
 	return e.FileHash()
 }
 
-func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, queriers []SymbolQuerier) []*ElfWithBackendSources {
+func ExecuteSymbolQueryBatch(batch SymbolQueryBatch, queriers []SymbolQuerier) []*ElfWithBackendSources {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -120,14 +119,14 @@ func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, querie
 	}
 
 	if len(queriers) == 1 {
-		invokeQuerier(ctx, buildIDs, arch, queriers[0], 0, buildIDToResult)
+		invokeQuerier(buildIDs, arch, queriers[0], 0, buildIDToResult)
 	} else {
 		var wg sync.WaitGroup
 		for i, querier := range queriers {
 			wg.Add(1)
 			go func(i int, querier SymbolQuerier) {
 				defer wg.Done()
-				invokeQuerier(ctx, buildIDs, arch, querier, i, buildIDToResult)
+				invokeQuerier(buildIDs, arch, querier, i, buildIDToResult)
 			}(i, querier)
 		}
 		wg.Wait()

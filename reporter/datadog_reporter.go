@@ -10,10 +10,12 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"path"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/DataDog/zstd"
@@ -31,10 +33,11 @@ import (
 var _ reporter.Reporter = (*DatadogReporter)(nil)
 
 const (
-	profilerName            = "dd-otel-host-profiler"
-	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
-	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
-	executableCacheLifetime = 1 * time.Hour   // executable cache items will be removed if unused after this interval
+	profilerName             = "dd-otel-host-profiler"
+	pidCacheUpdateInterval   = 1 * time.Minute // pid cache items will be updated at most once per this interval
+	pidCacheCleanupInterval  = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
+	executableCacheLifetime  = 1 * time.Hour   // executable cache items will be removed if unused after this interval
+	defaultHTTPClientTimeout = 15 * time.Second
 )
 
 // execInfo enriches an executable with additional metadata.
@@ -89,10 +92,15 @@ type processMetadata struct {
 
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
 type DatadogReporter struct {
+	wg sync.WaitGroup
+
 	config *Config
 
 	// profiler version
 	version string
+
+	// client is the HTTP client used to send profiles to the Datadog backend.
+	client *http.Client
 
 	// stopSignal is the stop signal for shutting down all background tasks.
 	stopSignal chan libpf.Void
@@ -178,6 +186,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	return &DatadogReporter{
 		config:                    cfg,
 		version:                   cfg.Version,
+		client:                    &http.Client{Timeout: defaultHTTPClientTimeout},
 		samplesPerSecond:          cfg.SamplesPerSecond,
 		stopSignal:                make(chan libpf.Void),
 		executables:               executables,
@@ -333,6 +342,10 @@ func (r *DatadogReporter) ReportMetrics(_ uint32, _ []uint32, _ []int64) {}
 // Stop triggers a graceful shutdown of DatadogReporter.
 func (r *DatadogReporter) Stop() {
 	close(r.stopSignal)
+	r.wg.Wait()
+	if r.symbolUploader != nil {
+		r.symbolUploader.Stop()
+	}
 }
 
 // GetMetrics returns internal metrics of DatadogReporter.
@@ -341,14 +354,14 @@ func (r *DatadogReporter) GetMetrics() reporter.Metrics {
 }
 
 // Start sets up and manages the reporting connection to the Datadog Backend.
-func (r *DatadogReporter) Start(mainCtx context.Context) error {
-	// Create a child context for reporting features
-	ctx, cancelReporting := context.WithCancel(mainCtx)
-
+//
+//nolint:contextcheck
+func (r *DatadogReporter) Start(ctx context.Context) error {
 	if r.symbolUploader != nil {
-		r.symbolUploader.Start(ctx)
+		r.symbolUploader.Start()
 	}
 
+	r.wg.Add(1)
 	go func() {
 		tick := time.NewTicker(r.config.ReportInterval)
 		defer tick.Stop()
@@ -356,9 +369,8 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 		defer purgeTick.Stop()
 		for {
 			select {
-			case <-ctx.Done():
-				return
 			case <-r.stopSignal:
+				r.wg.Done()
 				return
 			case <-tick.C:
 				if err := r.reportProfile(ctx); err != nil {
@@ -372,13 +384,6 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 				r.processes.PurgeExpired()
 			}
 		}
-	}()
-
-	// When Stop() is called and a signal to 'stop' is received, then:
-	// - cancel the reporting functions currently running (using context)
-	go func() {
-		<-r.stopSignal
-		cancelReporting()
 	}()
 
 	return nil
@@ -434,7 +439,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 	r.profileSeq++
 
 	log.Infof("Tags: %v", tags.String())
-	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
+	return uploadProfiles(ctx, r.client, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
 		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), r.intakeURL,
 		tags, r.version, r.apiKey)
 }

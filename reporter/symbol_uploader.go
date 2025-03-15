@@ -51,7 +51,6 @@ const (
 	sourceMapEndpoint = "/api/v2/srcmap"
 
 	symbolCopyTimeout = 10 * time.Second
-	uploadTimeout     = 15 * time.Second
 )
 
 type fileData struct {
@@ -72,6 +71,8 @@ type DatadogSymbolUploader struct {
 	uploadCache    *lru.SyncedLRU[libpf.FileID, struct{}]
 	client         *http.Client
 	symbolQueriers []SymbolQuerier
+
+	stop chan struct{}
 
 	retrievalWorkerCount int
 	retrievalQueue       chan fileData
@@ -131,9 +132,11 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 		dryRun:               cfg.DryRun,
 		uploadDynamicSymbols: cfg.UploadDynamicSymbols,
 		uploadGoPCLnTab:      cfg.UploadGoPCLnTab,
-		client:               &http.Client{Timeout: uploadTimeout},
+		client:               &http.Client{Timeout: defaultHTTPClientTimeout},
 		uploadCache:          uploadCache,
 		symbolQueriers:       symbolQueriers,
+
+		stop: make(chan struct{}),
 
 		retrievalWorkerCount: defaultRetrievalWorkerCount,
 		retrievalQueue:       make(chan fileData, defaultRetrievalQueueSize),
@@ -158,14 +161,13 @@ func (d *DatadogSymbolUploader) overrideClock(clock clockwork.Clock) {
 	d.clock = clock
 }
 
-func (d *DatadogSymbolUploader) retrievalWorker(ctx context.Context) {
+func (d *DatadogSymbolUploader) retrievalWorker() {
 	for {
 		select {
-		case file, ok := <-d.retrievalQueue:
-			if !ok {
-				d.retrievalWg.Done()
-				return
-			}
+		case <-d.stop:
+			d.retrievalWg.Done()
+			return
+		case file := <-d.retrievalQueue:
 			// Record immediately to avoid duplicate uploads
 			d.uploadCache.Add(file.fileID, struct{}{})
 			elf := d.getSymbolsFromDisk(file)
@@ -176,18 +178,17 @@ func (d *DatadogSymbolUploader) retrievalWorker(ctx context.Context) {
 			}
 
 			d.batchingQueue <- elf
-		case <-ctx.Done():
-			d.retrievalWg.Done()
-			return
 		}
 	}
 }
 
-func (d *DatadogSymbolUploader) batchingWorker(ctx context.Context) {
+func (d *DatadogSymbolUploader) batchingWorker() {
 	var batch []*symbol.Elf
-	var ticker <-chan time.Time
+	var ticker clockwork.Ticker
+	var tickerC <-chan time.Time
 	if d.batchingInterval > 0 {
-		ticker = d.clock.NewTicker(d.batchingInterval).Chan()
+		ticker = d.clock.NewTicker(d.batchingInterval)
+		tickerC = ticker.Chan()
 	}
 
 	flush := func() {
@@ -197,107 +198,84 @@ func (d *DatadogSymbolUploader) batchingWorker(ctx context.Context) {
 		}
 	}
 
-	flushThenStop := func() {
-		flush()
-		d.batchingWg.Done()
-	}
-
 	for {
 		select {
-		case <-ctx.Done():
-			flushThenStop()
-			return
 		case in, ok := <-d.batchingQueue:
 			if !ok {
-				flushThenStop()
+				flush()
+				d.batchingWg.Done()
 				return
 			}
 			batch = append(batch, in)
 			if d.batchingMaxSize > 0 && len(batch) >= d.batchingMaxSize {
 				flush()
+				if ticker != nil {
+					ticker.Reset(d.batchingInterval)
+				}
 			}
-		case <-ticker:
+		case <-tickerC:
 			flush()
 		}
 	}
 }
 
-func (d *DatadogSymbolUploader) queryWorker(ctx context.Context) {
-	for {
-		select {
-		case batch, ok := <-d.queryQueue:
-			if !ok {
-				d.queryWg.Done()
-				return
-			}
-			batchRes := ExecuteSymbolQueryBatch(ctx, batch, d.symbolQueriers)
-			for _, res := range batchRes {
-				d.uploadQueue <- res
-			}
-		case <-ctx.Done():
-			d.queryWg.Done()
-			return
+func (d *DatadogSymbolUploader) queryWorker() {
+	for batch := range d.queryQueue {
+		batchRes := ExecuteSymbolQueryBatch(batch, d.symbolQueriers)
+		for _, res := range batchRes {
+			d.uploadQueue <- res
 		}
 	}
+	d.queryWg.Done()
 }
 
-func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context) {
-	for {
-		select {
-		case elf, ok := <-d.uploadQueue:
-			if !ok {
-				d.uploadWg.Done()
-				return
-			}
-			// TODO: upload symbols to endpoints concurrently (beware of gopclntab extraction that is not thread-safe)
-			removeFromCache := false
-			for i, backendSymbolSource := range elf.BackendSymbolSources {
-				if backendSymbolSource.Err != nil {
-					log.Warnf("Failed to query symbols for executable %s: %v", elf, backendSymbolSource.Err)
-					removeFromCache = true
-					continue
-				}
-
-				log.Debugf("Existing symbols for executable %s: %v", elf, backendSymbolSource)
-
-				if !d.upload(ctx, elf.Elf, backendSymbolSource.SymbolSource, i) {
-					// Remove from cache to retry later
-					removeFromCache = true
-				}
+func (d *DatadogSymbolUploader) uploadWorker() {
+	for elf := range d.uploadQueue {
+		// TODO: upload symbols to endpoints concurrently (beware of gopclntab extraction that is not thread-safe)
+		removeFromCache := false
+		for i, backendSymbolSource := range elf.BackendSymbolSources {
+			if backendSymbolSource.Err != nil {
+				log.Warnf("Failed to query symbols for executable %s: %v", elf, backendSymbolSource.Err)
+				removeFromCache = true
+				continue
 			}
 
-			if removeFromCache {
-				d.uploadCache.Remove(elf.FileID())
-			}
-			elf.Close()
+			log.Debugf("Existing symbols for executable %s: %v", elf, backendSymbolSource)
 
-		case <-ctx.Done():
-			d.uploadWg.Done()
-			return
+			if !d.upload(elf.Elf, backendSymbolSource.SymbolSource, i) {
+				// Remove from cache to retry later
+				removeFromCache = true
+			}
 		}
+
+		if removeFromCache {
+			d.uploadCache.Remove(elf.FileID())
+		}
+		elf.Close()
 	}
+	d.uploadWg.Done()
 }
 
-func (d *DatadogSymbolUploader) Start(ctx context.Context) {
+func (d *DatadogSymbolUploader) Start() {
 	for range d.retrievalWorkerCount {
 		d.retrievalWg.Add(1)
-		go d.retrievalWorker(ctx)
+		go d.retrievalWorker()
 	}
 
 	d.batchingWg.Add(1)
-	go d.batchingWorker(ctx)
+	go d.batchingWorker()
 
 	d.queryWg.Add(1)
-	go d.queryWorker(ctx)
+	go d.queryWorker()
 
 	for range d.uploadWorkerCount {
 		d.uploadWg.Add(1)
-		go d.uploadWorker(ctx)
+		go d.uploadWorker()
 	}
 }
 
 func (d *DatadogSymbolUploader) Stop() {
-	close(d.retrievalQueue)
+	close(d.stop)
 	d.retrievalWg.Wait()
 
 	close(d.batchingQueue)
@@ -386,7 +364,7 @@ func (d *DatadogSymbolUploader) getSymbolsFromDisk(data fileData) *symbol.Elf {
 }
 
 // Returns true if the upload was successful, false otherwise
-func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, existingSymbolSource symbol.Source, ind int) bool {
+func (d *DatadogSymbolUploader) upload(e *symbol.Elf, existingSymbolSource symbol.Source, ind int) bool {
 	symbolSource := d.getSymbolSourceIfGoPCLnTab(e)
 	if existingSymbolSource >= symbolSource {
 		log.Infof("Skipping symbol upload for executable %s: existing symbols with source %v", e.Path(),
@@ -415,7 +393,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, exist
 		return true
 	}
 
-	err := d.handleSymbols(ctx, e, ind)
+	err := d.handleSymbols(e, ind)
 	if err != nil {
 		log.Errorf("Failed to handle symbols: %v for executable: %s", err, e)
 		return false
@@ -451,7 +429,7 @@ func newSymbolUploadRequestMetadata(e *symbol.Elf, symbolSource symbol.Source, p
 	}
 }
 
-func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf, ind int) error {
+func (d *DatadogSymbolUploader) handleSymbols(e *symbol.Elf, ind int) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file to extract symbols: %w", err)
@@ -459,7 +437,7 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf
 	defer os.Remove(symbolFile.Name())
 	defer symbolFile.Close()
 
-	ctx, cancel := context.WithTimeout(ctx, symbolCopyTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), symbolCopyTimeout)
 	defer cancel()
 
 	symbolSource, goPCLnTabInfo := d.getSymbolSourceWithGoPCLnTab(e)
@@ -469,7 +447,7 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf
 		return fmt.Errorf("failed to copy symbols: %w", err)
 	}
 
-	err = d.uploadSymbols(ctx, symbolFile, newSymbolUploadRequestMetadata(e, symbolSource, d.version), ind)
+	err = d.uploadSymbols(symbolFile, newSymbolUploadRequestMetadata(e, symbolSource, d.version), ind)
 	if err != nil {
 		return fmt.Errorf("failed to upload symbols: %w", err)
 	}
@@ -543,9 +521,9 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 	return nil
 }
 
-func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *os.File,
+func (d *DatadogSymbolUploader) uploadSymbols(symbolFile *os.File,
 	e *symbolUploadRequestMetadata, ind int) error {
-	req, err := d.buildSymbolUploadRequest(ctx, symbolFile, e, ind)
+	req, err := d.buildSymbolUploadRequest(symbolFile, e, ind)
 	if err != nil {
 		return fmt.Errorf("failed to build symbol upload request: %w", err)
 	}
@@ -566,7 +544,7 @@ func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *o
 	return nil
 }
 
-func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, symbolFile *os.File,
+func (d *DatadogSymbolUploader) buildSymbolUploadRequest(symbolFile *os.File,
 	e *symbolUploadRequestMetadata, ind int) (*http.Request, error) {
 	b := new(bytes.Buffer)
 
@@ -610,7 +588,7 @@ func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, sy
 		return nil, fmt.Errorf("failed to close zstd writer: %w", err)
 	}
 
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, d.intakeURLs[ind], b)
+	r, err := http.NewRequestWithContext(context.Background(), http.MethodPost, d.intakeURLs[ind], b)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

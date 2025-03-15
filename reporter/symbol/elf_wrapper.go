@@ -53,11 +53,16 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 		_ = r.Close()
 		return nil, err
 	}
+	err = ef.LoadSections()
+	if err != nil {
+		_ = r.Close()
+		return nil, err
+	}
 	return &elfWrapper{reader: r, elfFile: ef, filePath: filePath, actualFilePath: actualFilePath, opener: opener}, nil
 }
 
 func (e *elfWrapper) symbolSource() Source {
-	if HasDWARFData(e.elfFile) {
+	if e.hasDWARFData() {
 		return SourceDebugInfo
 	}
 
@@ -81,7 +86,7 @@ func (e *elfWrapper) findSeparateSymbolsWithDebugInfo() *elfWrapper {
 	// First, check based on the GNU build ID
 	debugElf := e.findDebugSymbolsWithBuildID()
 	if debugElf != nil {
-		if HasDWARFData(debugElf.elfFile) {
+		if debugElf.hasDWARFData() {
 			return debugElf
 		}
 		debugElf.Close()
@@ -91,7 +96,7 @@ func (e *elfWrapper) findSeparateSymbolsWithDebugInfo() *elfWrapper {
 	// Then, check based on the debug link
 	debugElf = e.findDebugSymbolsWithDebugLink()
 	if debugElf != nil {
-		if HasDWARFData(debugElf.elfFile) {
+		if e.hasDWARFData() {
 			return debugElf
 		}
 		log.Debugf("No debug symbols found in debug link file %s", debugElf.filePath)
@@ -169,10 +174,10 @@ func (e *elfWrapper) findDebugSymbolsWithDebugLink() *elfWrapper {
 }
 
 // HasDWARFData is a copy of pfelf.HasDWARFData, but for the libpf.File interface.
-func HasDWARFData(f *pfelf.File) bool {
+func (e *elfWrapper) hasDWARFData() bool {
 	hasBuildID := false
 	hasDebugStr := false
-	for _, section := range f.Sections {
+	for _, section := range e.elfFile.Sections {
 		// NOBITS indicates that the section is actually empty, regardless of the size in the
 		// section header.
 		if section.Type == elf.SHT_NOBITS {
@@ -204,5 +209,5 @@ func HasDWARFData(f *pfelf.File) bool {
 	// Some alternate debug files only have a .debug_str section. For these we want to return true.
 	// Use the absence of program headers and presence of a Build ID as heuristic to identify
 	// alternate debug files.
-	return len(f.Progs) == 0 && hasBuildID && hasDebugStr
+	return len(e.elfFile.Progs) == 0 && hasBuildID && hasDebugStr
 }

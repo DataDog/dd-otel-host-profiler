@@ -22,14 +22,13 @@ type profileData struct {
 	data []byte
 }
 
-func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endTime time.Time,
+func uploadProfiles(ctx context.Context, client *http.Client, profiles []profileData, startTime, endTime time.Time,
 	url string, tags Tags, profilerVersion string, apiKey string) error {
 	contentType, body, err := buildMultipartForm(profiles, startTime, endTime, tags)
 	if err != nil {
 		return err
 	}
 
-	// If you want a timeout, you can use context.WithTimeout
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return err
@@ -40,8 +39,7 @@ func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endT
 	if apiKey != "" {
 		req.Header.Set("Dd-Api-Key", apiKey)
 	}
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
