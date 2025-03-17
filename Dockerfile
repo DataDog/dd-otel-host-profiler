@@ -11,3 +11,7 @@ USER build
 RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
 
 VOLUME /go
+
+COPY --chown=build:build entrypoint.sh /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
