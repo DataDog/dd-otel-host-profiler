@@ -7,8 +7,6 @@ package pipeline
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -18,86 +16,72 @@ import (
 type Stage interface {
 	Start(ctx context.Context)
 	Stop()
-	Connect(next Stage) error
-	SetConcurrency(concurrency int)
-	SetOutputChanSize(size int)
 }
 
-type Pipeline interface {
-	Start(ctx context.Context)
-	Stop()
-}
-
-type Consumer[In any] interface {
-	SetInputChannel(chan In)
-}
-
-var _ Stage = (*StageWorker[any, any])(nil)
-var _ Consumer[any] = (*StageWorker[any, any])(nil)
-
-type baseWorker[In any, Out any] struct {
-	wg          sync.WaitGroup
-	inputChan   <-chan In
-	outputChan  chan Out
-	concurrency int
+type ConsumerWorker[In any] struct {
+	wg             sync.WaitGroup
+	inputChan      <-chan In
+	concurrency    int
+	processingFunc func(context.Context, In)
 }
 
 type StageWorker[In any, Out any] struct {
-	baseWorker[In, Out]
-	processingFunc func(context.Context, In) []Out
+	ConsumerWorker[In]
+	outputChan chan Out
 }
 
 type BatchingStageWorker[In any] struct {
-	baseWorker[In, []In]
+	StageWorker[In, []In]
 	batchSize     int
 	batchInterval time.Duration
 	clock         clockwork.Clock
 }
 
-type nullOutput struct{}
-
-func NewStage[In any, Out any](fun func(context.Context, In) []Out) *StageWorker[In, Out] {
-	output := make(chan Out)
-	return &StageWorker[In, Out]{
-		baseWorker: baseWorker[In, Out]{
-			outputChan:  output,
-			concurrency: 1,
-		},
+func newConsumerWorker[In any](inputChan <-chan In, concurrency int, fun func(context.Context, In)) ConsumerWorker[In] {
+	return ConsumerWorker[In]{
+		inputChan:      inputChan,
+		concurrency:    concurrency,
 		processingFunc: fun,
 	}
 }
 
-func NewSinkStage[In any](fun func(context.Context, In)) *StageWorker[In, nullOutput] {
-	return &StageWorker[In, nullOutput]{
-		baseWorker: baseWorker[In, nullOutput]{
-			outputChan:  nil,
-			concurrency: 1,
-		},
-		processingFunc: func(ctx context.Context, input In) []nullOutput {
-			fun(ctx, input)
-			return nil
-		},
+func NewSinkStage[In any](inputChan <-chan In, fun func(context.Context, In), options ...StageOption) *ConsumerWorker[In] {
+	opts := NewStageOptions(options...)
+	w := newConsumerWorker(inputChan, opts.concurrency, fun)
+	return &w
+}
+
+func NewStage[In any, Out any](inputChan <-chan In, fun func(context.Context, In, chan<- Out), options ...StageOption) *StageWorker[In, Out] {
+	opts := NewStageOptions(options...)
+	output := make(chan Out, opts.outputChanSize)
+	return &StageWorker[In, Out]{
+		ConsumerWorker: newConsumerWorker(inputChan, opts.concurrency, func(ctx context.Context, i In) {
+			fun(ctx, i, output)
+		}),
+		outputChan: output,
 	}
 }
 
-func NewBatchingStage[In any](batchInterval time.Duration, batchSize int) *BatchingStageWorker[In] {
-	return NewBatchingStageWithClock[In](batchInterval, batchSize, clockwork.NewRealClock())
+func NewBatchingStage[In any](inputChan <-chan In, batchInterval time.Duration, batchSize int, options ...StageOption) *BatchingStageWorker[In] {
+	return NewBatchingStageWithClock[In](inputChan, batchInterval, batchSize, clockwork.NewRealClock(), options...)
 }
 
-func NewBatchingStageWithClock[In any](batchInterval time.Duration, batchSize int, clock clockwork.Clock) *BatchingStageWorker[In] {
-	output := make(chan []In)
+func NewBatchingStageWithClock[In any](inputChan <-chan In, batchInterval time.Duration, batchSize int, clock clockwork.Clock, options ...StageOption) *BatchingStageWorker[In] {
+	opts := NewStageOptions(options...)
+	output := make(chan []In, opts.outputChanSize)
 	return &BatchingStageWorker[In]{
-		baseWorker: baseWorker[In, []In]{
-			outputChan:  output,
-			concurrency: 1,
+		StageWorker: StageWorker[In, []In]{
+			ConsumerWorker: newConsumerWorker(inputChan, opts.concurrency, nil),
+			outputChan:     output,
 		},
+
 		batchSize:     batchSize,
 		batchInterval: batchInterval,
 		clock:         clock,
 	}
 }
 
-func (w *StageWorker[In, Out]) Start(ctx context.Context) {
+func (w *ConsumerWorker[In]) Start(ctx context.Context) {
 	for range w.concurrency {
 		w.wg.Add(1)
 		go func() {
@@ -110,45 +94,24 @@ func (w *StageWorker[In, Out]) Start(ctx context.Context) {
 					if !ok {
 						return
 					}
-					for _, output := range w.processingFunc(ctx, input) {
-						w.outputChan <- output
-					}
+					w.processingFunc(ctx, input)
 				}
 			}
 		}()
 	}
 }
 
-func (w *baseWorker[In, Out]) Stop() {
-	if w.outputChan != nil {
-		defer close(w.outputChan)
-	}
+func (w *ConsumerWorker[In]) Stop() {
 	w.wg.Wait()
 }
 
-func (w *baseWorker[In, Out]) SetInputChannel(inputChan chan In) {
-	w.inputChan = inputChan
+func (w *StageWorker[In, Out]) Stop() {
+	w.ConsumerWorker.Stop()
+	close(w.outputChan)
 }
 
-func (w *baseWorker[In, Out]) SetConcurrency(concurrency int) {
-	w.concurrency = concurrency
-}
-
-func (w *baseWorker[In, Out]) SetOutputChanSize(size int) {
-	w.outputChan = make(chan Out, size)
-}
-
-func (w *baseWorker[In, Out]) Connect(next Stage) error {
-	if w.outputChan == nil {
-		return errors.New("cannot connect sink stage")
-	}
-	w2, ok := next.(Consumer[Out])
-	if !ok {
-		return fmt.Errorf("cannot connect stage %T to %T", w, next)
-	}
-
-	w2.SetInputChannel(w.outputChan)
-	return nil
+func (w *StageWorker[In, Out]) GetOutputChannel() <-chan Out {
+	return w.outputChan
 }
 
 func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
@@ -159,7 +122,7 @@ func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
 			var batch []In
 			var tickerChan <-chan time.Time
 			if w.batchInterval > 0 {
-				tickerChan = w.clock.NewTicker(w.batchInterval).Chan()
+				tickerChan = w.clock.After(w.batchInterval)
 			}
 			for {
 				select {
@@ -176,95 +139,76 @@ func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
 					if w.batchSize > 0 && len(batch) >= w.batchSize {
 						w.outputChan <- batch
 						batch = nil
+						if w.batchInterval > 0 {
+							tickerChan = w.clock.After(w.batchInterval)
+						}
 					}
 				case <-tickerChan:
 					if len(batch) > 0 {
 						w.outputChan <- batch
 						batch = nil
 					}
+					tickerChan = w.clock.After(w.batchInterval)
 				}
 			}
 		}()
 	}
 }
 
-type pipeline[In any] struct {
-	workers   []Stage
+type Pipeline[In any] struct {
 	inputChan chan In
+	workers   []Stage
 }
 
-func (p *pipeline[In]) Start(ctx context.Context) {
+func (p *Pipeline[In]) GetInputChannel() chan In {
+	return p.inputChan
+}
+func (p *Pipeline[In]) Start(ctx context.Context) {
 	for _, worker := range p.workers {
 		worker.Start(ctx)
 	}
 }
 
-func (p *pipeline[In]) Stop() {
+func (p *Pipeline[In]) Stop() {
 	close(p.inputChan)
 	for _, worker := range p.workers {
 		worker.Stop()
 	}
 }
 
-type Builder interface {
-	AddStage(stage Stage, options ...StageOption) Builder
-	Build() (Pipeline, error)
-}
-
-type pipelineBuilder[In any] struct {
-	workers   []Stage
-	inputChan chan In
-}
-
-func NewPipelineBuilder[In any](inputChan chan In) Builder {
-	return &pipelineBuilder[In]{
+func NewPipeline[In any](inputChan chan In, workers ...Stage) Pipeline[In] {
+	return Pipeline[In]{
 		inputChan: inputChan,
+		workers:   workers,
 	}
 }
 
-func (b *pipelineBuilder[In]) AddStage(stage Stage, options ...StageOption) Builder {
-	b.workers = append(b.workers, stage)
-	for _, option := range options {
-		option(stage)
-	}
-	return b
+type StageOptions struct {
+	concurrency    int
+	outputChanSize int
 }
 
-func (b *pipelineBuilder[In]) Build() (Pipeline, error) {
-	if len(b.workers) == 0 {
-		return &pipeline[In]{
-			workers:   nil,
-			inputChan: b.inputChan,
-		}, nil
-	}
-
-	w := b.workers[0]
-	w2, ok := w.(Consumer[In])
-	if !ok {
-		return nil, fmt.Errorf("first stage %T must accept input %T", w, b.inputChan)
-	}
-	w2.SetInputChannel(b.inputChan)
-	for i, worker := range b.workers[1:] {
-		if err := b.workers[i].Connect(worker); err != nil {
-			return nil, fmt.Errorf("cannot connect stage %d to stage %d: %w", i, i+1, err)
-		}
-	}
-	return &pipeline[In]{
-		workers:   b.workers,
-		inputChan: b.inputChan,
-	}, nil
-}
-
-type StageOption func(Stage)
+type StageOption func(*StageOptions)
 
 func WithConcurrency(concurrency int) StageOption {
-	return func(s Stage) {
-		s.SetConcurrency(concurrency)
+	return func(o *StageOptions) {
+		o.concurrency = concurrency
 	}
 }
 
 func WithOutputChanSize(size int) StageOption {
-	return func(s Stage) {
-		s.SetOutputChanSize(size)
+	return func(o *StageOptions) {
+		o.outputChanSize = size
 	}
+}
+
+func NewStageOptions(options ...StageOption) StageOptions {
+	o := StageOptions{
+		concurrency:    1,
+		outputChanSize: 0,
+	}
+	for _, option := range options {
+		option(&o)
+	}
+	return o
 }

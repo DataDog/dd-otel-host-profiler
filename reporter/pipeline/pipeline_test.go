@@ -16,10 +16,9 @@ import (
 )
 
 func TestPipeline(t *testing.T) {
-	t.Run("EmptyPipeline", func(t *testing.T) {
+	t.Run("EmptyPipeline", func(_ *testing.T) {
 		input := make(chan int)
-		p, err := NewPipelineBuilder(input).Build()
-		require.NoError(t, err)
+		p := NewPipeline(input)
 		p.Start(context.Background())
 		p.Stop()
 	})
@@ -27,10 +26,10 @@ func TestPipeline(t *testing.T) {
 	t.Run("PipelineWithOneSink", func(t *testing.T) {
 		input := make(chan int)
 		output := make(chan int)
-		p, err := NewPipelineBuilder(input).AddStage(NewSinkStage(func(_ context.Context, x int) {
-			output <- x * 2
-		})).Build()
-		require.NoError(t, err)
+		p := NewPipeline(input, NewSinkStage(input,
+			func(_ context.Context, x int) {
+				output <- x * 2
+			}))
 		p.Start(context.Background())
 		input <- 1
 		require.Equal(t, 2, <-output)
@@ -40,19 +39,19 @@ func TestPipeline(t *testing.T) {
 	t.Run("PipelineWithMultipleStages", func(t *testing.T) {
 		input := make(chan int)
 		output := make(chan int)
-		p, err := NewPipelineBuilder(input).
-			AddStage(NewStage(func(_ context.Context, x int) [][]int {
-				return [][]int{{x * 2, x * 3}}
-			})).
-			AddStage(NewSinkStage(func(_ context.Context, x []int) {
+		stage1 := NewStage(input,
+			func(_ context.Context, x int, outputChan chan<- []int) {
+				outputChan <- []int{x * 2, x * 3}
+			})
+		stage2 := NewSinkStage(stage1.GetOutputChannel(),
+			func(_ context.Context, x []int) {
 				var sum int
 				for _, v := range x {
 					sum += v
 				}
 				output <- sum
-			})).
-			Build()
-		require.NoError(t, err)
+			})
+		p := NewPipeline(input, stage1, stage2)
 		p.Start(context.Background())
 		go func() {
 			input <- 1
@@ -70,20 +69,22 @@ func TestPipeline(t *testing.T) {
 		}
 		var output []int
 		var mut sync.Mutex
-		p, err := NewPipelineBuilder(input).
-			AddStage(NewStage(func(_ context.Context, x int) []int {
-				return []int{x * 2}
-			}), WithConcurrency(10)).
-			AddStage(NewStage(func(_ context.Context, x int) []int {
-				return []int{x + 1}
-			}), WithConcurrency(10)).
-			AddStage(NewSinkStage(func(_ context.Context, x int) {
+		stage1 := NewStage(input,
+			func(_ context.Context, x int, outputChan chan<- int) {
+				outputChan <- x * 2
+			}, WithConcurrency(10))
+		stage2 := NewStage(stage1.GetOutputChannel(),
+			func(_ context.Context, x int, outputChan chan<- int) {
+				outputChan <- x + 1
+			}, WithConcurrency(10))
+		stage3 := NewSinkStage(stage2.GetOutputChannel(),
+			func(_ context.Context, x int) {
 				mut.Lock()
 				output = append(output, x)
 				mut.Unlock()
-			}), WithConcurrency(10)).
-			Build()
-		require.NoError(t, err)
+			}, WithConcurrency(10))
+
+		p := NewPipeline(input, stage1, stage2, stage3)
 		p.Start(context.Background())
 		p.Stop()
 		require.Len(t, output, 1000)
@@ -95,13 +96,12 @@ func TestPipeline(t *testing.T) {
 			input <- i
 		}
 		var output [][]int
-		p, err := NewPipelineBuilder(input).
-			AddStage(NewBatchingStage[int](0, 10)).
-			AddStage(NewSinkStage(func(_ context.Context, x []int) {
+		stage1 := NewBatchingStage[int](input, 0, 10)
+		stage2 := NewSinkStage(stage1.GetOutputChannel(),
+			func(_ context.Context, x []int) {
 				output = append(output, x)
-			})).
-			Build()
-		require.NoError(t, err)
+			})
+		p := NewPipeline(input, stage1, stage2)
 		p.Start(context.Background())
 		p.Stop()
 		require.Len(t, output, 100)
@@ -113,23 +113,26 @@ func TestPipeline(t *testing.T) {
 		for i := range 9 {
 			input <- i
 		}
-		output := make(chan []int, 1)
 		clock := clockwork.NewFakeClock()
-		p, err := NewPipelineBuilder(input).
-			AddStage(NewBatchingStageWithClock[int](1*time.Second, 10, clock)).
-			AddStage(NewSinkStage(func(_ context.Context, x []int) {
-				output <- x
-			})).
-			Build()
-		require.NoError(t, err)
+		stage1 := NewBatchingStageWithClock(input, 1*time.Second, 10, clock,
+			WithOutputChanSize(1))
+		p := NewPipeline(input, stage1)
+		output := stage1.GetOutputChannel()
 		p.Start(context.Background())
 		require.NoError(t, clock.BlockUntilContext(context.Background(), 1))
 		clock.Advance(1 * time.Second)
 		require.Len(t, <-output, 9)
-		for i := range 10 {
+		clock.Advance(999 * time.Millisecond)
+		for i := range 15 {
 			input <- i
 		}
 		require.Len(t, <-output, 10)
+		clock.Advance(1 * time.Millisecond)
+		require.NoError(t, clock.BlockUntilContext(context.Background(), 1))
+		require.Empty(t, output)
+		clock.Advance(999 * time.Millisecond)
+		require.NoError(t, clock.BlockUntilContext(context.Background(), 1))
+		require.Len(t, <-output, 5)
 		for i := range 5 {
 			input <- i
 		}
