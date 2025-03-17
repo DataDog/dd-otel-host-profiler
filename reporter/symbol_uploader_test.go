@@ -8,6 +8,7 @@ package reporter
 import (
 	"context"
 	"debug/elf"
+	"encoding/json"
 	"fmt"
 	"mime"
 	"mime/multipart"
@@ -28,6 +29,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
 func findSymbol(f *elf.File, name string) *elf.Symbol {
@@ -88,7 +90,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	checkGoPCLnTab(t, f, true)
 }
 
-func checkRequest(t *testing.T, req *http.Request) {
+func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.Source) {
 	reader := zstd.NewReader(req.Body)
 	defer reader.Close()
 
@@ -106,12 +108,27 @@ func checkRequest(t *testing.T, req *http.Request) {
 	require.NoError(t, err)
 	defer f.Close()
 
+	event, ok := form.File["event"]
+	require.True(t, ok)
+	e, err := event[0].Open()
+	require.NoError(t, err)
+	defer e.Close()
+
+	// unmarshal json into map[string]string
+	// check that the symbol source is correct
+	result := make(map[string]string)
+	err = json.NewDecoder(e).Decode(&result)
+	require.NoError(t, err)
+	require.Equal(t, expectedSymbolSource.String(), result["symbol_source"])
+
 	elfFile, err := elf.NewFile(f)
 	require.NoError(t, err)
 	defer elfFile.Close()
 
 	require.NoError(t, err)
-	checkGoPCLnTab(t, elfFile, true)
+	if expectedSymbolSource == symbol.SourceGoPCLnTab {
+		checkGoPCLnTab(t, elfFile, false)
+	}
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
@@ -161,6 +178,11 @@ func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbol
 				APIKey: "api_key",
 				AppKey: "app_key",
 			},
+			{
+				Site:   "staging.com",
+				APIKey: "api_key2",
+				AppKey: "app_key2",
+			},
 		},
 	}
 	return NewDatadogSymbolUploader(cfg)
@@ -194,12 +216,20 @@ func TestSymbolUpload(t *testing.T) {
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
-	c := make(chan *http.Request)
+	c1 := make(chan *http.Request)
+	c2 := make(chan *http.Request)
 	httpmock.RegisterResponder("POST", buildSymbolQueryURL("foobar.com"),
 		httpmock.NewStringResponder(200, `{"data": []}`))
 	httpmock.RegisterResponder("POST", buildSourcemapIntakeURL("foobar.com"),
 		func(req *http.Request) (*http.Response, error) {
-			c <- req
+			c1 <- req
+			return httpmock.NewStringResponse(200, ""), nil
+		})
+	httpmock.RegisterResponder("POST", buildSymbolQueryURL("staging.com"),
+		httpmock.NewStringResponder(200, `{"data": []}`))
+	httpmock.RegisterResponder("POST", buildSourcemapIntakeURL("staging.com"),
+		func(req *http.Request) (*http.Response, error) {
+			c2 <- req
 			return httpmock.NewStringResponse(200, ""), nil
 		})
 
@@ -223,8 +253,15 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(ctx)
 		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
-		req := <-c
-		checkRequest(t, req)
-		assert.Equal(t, 2, httpmock.GetTotalCallCount())
+		req1 := <-c1
+		req2 := <-c2
+		checkRequest(t, req1, symbol.SourceGoPCLnTab)
+		checkRequest(t, req2, symbol.SourceGoPCLnTab)
+
+		callCountInfo := httpmock.GetCallCountInfo()
+		assert.Equal(t, 1, callCountInfo["POST "+buildSymbolQueryURL("foobar.com")])
+		assert.Equal(t, 1, callCountInfo["POST "+buildSourcemapIntakeURL("foobar.com")])
+		assert.Equal(t, 1, callCountInfo["POST "+buildSymbolQueryURL("staging.com")])
+		assert.Equal(t, 1, callCountInfo["POST "+buildSourcemapIntakeURL("staging.com")])
 	})
 }
