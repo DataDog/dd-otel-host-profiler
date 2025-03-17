@@ -53,6 +53,11 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 		_ = r.Close()
 		return nil, err
 	}
+	err = ef.LoadSections()
+	if err != nil {
+		_ = r.Close()
+		return nil, err
+	}
 	return &elfWrapper{reader: r, elfFile: ef, filePath: filePath, actualFilePath: actualFilePath, opener: opener}, nil
 }
 
