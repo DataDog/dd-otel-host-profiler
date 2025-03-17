@@ -195,7 +195,7 @@ func NewElfForTest(arch, gnuBuildID, goBuildID, fileHash string) *Elf {
 
 type DummyReader struct{}
 
-func (d DummyReader) ReadAt(p []byte, off int64) (n int, err error) {
+func (d DummyReader) ReadAt(p []byte, _ int64) (n int, err error) {
 	return len(p), nil
 }
 

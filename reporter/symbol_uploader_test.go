@@ -169,12 +169,11 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 	}
 }
 
-func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool, batchingInterval time.Duration) (*DatadogSymbolUploader, error) {
+func newTestUploader(uploadGoPCLnTab bool, batchingInterval time.Duration) (*DatadogSymbolUploader, error) {
 	cfg := &SymbolUploaderConfig{
-		Enabled:              true,
-		UploadDynamicSymbols: uploadDynamicSymbols,
-		UploadGoPCLnTab:      uploadGoPCLnTab,
-		SymbolQueryInterval:  batchingInterval,
+		Enabled:             true,
+		UploadGoPCLnTab:     uploadGoPCLnTab,
+		SymbolQueryInterval: batchingInterval,
 		SymbolEndpoints: []SymbolEndpoint{
 			{
 				Site:   "foobar.com",
@@ -241,7 +240,7 @@ func TestSymbolUpload(t *testing.T) {
 	t.Run("No upload when no symbols", func(t *testing.T) {
 		registerResponders(http.StatusOK, http.StatusOK)
 
-		uploader, err := newTestUploader(false, false, 0)
+		uploader, err := newTestUploader(false, 0)
 		require.NoError(t, err)
 		uploader.Start()
 
@@ -256,7 +255,7 @@ func TestSymbolUpload(t *testing.T) {
 
 		exeWithDebugInfo := buildGoExe(t, t.TempDir(), true)
 
-		uploader, err := newTestUploader(false, false, 0)
+		uploader, err := newTestUploader(false, 0)
 		require.NoError(t, err)
 		uploader.Start()
 		defer uploader.Stop()
@@ -265,12 +264,12 @@ func TestSymbolUpload(t *testing.T) {
 		checkRequest(t, req, symbol.SourceDebugInfo)
 		info := httpmock.GetCallCountInfo()
 
-		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != 1 {
+		if info[expectedRequest(symbolQueryURL)] != 1 {
 			t.Log(fmt.Sprint(info))
 			t.Errorf("Failed to call symbol query endpoint")
 		}
 
-		if info[fmt.Sprintf("POST %s", sourcemapIntakeURL)] != 1 {
+		if info[expectedRequest(sourcemapIntakeURL)] != 1 {
 			t.Log(fmt.Sprint(info))
 			t.Errorf("Failed to call symbol query endpoint")
 		}
@@ -279,7 +278,7 @@ func TestSymbolUpload(t *testing.T) {
 	t.Run("Upload pclntab when enabled", func(t *testing.T) {
 		registerResponders(http.StatusOK, http.StatusOK)
 
-		uploader, err := newTestUploader(false, true, 0)
+		uploader, err := newTestUploader(true, 0)
 		require.NoError(t, err)
 		uploader.Start()
 		defer uploader.Stop()
@@ -288,12 +287,12 @@ func TestSymbolUpload(t *testing.T) {
 		checkRequest(t, req, symbol.SourceGoPCLnTab)
 		info := httpmock.GetCallCountInfo()
 
-		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != 1 {
+		if info[expectedRequest(symbolQueryURL)] != 1 {
 			t.Log(fmt.Sprint(info))
 			t.Errorf("Failed to call symbol query endpoint")
 		}
 
-		if info[fmt.Sprintf("POST %s", sourcemapIntakeURL)] != 1 {
+		if info[expectedRequest(sourcemapIntakeURL)] != 1 {
 			t.Log(fmt.Sprint(info))
 			t.Errorf("Failed to call symbol query endpoint")
 		}
@@ -302,7 +301,7 @@ func TestSymbolUpload(t *testing.T) {
 	t.Run("Re-upload executable if upload was unsuccessful", func(t *testing.T) {
 		registerResponders(http.StatusOK, http.StatusInternalServerError)
 
-		uploader, err := newTestUploader(false, true, 0)
+		uploader, err := newTestUploader(true, 0)
 		require.NoError(t, err)
 		uploader.Start()
 		defer uploader.Stop()
@@ -315,12 +314,12 @@ func TestSymbolUpload(t *testing.T) {
 
 		info := httpmock.GetCallCountInfo()
 
-		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != 2 {
+		if info[expectedRequest(symbolQueryURL)] != 2 {
 			t.Log(fmt.Sprint(info))
 			t.Errorf("Failed to call symbol query endpoint")
 		}
 
-		if info[fmt.Sprintf("POST %s", sourcemapIntakeURL)] != 2 {
+		if info[expectedRequest(sourcemapIntakeURL)] != 2 {
 			t.Log(fmt.Sprint(info))
 			t.Errorf("Failed to call symbol query endpoint")
 		}
@@ -335,7 +334,7 @@ func TestSymbolUpload(t *testing.T) {
 		})
 
 		batchingInterval := time.Nanosecond
-		uploader, err := newTestUploader(false, true, batchingInterval)
+		uploader, err := newTestUploader(true, batchingInterval)
 		require.NoError(t, err)
 
 		fakeClock := clockwork.NewFakeClock()
@@ -347,7 +346,7 @@ func TestSymbolUpload(t *testing.T) {
 		defer cancel()
 
 		err = fakeClock.BlockUntilContext(ctx, 1)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		uploader.batchingQueue <- symbol.NewElfForTest("amd64", "build_id", "go_build_id", "file_hash")
 		uploader.batchingQueue <- symbol.NewElfForTest("amd64", "build_id2", "go_build_id2", "file_hash2")
@@ -357,14 +356,14 @@ func TestSymbolUpload(t *testing.T) {
 		time.Sleep(1 * time.Millisecond)
 
 		err = fakeClock.BlockUntilContext(ctx, 1)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		fakeClock.Advance(batchingInterval)
 
 		waitForOrTimeout(t, symbolRequestChannel, 5*time.Second)
 
 		info := httpmock.GetCallCountInfo()
 
-		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != 1 {
+		if info[expectedRequest(symbolQueryURL)] != 1 {
 			t.Log(fmt.Sprint(info))
 			t.Errorf("Expected one call for symbol query endpoint")
 		}
@@ -378,7 +377,7 @@ func TestSymbolUpload(t *testing.T) {
 			return httpmock.NewStringResponse(http.StatusNotFound, `{"data\": []}`), nil
 		})
 
-		uploader, err := newTestUploader(false, true, time.Minute)
+		uploader, err := newTestUploader(true, time.Minute)
 		require.NoError(t, err)
 		uploader.Start()
 
@@ -401,11 +400,15 @@ func TestSymbolUpload(t *testing.T) {
 
 		info := httpmock.GetCallCountInfo()
 
-		if info[fmt.Sprintf("POST %s", symbolQueryURL)] != numBatches {
+		if info[expectedRequest(symbolQueryURL)] != numBatches {
 			t.Log(fmt.Sprint(info))
 			t.Errorf("Expected one call for symbol query endpoint")
 		}
 	})
+}
+
+func expectedRequest(url string) string {
+	return http.MethodPost + " " + url
 }
 
 func waitForOrTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration) T {
