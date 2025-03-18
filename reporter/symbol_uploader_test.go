@@ -9,7 +9,6 @@ import (
 	"context"
 	"debug/elf"
 	"encoding/json"
-	"fmt"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -26,7 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
-	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
@@ -204,16 +202,6 @@ func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbol
 	return NewDatadogSymbolUploader(cfg)
 }
 
-type DummyOpener struct{}
-
-func (o *DummyOpener) Open(path string) (reader process.ReadAtCloser, actualPath string, err error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, "", err
-	}
-	return f, fmt.Sprintf("/proc/%v/fd/%v", os.Getpid(), f.Fd()), nil
-}
-
 func buildGoExeWithoutDebugInfos(t *testing.T, tmpDir string) string {
 	f, err := os.CreateTemp(tmpDir, "helloworld")
 	require.NoError(t, err)
@@ -278,7 +266,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeWithoutDebugInfos, "build_id", &DummyOpener{})
+		uploader.UploadSymbols(libpf.FileID{}, goExeWithoutDebugInfos, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
 
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
@@ -291,7 +279,7 @@ func TestSymbolUpload(t *testing.T) {
 		uploader, err := newTestUploader(false, true)
 		require.NoError(t, err)
 		uploader.Start(ctx)
-		uploader.UploadSymbols(libpf.FileID{}, goExeWithoutDebugInfos, "build_id", &DummyOpener{})
+		uploader.UploadSymbols(libpf.FileID{}, goExeWithoutDebugInfos, "build_id", &symbol.DiskOpener{})
 		req1 := <-c1
 		req2 := <-c2
 		checkRequest(t, req1, symbol.SourceGoPCLnTab)
@@ -309,7 +297,7 @@ func TestSymbolUpload(t *testing.T) {
 		uploader, err := newTestUploader(false, false)
 		require.NoError(t, err)
 		uploader.Start(ctx)
-		uploader.UploadSymbols(libpf.FileID{}, exeWithDynamicSymbols, "build_id", &DummyOpener{})
+		uploader.UploadSymbols(libpf.FileID{}, exeWithDynamicSymbols, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
 
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
@@ -322,7 +310,7 @@ func TestSymbolUpload(t *testing.T) {
 		uploader, err := newTestUploader(true, false)
 		require.NoError(t, err)
 		uploader.Start(ctx)
-		uploader.UploadSymbols(libpf.FileID{}, exeWithDynamicSymbols, "build_id", &DummyOpener{})
+		uploader.UploadSymbols(libpf.FileID{}, exeWithDynamicSymbols, "build_id", &symbol.DiskOpener{})
 		req1 := <-c1
 		req2 := <-c2
 		checkRequest(t, req1, symbol.SourceDynamicSymbolTable)

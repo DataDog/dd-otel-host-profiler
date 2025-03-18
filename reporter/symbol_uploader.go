@@ -270,8 +270,9 @@ func (d *DatadogSymbolUploader) getSymbolSourceWithGoPCLnTab(e *symbol.Elf) (sym
 	if !e.IsGolang() || !d.uploadGoPCLnTab {
 		return symbolSource, nil
 	}
-	goPCLnTabInfo := e.GoPCLnTab()
-	if goPCLnTabInfo == nil {
+	goPCLnTabInfo, err := e.GoPCLnTab()
+	if err != nil {
+		log.Infof("Failed to extract GoPCLnTab for executable %s: %v", e, err)
 		return symbolSource, nil
 	}
 	return max(symbolSource, symbol.SourceGoPCLnTab), goPCLnTabInfo
@@ -364,22 +365,6 @@ func newSymbolUploadRequestMetadata(e *symbol.Elf, symbolSource symbol.Source, p
 	}
 }
 
-func (d *DatadogSymbolUploader) dumpElfData(symbols *symbol.Elf) (string, error) {
-	// No associated file -> probably vdso, dump the ELF data to a file
-	tempElfFile, err := os.CreateTemp("", "vdso")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file to extract symbols: %w", err)
-	}
-	defer tempElfFile.Close()
-
-	err = symbols.DumpElfData(tempElfFile)
-	if err != nil {
-		return "", fmt.Errorf("failed to dump ELF data to file: %w", err)
-	}
-
-	return tempElfFile.Name(), nil
-}
-
 func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf, ind int) error {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
@@ -396,11 +381,11 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf
 	elfPath := e.SymbolPathOnDisk()
 	if elfPath == "" {
 		// No associated file -> probably vdso, dump the ELF data to a file
-		elfPath, err = d.dumpElfData(e)
+		elfPath, err = e.DumpElfData()
 		if err != nil {
 			return fmt.Errorf("failed to dump ELF data: %w", err)
 		}
-		defer os.Remove(elfPath)
+		// Temporary file will be cleaned by the symbol.Elf.Close()
 	}
 
 	var dynamicSymbols *symbol.DynamicSymbolsDump
@@ -410,7 +395,7 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf
 		if err != nil {
 			return fmt.Errorf("failed to dump dynamic symbols: %w", err)
 		}
-		defer dynamicSymbols.Remove()
+		// Temporary file will be cleaned by the symbol.Elf.Close()
 	}
 
 	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo, dynamicSymbols)

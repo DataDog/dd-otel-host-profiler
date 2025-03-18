@@ -9,6 +9,7 @@ import (
 	"debug/elf"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -172,7 +173,7 @@ func (e *elfWrapper) findDebugSymbolsWithDebugLink() *elfWrapper {
 	return nil
 }
 
-func DumpDynamicSymbols(elfFile *pfelf.File) (*DynamicSymbolsDump, error) {
+func (e *elfWrapper) DumpDynamicSymbols() (*DynamicSymbolsDump, error) {
 	dynSymFile, err := os.CreateTemp("", "dynsym")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
@@ -195,7 +196,7 @@ func DumpDynamicSymbols(elfFile *pfelf.File) (*DynamicSymbolsDump, error) {
 		}
 	}()
 
-	dynSymSection := elfFile.Section(".dynsym")
+	dynSymSection := e.elfFile.Section(".dynsym")
 	if dynSymFile == nil {
 		return nil, errors.New("failed to find .dynsym section")
 	}
@@ -208,7 +209,7 @@ func DumpDynamicSymbols(elfFile *pfelf.File) (*DynamicSymbolsDump, error) {
 		return nil, fmt.Errorf("failed to write .dynsym section: %w", err)
 	}
 
-	dynStrSection := elfFile.Section(".dynstr")
+	dynStrSection := e.elfFile.Section(".dynstr")
 	if dynStrFile == nil {
 		return nil, errors.New("failed to find .dynstr section")
 	}
@@ -229,6 +230,26 @@ func DumpDynamicSymbols(elfFile *pfelf.File) (*DynamicSymbolsDump, error) {
 		DynSymAlign: dynSymSection.Addralign,
 		DynStrAlign: dynStrSection.Addralign,
 	}, nil
+}
+
+func (e *elfWrapper) DumpElfData() (string, error) {
+	tempElfFile, err := os.CreateTemp("", "elf")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file to dump elf data: %w", err)
+	}
+
+	defer func() {
+		tempElfFile.Close()
+		if err != nil {
+			os.Remove(tempElfFile.Name())
+		}
+	}()
+
+	_, err = io.Copy(tempElfFile, io.NewSectionReader(e.reader, 0, 1<<63-1))
+	if err != nil {
+		return "", fmt.Errorf("failed to dump elf data: %w", err)
+	}
+	return tempElfFile.Name(), nil
 }
 
 // HasDWARFData is a copy of pfelf.HasDWARFData, but for the libpf.File interface.
