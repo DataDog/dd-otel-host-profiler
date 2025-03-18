@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DataDog/zstd"
@@ -73,7 +74,9 @@ type DatadogSymbolUploader struct {
 	client              *http.Client
 	symbolQueriers      []SymbolQuerier
 	symbolQueryInterval time.Duration
+	retrievalQueue      chan fileData
 	pipeline            pipeline.Pipeline[fileData]
+	mut                 sync.Mutex
 }
 
 func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
@@ -193,9 +196,17 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 	d.pipeline = pipeline.NewPipeline(symbolRetrievalQueue,
 		symbolRetrievalStage, batchingStage, queryStage, uploadStage)
 	d.pipeline.Start(ctx)
+
+	d.mut.Lock()
+	d.retrievalQueue = symbolRetrievalQueue
+	d.mut.Unlock()
 }
 
 func (d *DatadogSymbolUploader) Stop() {
+	d.mut.Lock()
+	d.retrievalQueue = nil
+	d.mut.Unlock()
+
 	d.pipeline.Stop()
 }
 
@@ -208,6 +219,14 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, bui
 		return
 	}
 
+	d.mut.Lock()
+	defer d.mut.Unlock()
+
+	// if pipeline is not started, we can't upload symbols
+	if d.retrievalQueue == nil {
+		return
+	}
+
 	// For short-lived processes, executable file might disappear from under our feet by the time we
 	// try to upload symbols. It would be better to open the file here and enqueue the opened file.
 	// We still need the file to exist later when we extract the debug symbols with objcopy though.
@@ -216,7 +235,7 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, bui
 	// do not seem to be worth it.
 	// We can revisit this choice later if we switch to a different symbol extraction method.
 	select {
-	case d.pipeline.GetInputChannel() <- fileData{filePath, fileID, buildID, opener}:
+	case d.retrievalQueue <- fileData{filePath, fileID, buildID, opener}:
 	default:
 		log.Warnf("Symbol upload queue is full, skipping symbol upload for file %q with file ID %q and build ID %q",
 			filePath, fileID.StringNoQuotes(), buildID)
