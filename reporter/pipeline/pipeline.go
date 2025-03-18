@@ -121,8 +121,11 @@ func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
 			defer w.wg.Done()
 			var batch []In
 			var tickerChan <-chan time.Time
+			var ticker clockwork.Ticker
 			if w.batchInterval > 0 {
-				tickerChan = w.clock.After(w.batchInterval)
+				ticker = w.clock.NewTicker(w.batchInterval)
+				tickerChan = ticker.Chan()
+				defer ticker.Stop()
 			}
 			for {
 				select {
@@ -137,18 +140,17 @@ func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
 					}
 					batch = append(batch, input)
 					if w.batchSize > 0 && len(batch) >= w.batchSize {
+						if ticker != nil {
+							ticker.Reset(w.batchInterval)
+						}
 						w.outputChan <- batch
 						batch = nil
-						if w.batchInterval > 0 {
-							tickerChan = w.clock.After(w.batchInterval)
-						}
 					}
 				case <-tickerChan:
 					if len(batch) > 0 {
 						w.outputChan <- batch
 						batch = nil
 					}
-					tickerChan = w.clock.After(w.batchInterval)
 				}
 			}
 		}()

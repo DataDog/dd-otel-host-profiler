@@ -109,17 +109,16 @@ func TestPipeline(t *testing.T) {
 	})
 
 	t.Run("PipelineWithBatchingStageWithInterval", func(t *testing.T) {
-		input := make(chan int, 1000)
-		for i := range 9 {
-			input <- i
-		}
+		input := make(chan int)
 		clock := clockwork.NewFakeClock()
 		stage1 := NewBatchingStageWithClock(input, 1*time.Second, 10, clock,
 			WithOutputChanSize(1))
 		p := NewPipeline(input, stage1)
 		output := stage1.GetOutputChannel()
 		p.Start(context.Background())
-		require.NoError(t, clock.BlockUntilContext(context.Background(), 1))
+		for i := range 9 {
+			input <- i
+		}
 		clock.Advance(1 * time.Second)
 		require.Len(t, <-output, 9)
 		clock.Advance(999 * time.Millisecond)
@@ -128,10 +127,8 @@ func TestPipeline(t *testing.T) {
 		}
 		require.Len(t, <-output, 10)
 		clock.Advance(1 * time.Millisecond)
-		require.NoError(t, clock.BlockUntilContext(context.Background(), 1))
 		require.Empty(t, output)
 		clock.Advance(999 * time.Millisecond)
-		require.NoError(t, clock.BlockUntilContext(context.Background(), 1))
 		require.Len(t, <-output, 5)
 		for i := range 5 {
 			input <- i
