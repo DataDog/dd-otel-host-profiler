@@ -59,6 +59,8 @@ type SymbolUploaderConfig struct {
 	UploadGoPCLnTab bool
 	// BatchSymbolQueries defines whether the uploader should batch symbol queries.
 	SymbolQueryInterval time.Duration
+	// Force disabling debug section compression whatever objcopy support.
+	DisableDebugSectionCompression bool
 	// DryRun defines whether the agent should upload debug symbols to the backend in dry-run mode.
 	DryRun bool
 	// Sites to upload symbols to.
