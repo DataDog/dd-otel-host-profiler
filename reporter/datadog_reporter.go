@@ -345,7 +345,9 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 	// Create a child context for reporting features
 	ctx, cancelReporting := context.WithCancel(mainCtx)
 
-	r.symbolUploader.Start(ctx)
+	if r.symbolUploader != nil {
+		r.symbolUploader.Start(ctx)
+	}
 
 	go func() {
 		tick := time.NewTicker(r.config.ReportInterval)
