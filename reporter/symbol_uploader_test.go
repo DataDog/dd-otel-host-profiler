@@ -9,6 +9,7 @@ import (
 	"context"
 	"debug/elf"
 	"encoding/json"
+	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -95,7 +96,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	assert.NotNil(t, goPCLnTabInfo)
 
 	outputFile := filepath.Join(tmpDir, "output.dbg")
-	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo, nil)
+	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo, nil, false)
 	require.NoError(t, err)
 	f, err := elf.Open(outputFile)
 	require.NoError(t, err)
@@ -103,15 +104,23 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	checkGoPCLnTab(t, f, true)
 }
 
-func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool) {
-	reader := zstd.NewReader(req.Body)
-	defer reader.Close()
+func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool, expectedContentEncoding string) {
+	require.Equal(t, "POST", req.Method)
+	require.Equal(t, expectedContentEncoding, req.Header.Get("Content-Encoding"))
 
-	require.Equal(t, "zstd", req.Header.Get("Content-Encoding"))
 	_, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 	require.NoError(t, err)
 	boundary, ok := params["boundary"]
 	require.True(t, ok)
+
+	var reader io.ReadCloser
+	if req.Header.Get("Content-Encoding") == "zstd" {
+		reader = zstd.NewReader(req.Body)
+		defer reader.Close()
+	} else {
+		reader = req.Body
+	}
+
 	mr := multipart.NewReader(reader, boundary)
 	form, err := mr.ReadForm(1 << 20) // 1 MiB
 	require.NoError(t, err)
@@ -189,7 +198,13 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 
 var testEndpoints = []string{"a.com", "b.com", "c.com", "d.com", "e.com"}
 
-func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbolUploader, error) {
+type uploaderOpts struct {
+	uploadDynamicSymbols           bool
+	uploadGoPCLnTab                bool
+	disableDebugSectionCompression bool
+}
+
+func newTestUploader(opts uploaderOpts) (*DatadogSymbolUploader, error) {
 	endpoints := make([]SymbolEndpoint, 0, len(testEndpoints))
 	for _, e := range testEndpoints {
 		endpoints = append(endpoints, SymbolEndpoint{
@@ -200,11 +215,12 @@ func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbol
 	}
 
 	cfg := &SymbolUploaderConfig{
-		Enabled:              true,
-		UploadDynamicSymbols: uploadDynamicSymbols,
-		UploadGoPCLnTab:      uploadGoPCLnTab,
-		SymbolQueryInterval:  0,
-		SymbolEndpoints:      endpoints,
+		Enabled:                        true,
+		UploadDynamicSymbols:           opts.uploadDynamicSymbols,
+		UploadGoPCLnTab:                opts.uploadGoPCLnTab,
+		SymbolQueryInterval:            0,
+		SymbolEndpoints:                endpoints,
+		DisableDebugSectionCompression: opts.disableDebugSectionCompression,
 	}
 	return NewDatadogSymbolUploader(cfg)
 }
@@ -301,18 +317,22 @@ func TestSymbolUpload(t *testing.T) {
 	buildID := "build_id"
 	channels := registerResponders(t, buildID)
 
-	checkUploads := func(t *testing.T, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool, expectedUploads []bool) {
+	checkUploadsWithEncoding := func(t *testing.T, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool, expectedUploads []bool, expectedEncoding string) {
 		callCountInfo := httpmock.GetCallCountInfo()
 		for i, e := range testEndpoints {
 			assert.Equal(t, 1, callCountInfo["POST "+buildSymbolQueryURL(e)])
 			if expectedUploads[i] {
 				assert.Equal(t, 1, callCountInfo["POST "+buildSourcemapIntakeURL(e)])
 				req := <-channels[i]
-				checkRequest(t, req, expectedSymbolSource, expectedGoPCLnTab)
+				checkRequest(t, req, expectedSymbolSource, expectedGoPCLnTab, expectedEncoding)
 			} else {
 				assert.Equal(t, 0, callCountInfo["POST "+buildSourcemapIntakeURL(e)])
 			}
 		}
+	}
+
+	checkUploads := func(t *testing.T, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool, expectedUploads []bool) {
+		checkUploadsWithEncoding(t, expectedSymbolSource, expectedGoPCLnTab, expectedUploads, "")
 	}
 
 	goExeNoSymbols := buildGo(t, t.TempDir(), buildID, buildOptions{dynsym: false, symtab: false, debugInfos: false})
@@ -324,7 +344,7 @@ func TestSymbolUpload(t *testing.T) {
 
 	t.Run("No symbol upload if no symbols", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		uploader, err := newTestUploader(false, false)
+		uploader, err := newTestUploader(uploaderOpts{})
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
@@ -336,7 +356,7 @@ func TestSymbolUpload(t *testing.T) {
 
 	t.Run("Upload if symtab", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		uploader, err := newTestUploader(false, false)
+		uploader, err := newTestUploader(uploaderOpts{})
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
@@ -348,7 +368,7 @@ func TestSymbolUpload(t *testing.T) {
 
 	t.Run("Upload if debug info", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		uploader, err := newTestUploader(false, false)
+		uploader, err := newTestUploader(uploaderOpts{})
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
@@ -360,7 +380,7 @@ func TestSymbolUpload(t *testing.T) {
 
 	t.Run("No upload if dynamic symbols", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		uploader, err := newTestUploader(false, false)
+		uploader, err := newTestUploader(uploaderOpts{})
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
@@ -372,7 +392,7 @@ func TestSymbolUpload(t *testing.T) {
 
 	t.Run("Upload if dynamic symbols when enabled", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		uploader, err := newTestUploader(true, false)
+		uploader, err := newTestUploader(uploaderOpts{uploadDynamicSymbols: true})
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
@@ -384,7 +404,7 @@ func TestSymbolUpload(t *testing.T) {
 
 	t.Run("Upload pclntab when enabled", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		uploader, err := newTestUploader(true, true)
+		uploader, err := newTestUploader(uploaderOpts{uploadGoPCLnTab: true})
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
@@ -396,7 +416,7 @@ func TestSymbolUpload(t *testing.T) {
 
 	t.Run("Upload debug infos if pclntab is corrupted", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		uploader, err := newTestUploader(true, true)
+		uploader, err := newTestUploader(uploaderOpts{uploadGoPCLnTab: true})
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
@@ -408,7 +428,7 @@ func TestSymbolUpload(t *testing.T) {
 
 	t.Run("Upload dynamic symbols if pclntab is corrupted and only dyn sym when enabled", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		uploader, err := newTestUploader(true, true)
+		uploader, err := newTestUploader(uploaderOpts{uploadDynamicSymbols: true, uploadGoPCLnTab: true})
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
@@ -420,7 +440,7 @@ func TestSymbolUpload(t *testing.T) {
 
 	t.Run("No symbol upload if pclntab is corrupted and only dynsym", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		uploader, err := newTestUploader(false, true)
+		uploader, err := newTestUploader(uploaderOpts{uploadGoPCLnTab: true})
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
@@ -428,5 +448,17 @@ func TestSymbolUpload(t *testing.T) {
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceNone, false, []bool{false, false, false, false, false})
+	})
+
+	t.Run("Upload compressed request when debug section compression is disabled", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		uploader, err := newTestUploader(uploaderOpts{disableDebugSectionCompression: true})
+		require.NoError(t, err)
+		uploader.Start(context.Background())
+
+		uploader.UploadSymbols(libpf.FileID{}, goExeDebugInfos, "build_id", &symbol.DiskOpener{})
+		uploader.Stop()
+
+		checkUploadsWithEncoding(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false}, "zstd")
 	})
 }
