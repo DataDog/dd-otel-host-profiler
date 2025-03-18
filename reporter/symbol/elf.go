@@ -6,7 +6,9 @@
 package symbol
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"runtime"
 
 	log "github.com/sirupsen/logrus"
@@ -35,7 +37,20 @@ type Elf struct {
 	separateSymbols *elfWrapperWithSource
 
 	// Cached value set during the first call to getGoPCLnTab
-	goPCLnTabInfo *pclntab.GoPCLnTabInfo
+	goPCLnTabInfo    *pclntab.GoPCLnTabInfo
+	goPCLnTabInfoErr error
+
+	dynamicSymbolsDump *DynamicSymbolsDump
+	elfDataDump        string
+}
+
+type DynamicSymbolsDump struct {
+	DynSymPath  string
+	DynStrPath  string
+	DynSymAddr  uint64
+	DynStrAddr  uint64
+	DynSymAlign uint64
+	DynStrAlign uint64
 }
 
 func NewElf(path string, fileID libpf.FileID, opener process.FileOpener) (*Elf, error) {
@@ -124,6 +139,12 @@ func (e *Elf) Close() {
 	if e.separateSymbols != nil {
 		e.separateSymbols.wrapper.Close()
 	}
+	if e.dynamicSymbolsDump != nil {
+		e.dynamicSymbolsDump.Remove()
+	}
+	if e.elfDataDump != "" {
+		os.Remove(e.elfDataDump)
+	}
 }
 
 func (e *Elf) SymbolSource() Source {
@@ -140,23 +161,24 @@ func (e *Elf) HasGoPCLnTabInfo() bool {
 	return e.goPCLnTabInfo != nil
 }
 
-func (e *Elf) GoPCLnTab() *pclntab.GoPCLnTabInfo {
-	if !e.isGolang {
-		return nil
+func (e *Elf) GoPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
+	if e.goPCLnTabInfoErr == nil && e.goPCLnTabInfo == nil {
+		e.goPCLnTabInfo, e.goPCLnTabInfoErr = e.goPCLnTab()
 	}
-	if e.goPCLnTabInfo != nil {
-		return e.goPCLnTabInfo
+	return e.goPCLnTabInfo, e.goPCLnTabInfoErr
+}
+
+func (e *Elf) goPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
+	if !e.isGolang {
+		return nil, errors.New("not a Go executable")
 	}
 
 	goPCLnTab, err := pclntab.FindGoPCLnTab(e.wrapper.elfFile)
 	if err != nil {
-		log.Debugf("Failed to find SourceGoPCLnTab for executable %s: %v", e.path, err)
-		return nil
+		return nil, err
 	}
 
-	e.goPCLnTabInfo = goPCLnTab
-
-	return goPCLnTab
+	return goPCLnTab, nil
 }
 
 func (e *Elf) SymbolPathOnDisk() string {
@@ -178,6 +200,35 @@ func (e *Elf) String() string {
 	)
 }
 
+func (e *Elf) DumpElfData() (string, error) {
+	if e.elfDataDump != "" {
+		return e.elfDataDump, nil
+	}
+	elfDataDump, err := e.wrapper.DumpElfData()
+	if err != nil {
+		return "", err
+	}
+	e.elfDataDump = elfDataDump
+	return elfDataDump, nil
+}
+
+func (e *Elf) DumpDynamicSymbols() (*DynamicSymbolsDump, error) {
+	if e.dynamicSymbolsDump != nil {
+		return e.dynamicSymbolsDump, nil
+	}
+	dynamicSymbolsDump, err := e.wrapper.DumpDynamicSymbols()
+	if err != nil {
+		return nil, err
+	}
+	e.dynamicSymbolsDump = dynamicSymbolsDump
+	return dynamicSymbolsDump, nil
+}
+
+func (d *DynamicSymbolsDump) Remove() {
+	os.Remove(d.DynSymPath)
+	os.Remove(d.DynStrPath)
+}
+
 func NewElfForTest(arch, gnuBuildID, goBuildID, fileHash string) *Elf {
 	return &Elf{
 		arch:       arch,
@@ -185,4 +236,23 @@ func NewElfForTest(arch, gnuBuildID, goBuildID, fileHash string) *Elf {
 		goBuildID:  goBuildID,
 		fileHash:   fileHash,
 	}
+}
+
+func NewElfFromDisk(path string) (*Elf, error) {
+	fileID, err := libpf.FileIDFromExecutableFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file ID: %w", err)
+	}
+
+	return NewElf(path, fileID, &DiskOpener{})
+}
+
+type DiskOpener struct{}
+
+func (o *DiskOpener) Open(path string) (reader process.ReadAtCloser, actualPath string, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return f, fmt.Sprintf("/proc/%v/fd/%v", os.Getpid(), f.Fd()), nil
 }

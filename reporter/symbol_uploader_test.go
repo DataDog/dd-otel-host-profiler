@@ -9,7 +9,6 @@ import (
 	"context"
 	"debug/elf"
 	"encoding/json"
-	"fmt"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -26,7 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
-	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
@@ -34,6 +32,19 @@ import (
 
 func findSymbol(f *elf.File, name string) *elf.Symbol {
 	syms, err := f.Symbols()
+	if err != nil {
+		return nil
+	}
+	for _, sym := range syms {
+		if sym.Name == name {
+			return &sym
+		}
+	}
+	return nil
+}
+
+func findDynamicSymbol(f *elf.File, name string) *elf.Symbol {
+	syms, err := f.DynamicSymbols()
 	if err != nil {
 		return nil
 	}
@@ -82,7 +93,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	assert.NotNil(t, goPCLnTabInfo)
 
 	outputFile := filepath.Join(tmpDir, "output.dbg")
-	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo)
+	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo, nil)
 	require.NoError(t, err)
 	f, err := elf.Open(outputFile)
 	require.NoError(t, err)
@@ -126,8 +137,11 @@ func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.S
 	defer elfFile.Close()
 
 	require.NoError(t, err)
-	if expectedSymbolSource == symbol.SourceGoPCLnTab {
-		checkGoPCLnTab(t, elfFile, false)
+	switch expectedSymbolSource {
+	case symbol.SourceGoPCLnTab:
+		checkGoPCLnTab(t, elfFile, true)
+	case symbol.SourceDynamicSymbolTable:
+		require.NotNil(t, findDynamicSymbol(elfFile, "foo"))
 	}
 }
 
@@ -188,16 +202,6 @@ func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbol
 	return NewDatadogSymbolUploader(cfg)
 }
 
-type DummyOpener struct{}
-
-func (o *DummyOpener) Open(path string) (reader process.ReadAtCloser, actualPath string, err error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, "", err
-	}
-	return f, fmt.Sprintf("/proc/%v/fd/%v", os.Getpid(), f.Fd()), nil
-}
-
 func buildGoExeWithoutDebugInfos(t *testing.T, tmpDir string) string {
 	f, err := os.CreateTemp(tmpDir, "helloworld")
 	require.NoError(t, err)
@@ -207,6 +211,20 @@ func buildGoExeWithoutDebugInfos(t *testing.T, tmpDir string) string {
 	cmd := exec.Command("go", "build", "-o", exe, "-ldflags=-s -w", "../testdata/helloworld.go") // #nosec G204
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
+	return exe
+}
+
+func buildExeWithDynamicSymbols(t *testing.T, tmpDir string) string {
+	f, err := os.CreateTemp(tmpDir, "foo")
+	require.NoError(t, err)
+	defer f.Close()
+	srcFile := "../testdata/foo.c"
+
+	exe := f.Name()
+	cmd := exec.Command("gcc", "-Wl,--strip-all", "-shared", "-o", exe, srcFile)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
+
 	return exe
 }
 
@@ -232,36 +250,72 @@ func TestSymbolUpload(t *testing.T) {
 			c2 <- req
 			return httpmock.NewStringResponse(200, ""), nil
 		})
+	checkCallCount := func(t *testing.T, expected int) {
+		callCountInfo := httpmock.GetCallCountInfo()
+		assert.Equal(t, expected, callCountInfo["POST "+buildSymbolQueryURL("foobar.com")])
+		assert.Equal(t, expected, callCountInfo["POST "+buildSourcemapIntakeURL("foobar.com")])
+		assert.Equal(t, expected, callCountInfo["POST "+buildSymbolQueryURL("staging.com")])
+		assert.Equal(t, expected, callCountInfo["POST "+buildSourcemapIntakeURL("staging.com")])
+	}
 
-	exe := buildGoExeWithoutDebugInfos(t, t.TempDir())
+	goExeWithoutDebugInfos := buildGoExeWithoutDebugInfos(t, t.TempDir())
 
 	t.Run("No upload when no symbols", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(false, false)
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
-		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
+		uploader.UploadSymbols(libpf.FileID{}, goExeWithoutDebugInfos, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
 
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
 	})
 
 	t.Run("Upload pclntab when enabled", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		uploader, err := newTestUploader(false, true)
 		require.NoError(t, err)
 		uploader.Start(ctx)
-		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
+		uploader.UploadSymbols(libpf.FileID{}, goExeWithoutDebugInfos, "build_id", &symbol.DiskOpener{})
 		req1 := <-c1
 		req2 := <-c2
 		checkRequest(t, req1, symbol.SourceGoPCLnTab)
 		checkRequest(t, req2, symbol.SourceGoPCLnTab)
 
-		callCountInfo := httpmock.GetCallCountInfo()
-		assert.Equal(t, 1, callCountInfo["POST "+buildSymbolQueryURL("foobar.com")])
-		assert.Equal(t, 1, callCountInfo["POST "+buildSourcemapIntakeURL("foobar.com")])
-		assert.Equal(t, 1, callCountInfo["POST "+buildSymbolQueryURL("staging.com")])
-		assert.Equal(t, 1, callCountInfo["POST "+buildSourcemapIntakeURL("staging.com")])
+		checkCallCount(t, 1)
+	})
+
+	exeWithDynamicSymbols := buildExeWithDynamicSymbols(t, t.TempDir())
+
+	t.Run("Upload dynamic symbols when enabled", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		uploader, err := newTestUploader(false, false)
+		require.NoError(t, err)
+		uploader.Start(ctx)
+		uploader.UploadSymbols(libpf.FileID{}, exeWithDynamicSymbols, "build_id", &symbol.DiskOpener{})
+		uploader.Stop()
+
+		assert.Equal(t, 0, httpmock.GetTotalCallCount())
+	})
+
+	t.Run("Upload dynamic symbols when enabled", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		uploader, err := newTestUploader(true, false)
+		require.NoError(t, err)
+		uploader.Start(ctx)
+		uploader.UploadSymbols(libpf.FileID{}, exeWithDynamicSymbols, "build_id", &symbol.DiskOpener{})
+		req1 := <-c1
+		req2 := <-c2
+		checkRequest(t, req1, symbol.SourceDynamicSymbolTable)
+		checkRequest(t, req2, symbol.SourceDynamicSymbolTable)
+
+		checkCallCount(t, 1)
 	})
 }

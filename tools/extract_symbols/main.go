@@ -8,22 +8,19 @@ import (
 	"fmt"
 	"os"
 
-	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
-
-	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
 func extractDebugInfos(elfFile, outFile string) error {
-	ef, err := pfelf.Open(elfFile)
+	ef, err := symbol.NewElfFromDisk(elfFile)
 	if err != nil {
 		return fmt.Errorf("failed to open elf file: %w", err)
 	}
 	defer ef.Close()
 
-	var goPCLnTabInfo *pclntab.GoPCLnTabInfo
+	goPCLnTabInfo, err := ef.GoPCLnTab()
 	if ef.IsGolang() {
-		goPCLnTabInfo, err = pclntab.FindGoPCLnTab(ef)
 		if err != nil {
 			return fmt.Errorf("failed to find pclntab: %w", err)
 		}
@@ -31,7 +28,16 @@ func extractDebugInfos(elfFile, outFile string) error {
 		fmt.Printf("Found GoPCLnTab at 0x%x, size %d, headerVersion: %v\n", goPCLnTabInfo.Address, len(goPCLnTabInfo.Data), goPCLnTabInfo.Version.String())
 		fmt.Printf("Found GoFunc at 0x%x, size %d\n", goPCLnTabInfo.GoFuncAddr, len(goPCLnTabInfo.GoFuncData))
 	}
-	return reporter.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo)
+
+	var dynamicSymbolsDump *symbol.DynamicSymbolsDump
+	if ef.SymbolSource() == symbol.SourceDynamicSymbolTable {
+		dynamicSymbolsDump, err = ef.DumpDynamicSymbols()
+		if err != nil {
+			return fmt.Errorf("failed to dump dynamic symbols: %w", err)
+		}
+	}
+
+	return reporter.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo, dynamicSymbolsDump)
 }
 
 func main() {

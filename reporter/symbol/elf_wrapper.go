@@ -7,6 +7,10 @@ package symbol
 
 import (
 	"debug/elf"
+	"errors"
+	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"slices"
 
@@ -17,6 +21,7 @@ import (
 )
 
 const buildIDSectionName = ".note.gnu.build-id"
+const maxBytesLargeSection = 16 * 1024 * 1024
 
 var debugStrSectionNames = []string{".debug_str", ".zdebug_str", ".debug_str.dwo"}
 var debugInfoSectionNames = []string{".debug_info", ".zdebug_info"}
@@ -166,6 +171,85 @@ func (e *elfWrapper) findDebugSymbolsWithDebugLink() *elfWrapper {
 		return debugELF
 	}
 	return nil
+}
+
+func (e *elfWrapper) DumpDynamicSymbols() (*DynamicSymbolsDump, error) {
+	dynSymFile, err := os.CreateTemp("", "dynsym")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
+	}
+	defer func() {
+		dynSymFile.Close()
+		if err != nil {
+			os.Remove(dynSymFile.Name())
+		}
+	}()
+
+	dynStrFile, err := os.CreateTemp("", "dynstr")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
+	}
+	defer func() {
+		dynStrFile.Close()
+		if err != nil {
+			os.Remove(dynStrFile.Name())
+		}
+	}()
+
+	dynSymSection := e.elfFile.Section(".dynsym")
+	if dynSymFile == nil {
+		return nil, errors.New("failed to find .dynsym section")
+	}
+	data, err := dynSymSection.Data(maxBytesLargeSection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .dynsym section: %w", err)
+	}
+	_, err = dynSymFile.Write(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write .dynsym section: %w", err)
+	}
+
+	dynStrSection := e.elfFile.Section(".dynstr")
+	if dynStrFile == nil {
+		return nil, errors.New("failed to find .dynstr section")
+	}
+	data, err = dynStrSection.Data(maxBytesLargeSection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .dynstr section: %w", err)
+	}
+	_, err = dynStrFile.Write(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write .dynstr section: %w", err)
+	}
+
+	return &DynamicSymbolsDump{
+		DynSymPath:  dynSymFile.Name(),
+		DynStrPath:  dynStrFile.Name(),
+		DynSymAddr:  dynSymSection.Addr,
+		DynStrAddr:  dynStrSection.Addr,
+		DynSymAlign: dynSymSection.Addralign,
+		DynStrAlign: dynStrSection.Addralign,
+	}, nil
+}
+
+func (e *elfWrapper) DumpElfData() (string, error) {
+	tempElfFile, err := os.CreateTemp("", "elf")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file to dump elf data: %w", err)
+	}
+
+	defer func() {
+		tempElfFile.Close()
+		if err != nil {
+			os.Remove(tempElfFile.Name())
+		}
+	}()
+
+	_, err = io.Copy(tempElfFile, io.NewSectionReader(e.reader, 0, 1<<63-1))
+	if err != nil {
+		return "", fmt.Errorf("failed to dump elf data: %w", err)
+	}
+	return tempElfFile.Name(), nil
 }
 
 // HasDWARFData is a copy of pfelf.HasDWARFData, but for the libpf.File interface.
