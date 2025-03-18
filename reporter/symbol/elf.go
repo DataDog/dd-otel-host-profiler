@@ -30,6 +30,7 @@ type Elf struct {
 	gnuBuildID string
 	fileHash   string
 	path       string
+	fileID     libpf.FileID
 
 	separateSymbols *elfWrapperWithSource
 
@@ -55,6 +56,7 @@ func NewElf(path string, fileID libpf.FileID, opener process.FileOpener) (*Elf, 
 		isGolang: wrapper.elfFile.IsGolang(),
 		path:     path,
 		fileHash: fileID.StringNoQuotes(),
+		fileID:   fileID,
 	}
 
 	buildID, err := wrapper.elfFile.GetBuildID()
@@ -90,6 +92,10 @@ func NewElf(path string, fileID libpf.FileID, opener process.FileOpener) (*Elf, 
 
 func (e *Elf) FileHash() string {
 	return e.fileHash
+}
+
+func (e *Elf) FileID() libpf.FileID {
+	return e.fileID
 }
 
 func (e *Elf) GnuBuildID() string {
@@ -170,4 +176,13 @@ func (e *Elf) String() string {
 	return fmt.Sprintf("%s, arch=%s, gnu_build_id=%s, go_build_id=%s, file_hash=%s, symbol_source=%s, has_gopclntab=%t",
 		e.path, e.arch, e.gnuBuildID, e.goBuildID, e.fileHash, symbolSource, hasPCLnTab,
 	)
+}
+
+func NewElfForTest(arch, gnuBuildID, goBuildID, fileHash string) *Elf {
+	return &Elf{
+		arch:       arch,
+		gnuBuildID: gnuBuildID,
+		goBuildID:  goBuildID,
+		fileHash:   fileHash,
+	}
 }

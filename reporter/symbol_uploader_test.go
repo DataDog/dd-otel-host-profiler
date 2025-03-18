@@ -8,17 +8,28 @@ package reporter
 import (
 	"context"
 	"debug/elf"
+	"encoding/json"
+	"fmt"
+	"mime"
+	"mime/multipart"
+	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/DataDog/zstd"
+	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
+	"go.opentelemetry.io/ebpf-profiler/process"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
 func findSymbol(f *elf.File, name string) *elf.Symbol {
@@ -34,10 +45,7 @@ func findSymbol(f *elf.File, name string) *elf.Symbol {
 	return nil
 }
 
-func checkGoPCLnTab(t *testing.T, filename string, checkGoFunc bool) {
-	f, err := elf.Open(filename)
-	require.NoError(t, err)
-	defer f.Close()
+func checkGoPCLnTab(t *testing.T, f *elf.File, checkGoFunc bool) {
 	section := f.Section(".gopclntab")
 	require.NotNil(t, section)
 	require.Equal(t, elf.SHT_PROGBITS, section.Type)
@@ -76,7 +84,51 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	outputFile := filepath.Join(tmpDir, "output.dbg")
 	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo)
 	require.NoError(t, err)
-	checkGoPCLnTab(t, outputFile, true)
+	f, err := elf.Open(outputFile)
+	require.NoError(t, err)
+	defer f.Close()
+	checkGoPCLnTab(t, f, true)
+}
+
+func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.Source) {
+	reader := zstd.NewReader(req.Body)
+	defer reader.Close()
+
+	require.Equal(t, "zstd", req.Header.Get("Content-Encoding"))
+	_, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	boundary, ok := params["boundary"]
+	require.True(t, ok)
+	mr := multipart.NewReader(reader, boundary)
+	form, err := mr.ReadForm(1 << 20) // 1 MiB
+	require.NoError(t, err)
+	fhs, ok := form.File["elf_symbol_file"]
+	require.True(t, ok)
+	f, err := fhs[0].Open()
+	require.NoError(t, err)
+	defer f.Close()
+
+	event, ok := form.File["event"]
+	require.True(t, ok)
+	e, err := event[0].Open()
+	require.NoError(t, err)
+	defer e.Close()
+
+	// unmarshal json into map[string]string
+	// check that the symbol source is correct
+	result := make(map[string]string)
+	err = json.NewDecoder(e).Decode(&result)
+	require.NoError(t, err)
+	require.Equal(t, expectedSymbolSource.String(), result["symbol_source"])
+
+	elfFile, err := elf.NewFile(f)
+	require.NoError(t, err)
+	defer elfFile.Close()
+
+	require.NoError(t, err)
+	if expectedSymbolSource == symbol.SourceGoPCLnTab {
+		checkGoPCLnTab(t, elfFile, false)
+	}
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
@@ -112,4 +164,104 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 			checkGoPCLnTabExtraction(t, exeStripped, tmpDir)
 		})
 	}
+}
+
+func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbolUploader, error) {
+	cfg := &SymbolUploaderConfig{
+		Enabled:              true,
+		UploadDynamicSymbols: uploadDynamicSymbols,
+		UploadGoPCLnTab:      uploadGoPCLnTab,
+		SymbolQueryInterval:  0,
+		SymbolEndpoints: []SymbolEndpoint{
+			{
+				Site:   "foobar.com",
+				APIKey: "api_key",
+				AppKey: "app_key",
+			},
+			{
+				Site:   "staging.com",
+				APIKey: "api_key2",
+				AppKey: "app_key2",
+			},
+		},
+	}
+	return NewDatadogSymbolUploader(cfg)
+}
+
+type DummyOpener struct{}
+
+func (o *DummyOpener) Open(path string) (reader process.ReadAtCloser, actualPath string, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return f, fmt.Sprintf("/proc/%v/fd/%v", os.Getpid(), f.Fd()), nil
+}
+
+func buildGoExeWithoutDebugInfos(t *testing.T, tmpDir string) string {
+	f, err := os.CreateTemp(tmpDir, "helloworld")
+	require.NoError(t, err)
+	defer f.Close()
+
+	exe := f.Name()
+	cmd := exec.Command("go", "build", "-o", exe, "-ldflags=-s -w", "../testdata/helloworld.go") // #nosec G204
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
+	return exe
+}
+
+//nolint:tparallel
+func TestSymbolUpload(t *testing.T) {
+	t.Parallel()
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
+	c1 := make(chan *http.Request)
+	c2 := make(chan *http.Request)
+	httpmock.RegisterResponder("POST", buildSymbolQueryURL("foobar.com"),
+		httpmock.NewStringResponder(200, `{"data": []}`))
+	httpmock.RegisterResponder("POST", buildSourcemapIntakeURL("foobar.com"),
+		func(req *http.Request) (*http.Response, error) {
+			c1 <- req
+			return httpmock.NewStringResponse(200, ""), nil
+		})
+	httpmock.RegisterResponder("POST", buildSymbolQueryURL("staging.com"),
+		httpmock.NewStringResponder(200, `{"data": []}`))
+	httpmock.RegisterResponder("POST", buildSourcemapIntakeURL("staging.com"),
+		func(req *http.Request) (*http.Response, error) {
+			c2 <- req
+			return httpmock.NewStringResponse(200, ""), nil
+		})
+
+	exe := buildGoExeWithoutDebugInfos(t, t.TempDir())
+
+	t.Run("No upload when no symbols", func(t *testing.T) {
+		uploader, err := newTestUploader(false, false)
+		require.NoError(t, err)
+		uploader.Start(context.Background())
+
+		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
+		uploader.Stop()
+
+		assert.Equal(t, 0, httpmock.GetTotalCallCount())
+	})
+
+	t.Run("Upload pclntab when enabled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		uploader, err := newTestUploader(false, true)
+		require.NoError(t, err)
+		uploader.Start(ctx)
+		uploader.UploadSymbols(libpf.FileID{}, exe, "build_id", &DummyOpener{})
+		req1 := <-c1
+		req2 := <-c2
+		checkRequest(t, req1, symbol.SourceGoPCLnTab)
+		checkRequest(t, req2, symbol.SourceGoPCLnTab)
+
+		callCountInfo := httpmock.GetCallCountInfo()
+		assert.Equal(t, 1, callCountInfo["POST "+buildSymbolQueryURL("foobar.com")])
+		assert.Equal(t, 1, callCountInfo["POST "+buildSourcemapIntakeURL("foobar.com")])
+		assert.Equal(t, 1, callCountInfo["POST "+buildSymbolQueryURL("staging.com")])
+		assert.Equal(t, 1, callCountInfo["POST "+buildSourcemapIntakeURL("staging.com")])
+	})
 }
