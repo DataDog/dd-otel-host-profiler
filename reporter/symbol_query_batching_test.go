@@ -44,7 +44,7 @@ func (m *mockSymbolQuerier) QuerySymbols(_ context.Context, buildIDs []string, a
 	buildIDsCopy := make([]string, len(buildIDs))
 	copy(buildIDsCopy, buildIDs)
 
-	// randomly shuffle the buildIDWs
+	// randomly shuffle the buildIDs
 	for i := range buildIDsCopy {
 		j := rand.Intn(i + 1) //nolint:gosec
 		buildIDsCopy[i], buildIDsCopy[j] = buildIDsCopy[j], buildIDsCopy[i]
