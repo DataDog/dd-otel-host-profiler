@@ -15,7 +15,7 @@ require (
 	github.com/urfave/cli/v3 v3.0.0-alpha9.4
 	github.com/zeebo/xxh3 v1.0.2
 	go.opentelemetry.io/ebpf-profiler v0.0.0-20241114112653-6d846a2023a0
-	golang.org/x/sys v0.28.0
+	golang.org/x/sys v0.30.0
 	gopkg.in/DataDog/dd-trace-go.v1 v1.70.1
 	k8s.io/api v0.31.3
 	k8s.io/apimachinery v0.31.3
@@ -100,11 +100,11 @@ require (
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	golang.org/x/arch v0.10.0 // indirect
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0 // indirect
-	golang.org/x/net v0.33.0 // indirect
+	golang.org/x/net v0.36.0 // indirect
 	golang.org/x/oauth2 v0.21.0 // indirect
-	golang.org/x/sync v0.10.0
-	golang.org/x/term v0.27.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/sync v0.11.0
+	golang.org/x/term v0.29.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/time v0.6.0 // indirect
 	google.golang.org/genproto v0.0.0-20240213162025-012b6fc9bca9 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240604185151-ef581f913117 // indirect
