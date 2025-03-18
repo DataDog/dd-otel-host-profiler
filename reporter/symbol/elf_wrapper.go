@@ -178,23 +178,22 @@ func DumpDynamicSymbols(elfFile *pfelf.File) (*DynamicSymbolsDump, error) {
 		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
 	}
 	defer func() {
+		dynSymFile.Close()
 		if err != nil {
 			os.Remove(dynSymFile.Name())
 		}
 	}()
 
-	defer dynSymFile.Close()
 	dynStrFile, err := os.CreateTemp("", "dynstr")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
 	}
 	defer func() {
+		dynStrFile.Close()
 		if err != nil {
 			os.Remove(dynStrFile.Name())
 		}
 	}()
-
-	defer dynStrFile.Close()
 
 	dynSymSection := elfFile.Section(".dynsym")
 	if dynSymFile == nil {

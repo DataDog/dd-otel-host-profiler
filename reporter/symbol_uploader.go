@@ -410,7 +410,7 @@ func (d *DatadogSymbolUploader) handleSymbols(ctx context.Context, e *symbol.Elf
 		if err != nil {
 			return fmt.Errorf("failed to dump dynamic symbols: %w", err)
 		}
-		defer dynamicSymbols.Close()
+		defer dynamicSymbols.Remove()
 	}
 
 	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo, dynamicSymbols)
@@ -433,12 +433,11 @@ func dumpGoPCLnTabData(goPCLnTabInfo *pclntab.GoPCLnTabInfo) (goPCLnTabDump, err
 		return goPCLnTabDump{}, fmt.Errorf("failed to create temp file to extract GoPCLnTab: %w", err)
 	}
 	defer func() {
+		gopclntabFile.Close()
 		if err != nil {
 			os.Remove(gopclntabFile.Name())
 		}
 	}()
-
-	defer gopclntabFile.Close()
 
 	_, err = gopclntabFile.Write(goPCLnTabInfo.Data)
 	if err != nil {
@@ -455,12 +454,12 @@ func dumpGoPCLnTabData(goPCLnTabInfo *pclntab.GoPCLnTabInfo) (goPCLnTabDump, err
 		return goPCLnTabDump{}, fmt.Errorf("failed to create temp file to extract GoFunc: %w", err)
 	}
 	defer func() {
+		gofuncFile.Close()
 		if err != nil {
-			os.Remove(gopclntabFile.Name())
+			os.Remove(gofuncFile.Name())
 		}
 	}()
 
-	defer gofuncFile.Close()
 	_, err = gofuncFile.Write(goPCLnTabInfo.GoFuncData)
 	if err != nil {
 		return goPCLnTabDump{}, fmt.Errorf("failed to write GoFunc: %w", err)
@@ -486,7 +485,7 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 		if err != nil {
 			return fmt.Errorf("failed to dump GoPCLnTab data: %w", err)
 		}
-		defer gopclntabDump.Close()
+		defer gopclntabDump.Remove()
 
 		args = append(args,
 			"--remove-section=.gopclntab",
@@ -620,7 +619,7 @@ func cleanCmdError(err error) error {
 	return err
 }
 
-func (g *goPCLnTabDump) Close() {
+func (g *goPCLnTabDump) Remove() {
 	os.Remove(g.goPCLnTabPath)
 	if g.goFuncPath != "" {
 		os.Remove(g.goFuncPath)

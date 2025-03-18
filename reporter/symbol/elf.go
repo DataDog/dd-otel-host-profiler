@@ -201,7 +201,7 @@ func (e *Elf) DumpDynamicSymbols() (*DynamicSymbolsDump, error) {
 	return DumpDynamicSymbols(e.wrapper.elfFile)
 }
 
-func (d *DynamicSymbolsDump) Close() {
+func (d *DynamicSymbolsDump) Remove() {
 	os.Remove(d.DynSymPath)
 	os.Remove(d.DynStrPath)
 }
