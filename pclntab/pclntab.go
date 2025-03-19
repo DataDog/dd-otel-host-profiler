@@ -373,7 +373,7 @@ func SearchGoPclntab(ef *pfelf.File) (data []byte, address uint64, err error) {
 		}
 	}
 
-	return nil, 0, nil
+	return nil, 0, errors.New("could not find .gopclntab with signature search")
 }
 
 func (g *GoPCLnTabInfo) findMaxInlineTreeOffset() int {

@@ -172,7 +172,9 @@ func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elf ElfWithBac
 			continue
 		}
 
-		log.Debugf("Existing symbols for executable %s on endpoint#%d: %v", elf, i, backendSymbolSource)
+		if backendSymbolSource.SymbolSource != symbol.SourceNone {
+			log.Debugf("Existing symbols for executable %s on endpoint#%d: %v", elf, i, backendSymbolSource.SymbolSource)
+		}
 
 		upload, symbolSource := d.shouldUpload(elf.Elf, backendSymbolSource.SymbolSource, i)
 
@@ -347,17 +349,9 @@ func (d *DatadogSymbolUploader) shouldUpload(e *symbol.Elf, existingSymbolSource
 
 // Returns true if the upload was successful, false otherwise
 func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, endpointIndices []int) bool {
-	symbolFile, err := d.createSymbolFile(ctx, e)
+	reqData, err := d.buildRequestData(ctx, e)
 	if err != nil {
-		log.Errorf("Failed to create symbol file for executable %s: %v", e, err)
-		return false
-	}
-	defer os.Remove(symbolFile.Name())
-	defer symbolFile.Close()
-
-	reqData, err := d.buildRequestBody(symbolFile, newSymbolUploadRequestMetadata(e, d.getSymbolSourceIfGoPCLnTab(e), d.version))
-	if err != nil {
-		log.Errorf("Failed to build request body for executable %s: %v", e, err)
+		log.Errorf("Failed to build request data for executable %s: %v", e, err)
 		return false
 	}
 
@@ -572,6 +566,18 @@ func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, reqData *requ
 	}
 
 	return nil
+}
+
+func (d *DatadogSymbolUploader) buildRequestData(ctx context.Context, e *symbol.Elf) (*requestData, error) {
+	symbolFile, err := d.createSymbolFile(ctx, e)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create symbol file: %w", err)
+	}
+	defer os.Remove(symbolFile.Name())
+	defer symbolFile.Close()
+
+	symbolSource, _ := d.getSymbolSourceWithGoPCLnTab(e)
+	return d.buildRequestBody(symbolFile, newSymbolUploadRequestMetadata(e, symbolSource, d.version))
 }
 
 func (d *DatadogSymbolUploader) buildRequestBody(symbolFile *os.File, e *symbolUploadRequestMetadata) (*requestData, error) {

@@ -19,8 +19,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/jsonapi"
 	"github.com/DataDog/zstd"
 	"github.com/jarcoal/httpmock"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -101,7 +103,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	checkGoPCLnTab(t, f, true)
 }
 
-func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.Source) {
+func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool) {
 	reader := zstd.NewReader(req.Body)
 	defer reader.Close()
 
@@ -136,12 +138,17 @@ func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.S
 	require.NoError(t, err)
 	defer elfFile.Close()
 
-	require.NoError(t, err)
-	switch expectedSymbolSource {
-	case symbol.SourceGoPCLnTab:
+	if expectedGoPCLnTab || expectedSymbolSource == symbol.SourceGoPCLnTab {
 		checkGoPCLnTab(t, elfFile, true)
+	}
+
+	switch expectedSymbolSource {
 	case symbol.SourceDynamicSymbolTable:
-		require.NotNil(t, findDynamicSymbol(elfFile, "foo"))
+		require.NotNil(t, findDynamicSymbol(elfFile, "_cgo_panic"))
+	case symbol.SourceSymbolTable:
+		require.NotNil(t, findSymbol(elfFile, "main.main"))
+	case symbol.SourceDebugInfo:
+		require.True(t, pfelf.HasDWARFData(elfFile))
 	}
 }
 
@@ -180,52 +187,108 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 	}
 }
 
+var testEndpoints = []string{"a.com", "b.com", "c.com", "d.com", "e.com"}
+
 func newTestUploader(uploadDynamicSymbols, uploadGoPCLnTab bool) (*DatadogSymbolUploader, error) {
+	endpoints := make([]SymbolEndpoint, 0, len(testEndpoints))
+	for _, e := range testEndpoints {
+		endpoints = append(endpoints, SymbolEndpoint{
+			Site:   e,
+			APIKey: "api_key",
+			AppKey: "app_key",
+		})
+	}
+
 	cfg := &SymbolUploaderConfig{
 		Enabled:              true,
 		UploadDynamicSymbols: uploadDynamicSymbols,
 		UploadGoPCLnTab:      uploadGoPCLnTab,
 		SymbolQueryInterval:  0,
-		SymbolEndpoints: []SymbolEndpoint{
-			{
-				Site:   "foobar.com",
-				APIKey: "api_key",
-				AppKey: "app_key",
-			},
-			{
-				Site:   "staging.com",
-				APIKey: "api_key2",
-				AppKey: "app_key2",
-			},
-		},
+		SymbolEndpoints:      endpoints,
 	}
 	return NewDatadogSymbolUploader(cfg)
 }
 
-func buildGoExeWithoutDebugInfos(t *testing.T, tmpDir string) string {
+type buildOptions struct {
+	dynsym           bool
+	symtab           bool
+	debugInfos       bool
+	corruptGoPCLnTab bool
+}
+
+func buildGo(t *testing.T, tmpDir, buildID string, opts buildOptions) string {
 	f, err := os.CreateTemp(tmpDir, "helloworld")
 	require.NoError(t, err)
 	defer f.Close()
 
 	exe := f.Name()
-	cmd := exec.Command("go", "build", "-o", exe, "-ldflags=-s -w", "../testdata/helloworld.go") // #nosec G204
+	args := []string{"build", "-o", exe}
+	ldflags := "-ldflags=-buildid=" + buildID + " "
+	if opts.dynsym {
+		ldflags += "-linkmode=external "
+	}
+
+	args = append(args, ldflags, "../testdata/helloworld.go")
+	cmd := exec.Command("go", args...) // #nosec G204
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
+
+	args = []string{"-R", ".note.gnu.build-id"}
+	if opts.debugInfos && !opts.symtab {
+		t.Errorf("Cannot have debug infos without symtab")
+	}
+
+	if !opts.debugInfos {
+		if opts.symtab {
+			args = append(args, "-g")
+		} else {
+			args = append(args, "-S")
+		}
+	}
+	if opts.corruptGoPCLnTab {
+		// Remove the pclntab section
+		args = append(args, "-R", ".gopclntab")
+	}
+	args = append(args, exe)
+	cmd = exec.Command("objcopy", args...)
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "failed to strip test binary with `%v`: %s\n%s", cmd.Args, err, out)
+
 	return exe
 }
 
-func buildExeWithDynamicSymbols(t *testing.T, tmpDir string) string {
-	f, err := os.CreateTemp(tmpDir, "foo")
+func buildSymbolQueryResponse(t *testing.T, buildID string, symbolSource symbol.Source) string {
+	var symbolFiles []SymbolFile
+	if symbolSource != symbol.SourceNone {
+		symbolFiles = []SymbolFile{
+			{
+				ID:           "1",
+				BuildID:      buildID,
+				SymbolSource: symbolSource.String(),
+				BuildIDType:  "go_build_id",
+			},
+		}
+	}
+	r, err := jsonapi.Marshal(&symbolFiles)
 	require.NoError(t, err)
-	defer f.Close()
-	srcFile := "../testdata/foo.c"
+	return string(r)
+}
 
-	exe := f.Name()
-	cmd := exec.Command("gcc", "-Wl,--strip-all", "-shared", "-o", exe, srcFile)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
-
-	return exe
+func registerResponders(t *testing.T, buildID string) []chan *http.Request {
+	channels := make([]chan *http.Request, 0, len(testEndpoints))
+	symbolSources := []symbol.Source{symbol.SourceNone, symbol.SourceDynamicSymbolTable, symbol.SourceSymbolTable, symbol.SourceGoPCLnTab, symbol.SourceDebugInfo}
+	for i, e := range testEndpoints {
+		c := make(chan *http.Request, 1)
+		channels = append(channels, c)
+		httpmock.RegisterResponder("POST", buildSymbolQueryURL(e),
+			httpmock.NewStringResponder(200, buildSymbolQueryResponse(t, buildID, symbolSources[i])))
+		httpmock.RegisterResponder("POST", buildSourcemapIntakeURL(e),
+			func(req *http.Request) (*http.Response, error) {
+				c <- req
+				return httpmock.NewStringResponse(200, ""), nil
+			})
+	}
+	return channels
 }
 
 //nolint:tparallel
@@ -234,88 +297,136 @@ func TestSymbolUpload(t *testing.T) {
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
-	c1 := make(chan *http.Request)
-	c2 := make(chan *http.Request)
-	httpmock.RegisterResponder("POST", buildSymbolQueryURL("foobar.com"),
-		httpmock.NewStringResponder(200, `{"data": []}`))
-	httpmock.RegisterResponder("POST", buildSourcemapIntakeURL("foobar.com"),
-		func(req *http.Request) (*http.Response, error) {
-			c1 <- req
-			return httpmock.NewStringResponse(200, ""), nil
-		})
-	httpmock.RegisterResponder("POST", buildSymbolQueryURL("staging.com"),
-		httpmock.NewStringResponder(200, `{"data": []}`))
-	httpmock.RegisterResponder("POST", buildSourcemapIntakeURL("staging.com"),
-		func(req *http.Request) (*http.Response, error) {
-			c2 <- req
-			return httpmock.NewStringResponse(200, ""), nil
-		})
-	checkCallCount := func(t *testing.T, expected int) {
+	log.SetLevel(log.DebugLevel)
+	buildID := "build_id"
+	channels := registerResponders(t, buildID)
+
+	checkUploads := func(t *testing.T, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool, expectedUploads []bool) {
 		callCountInfo := httpmock.GetCallCountInfo()
-		assert.Equal(t, expected, callCountInfo["POST "+buildSymbolQueryURL("foobar.com")])
-		assert.Equal(t, expected, callCountInfo["POST "+buildSourcemapIntakeURL("foobar.com")])
-		assert.Equal(t, expected, callCountInfo["POST "+buildSymbolQueryURL("staging.com")])
-		assert.Equal(t, expected, callCountInfo["POST "+buildSourcemapIntakeURL("staging.com")])
+		for i, e := range testEndpoints {
+			assert.Equal(t, 1, callCountInfo["POST "+buildSymbolQueryURL(e)])
+			if expectedUploads[i] {
+				assert.Equal(t, 1, callCountInfo["POST "+buildSourcemapIntakeURL(e)])
+				req := <-channels[i]
+				checkRequest(t, req, expectedSymbolSource, expectedGoPCLnTab)
+			} else {
+				assert.Equal(t, 0, callCountInfo["POST "+buildSourcemapIntakeURL(e)])
+			}
+		}
 	}
 
-	goExeWithoutDebugInfos := buildGoExeWithoutDebugInfos(t, t.TempDir())
+	goExeNoSymbols := buildGo(t, t.TempDir(), buildID, buildOptions{dynsym: false, symtab: false, debugInfos: false})
+	goExeyDynsym := buildGo(t, t.TempDir(), buildID, buildOptions{dynsym: true, symtab: false, debugInfos: false})
+	goExeSymtab := buildGo(t, t.TempDir(), buildID, buildOptions{dynsym: true, symtab: true, debugInfos: false})
+	goExeDebugInfos := buildGo(t, t.TempDir(), buildID, buildOptions{dynsym: true, symtab: true, debugInfos: true})
+	goExeyDynsymCorruptGoPCLnTab := buildGo(t, t.TempDir(), buildID, buildOptions{dynsym: true, symtab: false, debugInfos: false, corruptGoPCLnTab: true})
+	goExeDebugInfosCorruptGoPCLnTab := buildGo(t, t.TempDir(), buildID, buildOptions{dynsym: true, symtab: true, debugInfos: true, corruptGoPCLnTab: true})
 
-	t.Run("No upload when no symbols", func(t *testing.T) {
+	t.Run("No symbol upload if no symbols", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(false, false)
 		require.NoError(t, err)
 		uploader.Start(context.Background())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeWithoutDebugInfos, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(libpf.FileID{}, goExeNoSymbols, buildID, &symbol.DiskOpener{})
 		uploader.Stop()
 
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
+	})
+
+	t.Run("Upload if symtab", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		uploader, err := newTestUploader(false, false)
+		require.NoError(t, err)
+		uploader.Start(context.Background())
+
+		uploader.UploadSymbols(libpf.FileID{}, goExeSymtab, "build_id", &symbol.DiskOpener{})
+		uploader.Stop()
+
+		checkUploads(t, symbol.SourceSymbolTable, false, []bool{true, true, false, false, false})
+	})
+
+	t.Run("Upload if debug info", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		uploader, err := newTestUploader(false, false)
+		require.NoError(t, err)
+		uploader.Start(context.Background())
+
+		uploader.UploadSymbols(libpf.FileID{}, goExeDebugInfos, "build_id", &symbol.DiskOpener{})
+		uploader.Stop()
+
+		checkUploads(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false})
+	})
+
+	t.Run("No upload if dynamic symbols", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		uploader, err := newTestUploader(false, false)
+		require.NoError(t, err)
+		uploader.Start(context.Background())
+
+		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsym, "build_id", &symbol.DiskOpener{})
+		uploader.Stop()
+
+		assert.Equal(t, 0, httpmock.GetTotalCallCount())
+	})
+
+	t.Run("Upload if dynamic symbols when enabled", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		uploader, err := newTestUploader(true, false)
+		require.NoError(t, err)
+		uploader.Start(context.Background())
+
+		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsym, "build_id", &symbol.DiskOpener{})
+		uploader.Stop()
+
+		checkUploads(t, symbol.SourceDynamicSymbolTable, false, []bool{true, false, false, false, false})
 	})
 
 	t.Run("Upload pclntab when enabled", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		uploader, err := newTestUploader(false, true)
+		uploader, err := newTestUploader(true, true)
 		require.NoError(t, err)
-		uploader.Start(ctx)
-		uploader.UploadSymbols(libpf.FileID{}, goExeWithoutDebugInfos, "build_id", &symbol.DiskOpener{})
-		req1 := <-c1
-		req2 := <-c2
-		checkRequest(t, req1, symbol.SourceGoPCLnTab)
-		checkRequest(t, req2, symbol.SourceGoPCLnTab)
+		uploader.Start(context.Background())
 
-		checkCallCount(t, 1)
-	})
-
-	exeWithDynamicSymbols := buildExeWithDynamicSymbols(t, t.TempDir())
-
-	t.Run("Upload dynamic symbols when enabled", func(t *testing.T) {
-		httpmock.ZeroCallCounters()
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		uploader, err := newTestUploader(false, false)
-		require.NoError(t, err)
-		uploader.Start(ctx)
-		uploader.UploadSymbols(libpf.FileID{}, exeWithDynamicSymbols, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(libpf.FileID{}, goExeNoSymbols, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
 
-		assert.Equal(t, 0, httpmock.GetTotalCallCount())
+		checkUploads(t, symbol.SourceGoPCLnTab, true, []bool{true, true, true, false, false})
 	})
 
-	t.Run("Upload dynamic symbols when enabled", func(t *testing.T) {
+	t.Run("Upload debug infos if pclntab is corrupted", func(t *testing.T) {
 		httpmock.ZeroCallCounters()
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		uploader, err := newTestUploader(true, false)
+		uploader, err := newTestUploader(true, true)
 		require.NoError(t, err)
-		uploader.Start(ctx)
-		uploader.UploadSymbols(libpf.FileID{}, exeWithDynamicSymbols, "build_id", &symbol.DiskOpener{})
-		req1 := <-c1
-		req2 := <-c2
-		checkRequest(t, req1, symbol.SourceDynamicSymbolTable)
-		checkRequest(t, req2, symbol.SourceDynamicSymbolTable)
+		uploader.Start(context.Background())
 
-		checkCallCount(t, 1)
+		uploader.UploadSymbols(libpf.FileID{}, goExeDebugInfosCorruptGoPCLnTab, "build_id", &symbol.DiskOpener{})
+		uploader.Stop()
+
+		checkUploads(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false})
+	})
+
+	t.Run("Upload dynamic symbols if pclntab is corrupted and only dyn sym when enabled", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		uploader, err := newTestUploader(true, true)
+		require.NoError(t, err)
+		uploader.Start(context.Background())
+
+		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsymCorruptGoPCLnTab, "build_id", &symbol.DiskOpener{})
+		uploader.Stop()
+
+		checkUploads(t, symbol.SourceDynamicSymbolTable, false, []bool{true, false, false, false, false})
+	})
+
+	t.Run("No symbol upload if pclntab is corrupted and only dynsym", func(t *testing.T) {
+		httpmock.ZeroCallCounters()
+		uploader, err := newTestUploader(false, true)
+		require.NoError(t, err)
+		uploader.Start(context.Background())
+
+		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsymCorruptGoPCLnTab, "build_id", &symbol.DiskOpener{})
+		uploader.Stop()
+
+		checkUploads(t, symbol.SourceNone, false, []bool{false, false, false, false, false})
 	})
 }
