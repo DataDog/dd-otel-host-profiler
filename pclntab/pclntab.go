@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"unsafe"
 
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -373,7 +374,7 @@ func SearchGoPclntab(ef *pfelf.File) (data []byte, address uint64, err error) {
 		}
 	}
 
-	return nil, 0, nil
+	return nil, 0, errors.New("could not find .gopclntab with signature search")
 }
 
 func (g *GoPCLnTabInfo) findMaxInlineTreeOffset() int {
@@ -586,7 +587,7 @@ func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLn
 		// gopclntab parsing code might panic if the data is corrupt.
 		defer func() {
 			if r := recover(); r != nil {
-				err = fmt.Errorf("panic while searching pclntab: %v", r)
+				err = fmt.Errorf("panic while searching pclntab: %v, stack:\n%s", r, debug.Stack())
 			}
 		}()
 	}
