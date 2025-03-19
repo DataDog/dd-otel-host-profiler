@@ -9,7 +9,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"runtime/debug"
 	"unsafe"
 
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -587,7 +586,7 @@ func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLn
 		// gopclntab parsing code might panic if the data is corrupt.
 		defer func() {
 			if r := recover(); r != nil {
-				err = fmt.Errorf("panic while searching pclntab: %v, stack:\n%s", r, debug.Stack())
+				err = fmt.Errorf("panic while searching pclntab: %v", r)
 			}
 		}()
 	}
