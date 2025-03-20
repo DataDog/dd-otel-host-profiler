@@ -63,7 +63,7 @@ func NewStage[In any, Out any](inputChan <-chan In, fun func(context.Context, In
 }
 
 func NewBatchingStage[In any](inputChan <-chan In, batchInterval time.Duration, batchSize int, options ...StageOption) *BatchingStageWorker[In] {
-	return NewBatchingStageWithClock[In](inputChan, batchInterval, batchSize, clockwork.NewRealClock(), options...)
+	return NewBatchingStageWithClock(inputChan, batchInterval, batchSize, clockwork.NewRealClock(), options...)
 }
 
 func NewBatchingStageWithClock[In any](inputChan <-chan In, batchInterval time.Duration, batchSize int, clock clockwork.Clock, options ...StageOption) *BatchingStageWorker[In] {

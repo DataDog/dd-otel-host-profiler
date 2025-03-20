@@ -96,7 +96,7 @@ func TestPipeline(t *testing.T) {
 			input <- i
 		}
 		var output [][]int
-		stage1 := NewBatchingStage[int](input, 0, 10)
+		stage1 := NewBatchingStage(input, 0, 10)
 		stage2 := NewSinkStage(stage1.GetOutputChannel(),
 			func(_ context.Context, x []int) {
 				output = append(output, x)
