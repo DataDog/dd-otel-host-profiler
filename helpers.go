@@ -37,7 +37,7 @@ func ValidateTags(tags string) reporter.Tags {
 	validatedTags := make(reporter.Tags, 0, len(splitTags))
 
 	for _, tag := range splitTags {
-		key, value, found := strings.Cut(tags, ":")
+		key, value, found := strings.Cut(tag, ":")
 		if !found || !ValidTagKeyRegex.MatchString(key) || !ValidTagValueRegex.MatchString(value) {
 			log.Warnf("Rejected user-specified tag '%s'", tag)
 		} else {
