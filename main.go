@@ -83,6 +83,16 @@ func startTraceHandling(ctx context.Context, rep otelreporter.TraceReporter,
 	return err
 }
 
+func appendEndpoint(symbolEndpoints []reporter.SymbolEndpoint, site, apiKey, appKey string) []reporter.SymbolEndpoint {
+	// Ensure this exact endpoint has not already been added.
+	for _, endpoint := range symbolEndpoints {
+		if site == endpoint.Site && apiKey == endpoint.APIKey && appKey == endpoint.AppKey {
+			return symbolEndpoints
+		}
+	}
+	return append(symbolEndpoints, reporter.SymbolEndpoint{Site: site, APIKey: apiKey, AppKey: appKey})
+}
+
 func main() {
 	os.Exit(int(mainWithExitCode()))
 }
@@ -182,7 +192,7 @@ func mainWithExitCode() exitCode {
 	var symbolEndpoints = args.additionalSymbolEndpoints
 
 	if args.site != "" && args.apiKey != "" && args.appKey != "" {
-		symbolEndpoints = append(symbolEndpoints, reporter.SymbolEndpoint{Site: args.site, APIKey: args.apiKey, AppKey: args.appKey})
+		symbolEndpoints = appendEndpoint(symbolEndpoints, args.site, args.apiKey, args.appKey)
 	}
 
 	var intakeURL string
