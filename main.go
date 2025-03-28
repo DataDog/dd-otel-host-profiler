@@ -182,7 +182,16 @@ func mainWithExitCode() exitCode {
 	var symbolEndpoints = args.additionalSymbolEndpoints
 
 	if args.site != "" && args.apiKey != "" && args.appKey != "" {
-		symbolEndpoints = append(symbolEndpoints, reporter.SymbolEndpoint{Site: args.site, APIKey: args.apiKey, AppKey: args.appKey})
+		exists := false
+		for _, endpoint := range symbolEndpoints {
+			if args.site == endpoint.Site && args.apiKey == endpoint.APIKey && args.appKey == endpoint.AppKey {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			symbolEndpoints = append(symbolEndpoints, reporter.SymbolEndpoint{Site: args.site, APIKey: args.apiKey, AppKey: args.appKey})
+		}
 	}
 
 	var intakeURL string
