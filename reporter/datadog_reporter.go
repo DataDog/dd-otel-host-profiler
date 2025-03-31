@@ -65,6 +65,7 @@ type traceAndMetaKey struct {
 	hash libpf.TraceHash
 	// comm and apmServiceName are provided by the eBPF programs
 	comm           string
+	executablePath string
 	apmServiceName string
 	pid            libpf.PID
 	tid            libpf.PID
@@ -84,7 +85,6 @@ type traceEvents struct {
 
 type processMetadata struct {
 	updatedAt         time.Time
-	execPath          string
 	containerMetadata containermetadata.ContainerMetadata
 }
 
@@ -215,6 +215,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 	key := traceAndMetaKey{
 		hash:           trace.Hash,
 		comm:           meta.Comm,
+		executablePath: meta.ExecutablePath,
 		apmServiceName: meta.APMServiceName,
 		pid:            meta.PID,
 		tid:            meta.TID,
@@ -537,7 +538,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 		}
 
 		processMeta, _ := r.processes.Get(traceKey.pid)
-		execPath := processMeta.execPath
+		execPath := traceKey.executablePath
 
 		// Check if the last frame is a kernel frame.
 		if len(traceInfo.frameTypes) > 0 &&
@@ -690,11 +691,6 @@ func createPprofMapping(profile *pprofile.Profile, offset uint64,
 }
 
 func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
-	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
-	if err != nil {
-		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
-		return
-	}
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
 	if err != nil {
 		log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)
@@ -703,7 +699,6 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 
 	r.processes.Add(pid, processMetadata{
 		updatedAt:         time.Now(),
-		execPath:          execPath,
 		containerMetadata: containerMetadata,
 	})
 }
