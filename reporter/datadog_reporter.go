@@ -35,6 +35,7 @@ const (
 	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
 	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
 	executableCacheLifetime = 1 * time.Hour   // executable cache items will be removed if unused after this interval
+	framesCacheLifetime     = 1 * time.Hour   // frames cache items will be removed if unused after this interval
 )
 
 // execInfo enriches an executable with additional metadata.
@@ -152,12 +153,11 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Consider purging stale entries from frames to avoid memory leaks.
-	// Currently, setting a lifetime via go-freelru will cause the frames to be
-	// removed from the cache after the lifetime expires, regardless of whether
-	// they are still in use or not.
-	// This leads to mappings missing function name information, which is
-	// required for the profile to be correctly displayed in the Datadog UI.
+	frames.SetLifetime(framesCacheLifetime)
+	// Using SetLifetime / GetAndRefresh on frames prevents useful information from being
+	// evicted from the cache.
+	// But it also means that active frames will never be evicted, and thus that their corresponding values
+	// (which are maps) may grow indefinitely (cf. https://github.com/open-telemetry/opentelemetry-ebpf-profiler/pull/260).
 
 	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.ProcessesCacheElements, libpf.PID.Hash32)
 	if err != nil {
@@ -248,7 +248,7 @@ func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *re
 // ExecutableKnown returns true if the metadata of the Executable specified by fileID is
 // cached in the reporter.
 func (r *DatadogReporter) ExecutableKnown(fileID libpf.FileID) bool {
-	_, known := r.executables.Get(fileID)
+	_, known := r.executables.GetAndRefresh(fileID, executableCacheLifetime)
 	return known
 }
 
@@ -270,7 +270,7 @@ func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataAr
 // cached in the reporter.
 func (r *DatadogReporter) FrameKnown(frameID libpf.FrameID) bool {
 	known := false
-	if frameMapLock, exists := r.frames.Get(frameID.FileID()); exists {
+	if frameMapLock, exists := r.frames.GetAndRefresh(frameID.FileID(), framesCacheLifetime); exists {
 		frameMap := frameMapLock.RLock()
 		defer frameMapLock.RUnlock(&frameMap)
 		_, known = (*frameMap)[frameID.AddressOrLine()]
@@ -287,7 +287,7 @@ func (r *DatadogReporter) FrameMetadata(args *reporter.FrameMetadataArgs) {
 		fileID, args.FunctionName, args.FunctionOffset,
 		args.SourceFile, args.SourceLine)
 
-	if frameMapLock, exists := r.frames.Get(fileID); exists {
+	if frameMapLock, exists := r.frames.GetAndRefresh(fileID, framesCacheLifetime); exists {
 		frameMap := frameMapLock.WLock()
 		defer frameMapLock.WUnlock(&frameMap)
 
@@ -508,7 +508,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 				// Store interpreted frame information as Line message:
 				line := pprofile.Line{}
 
-				fileIDInfoLock, exists := r.frames.Get(traceInfo.files[i])
+				fileIDInfoLock, exists := r.frames.GetAndRefresh(traceInfo.files[i], framesCacheLifetime)
 				if !exists {
 					// At this point, we do not have enough information for the frame.
 					// Therefore, we report a dummy entry and use the interpreter as filename.
