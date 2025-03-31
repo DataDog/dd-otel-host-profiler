@@ -36,8 +36,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/zeebo/xxh3"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
-	"go.opentelemetry.io/ebpf-profiler/metrics"
-	"go.opentelemetry.io/ebpf-profiler/periodiccaller"
 	"go.opentelemetry.io/ebpf-profiler/stringutil"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -170,7 +168,7 @@ type containerIDEntry struct {
 }
 
 // NewContainerMetadataProvider returns a new ContainerMetadataProvider instance used for retrieving container metadata.
-func NewContainerMetadataProvider(ctx context.Context, nodeName string, monitorInterval time.Duration) (
+func NewContainerMetadataProvider(ctx context.Context, nodeName string) (
 	Provider, error) {
 	containerIDCache, err := lru.NewSynced[libpf.PID, containerIDEntry](
 		containerIDCacheSize, libpf.PID.Hash32)
@@ -209,26 +207,6 @@ func NewContainerMetadataProvider(ctx context.Context, nodeName string, monitorI
 	}
 
 	log.Debugf("Container metadata handler: %v", p)
-
-	periodiccaller.Start(ctx, monitorInterval, func() {
-		metrics.AddSlice([]metrics.Metric{
-			{
-				ID: metrics.IDKubernetesClientQuery,
-				Value: metrics.MetricValue(
-					p.kubernetesClientQueryCount.Swap(0)),
-			},
-			{
-				ID: metrics.IDDockerClientQuery,
-				Value: metrics.MetricValue(
-					p.dockerClientQueryCount.Swap(0)),
-			},
-			{
-				ID: metrics.IDContainerdClientQuery,
-				Value: metrics.MetricValue(
-					p.containerdClientQueryCount.Swap(0)),
-			},
-		})
-	})
 
 	return p, nil
 }

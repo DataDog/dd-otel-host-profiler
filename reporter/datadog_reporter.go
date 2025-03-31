@@ -333,9 +333,6 @@ func (r *DatadogReporter) ReportHostMetadataBlocking(_ context.Context,
 	return nil
 }
 
-// ReportMetrics is a NOP for DatadogReporter.
-func (r *DatadogReporter) ReportMetrics(_ uint32, _ []uint32, _ []int64) {}
-
 // Stop triggers a graceful shutdown of DatadogReporter.
 func (r *DatadogReporter) Stop() {
 	r.runLoop.Stop()
