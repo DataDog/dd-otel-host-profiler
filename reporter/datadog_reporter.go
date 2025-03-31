@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/xsync"
 	"go.opentelemetry.io/ebpf-profiler/reporter"
+	"go.opentelemetry.io/ebpf-profiler/reporter/samples"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 )
@@ -205,7 +206,7 @@ func (r *DatadogReporter) SupportsReportTraceEvent() bool {
 }
 
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
-func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.TraceEventMeta) {
+func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.TraceEventMeta) {
 	traceEventsMap := r.traceEvents.WLock()
 	defer r.traceEvents.WUnlock(&traceEventsMap)
 
@@ -243,7 +244,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 func (r *DatadogReporter) ReportFramesForTrace(_ *libpf.Trace) {}
 
 // ReportCountForTrace is a NOP for DatadogReporter.
-func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *reporter.TraceEventMeta) {
+func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *samples.TraceEventMeta) {
 }
 
 // ExecutableKnown returns true if the metadata of the Executable specified by fileID is
@@ -429,13 +430,13 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 	startTS uint64, endTS uint64) {
 	traceEvents := r.traceEvents.WLock()
-	samples := maps.Clone(*traceEvents)
+	hostSamples := maps.Clone(*traceEvents)
 	for key := range *traceEvents {
 		delete(*traceEvents, key)
 	}
 	r.traceEvents.WUnlock(&traceEvents)
 
-	numSamples := len(samples)
+	numSamples := len(hostSamples)
 
 	const unknownStr = "UNKNOWN"
 
@@ -456,7 +457,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 	fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
 	totalSampleCount := 0
 
-	for traceKey, traceInfo := range samples {
+	for traceKey, traceInfo := range hostSamples {
 		sample := &pprofile.Sample{}
 
 		for _, ts := range traceInfo.timestamps {
