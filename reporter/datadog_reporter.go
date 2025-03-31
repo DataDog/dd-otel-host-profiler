@@ -199,14 +199,8 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	}, nil
 }
 
-// SupportsReportTraceEvent returns true if the reporter supports reporting trace events
-// via ReportTraceEvent().
-func (r *DatadogReporter) SupportsReportTraceEvent() bool {
-	return true
-}
-
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
-func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.TraceEventMeta) {
+func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.TraceEventMeta) error {
 	traceEventsMap := r.traceEvents.WLock()
 	defer r.traceEvents.WUnlock(&traceEventsMap)
 
@@ -226,7 +220,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 	if tr, exists := (*traceEventsMap)[key]; exists {
 		tr.timestamps = append(tr.timestamps, uint64(meta.Timestamp))
 		(*traceEventsMap)[key] = tr
-		return
+		return nil
 	}
 
 	(*traceEventsMap)[key] = &traceEvents{
@@ -238,13 +232,8 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		mappingFileOffsets: trace.MappingFileOffsets,
 		timestamps:         []uint64{uint64(meta.Timestamp)},
 	}
-}
 
-// ReportFramesForTrace is a NOP for DatadogReporter.
-func (r *DatadogReporter) ReportFramesForTrace(_ *libpf.Trace) {}
-
-// ReportCountForTrace is a NOP for DatadogReporter.
-func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *samples.TraceEventMeta) {
+	return nil
 }
 
 // ExecutableKnown returns true if the metadata of the Executable specified by fileID is
