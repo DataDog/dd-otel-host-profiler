@@ -8,12 +8,14 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"maps"
 	"os"
 	"path"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DataDog/zstd"
@@ -62,11 +64,14 @@ type funcInfo struct {
 // that we don't accidentally merge traces with different fields.
 type traceAndMetaKey struct {
 	hash libpf.TraceHash
-	// comm and apmServiceName are provided by the eBPF programs
-	comm           string
-	apmServiceName string
-	pid            libpf.PID
-	tid            libpf.PID
+	// comm and apm information are provided by the eBPF programs
+	comm             string
+	apmServiceName   string
+	apmRuntimeID     string
+	apmTraceID       libpf.APMTraceID
+	apmTransactionID libpf.APMTransactionID
+	pid              libpf.PID
+	tid              libpf.PID
 }
 
 // traceEvents holds known information about a trace.
@@ -211,11 +216,14 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 	}
 
 	key := traceAndMetaKey{
-		hash:           trace.Hash,
-		comm:           meta.Comm,
-		apmServiceName: meta.APMServiceName,
-		pid:            meta.PID,
-		tid:            meta.TID,
+		hash:             trace.Hash,
+		comm:             meta.Comm,
+		apmServiceName:   meta.APMServiceName,
+		apmRuntimeID:     meta.APMRuntimeID,
+		apmTraceID:       meta.APMTraceID,
+		apmTransactionID: meta.APMTransactionID,
+		pid:              meta.PID,
+		tid:              meta.TID,
 	}
 
 	if tr, exists := (*traceEventsMap)[key]; exists {
@@ -627,6 +635,17 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 	return function
 }
 
+func hexPadded(value uint64) string {
+	const hexDigits = 16
+	hexStr := strconv.FormatUint(value, 16) // convert to lower-case hex string
+	// Pad with leading zeros if necessary.
+	if len(hexStr) < hexDigits {
+		padding := strings.Repeat("0", hexDigits-len(hexStr))
+		hexStr = padding + hexStr
+	}
+	return hexStr
+}
+
 func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
 	baseExec string, timestamp uint64) {
 	if i.comm != "" {
@@ -647,6 +666,25 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMeta
 
 	if i.apmServiceName != "" {
 		labels["apmServiceName"] = append(labels["apmServiceName"], i.apmServiceName)
+	}
+
+	log.Infof("runtimeID =  %s", i.apmRuntimeID)
+	if i.apmRuntimeID != "" {
+		log.Infof("runtimeID =  %s", i.apmRuntimeID)
+		labels["runtime-id"] = append(labels["runtime-id"], i.apmRuntimeID)
+	}
+
+	if i.apmTraceID != [16]byte{} {
+		low := binary.LittleEndian.Uint64(i.apmTraceID[:8])
+		high := binary.LittleEndian.Uint64(i.apmTraceID[8:])
+		lowStr := hexPadded(low)
+		highStr := hexPadded(high)
+		labels["trace id"] = append(labels["trace id"], highStr+lowStr)
+	}
+
+	if i.apmTransactionID != libpf.InvalidAPMSpanID {
+		transactionID := binary.BigEndian.Uint64(i.apmTransactionID[:])
+		labels["local root span id"] = append(labels["local root span id"], fmt.Sprintf("%d", transactionID))
 	}
 
 	if i.pid != 0 {
