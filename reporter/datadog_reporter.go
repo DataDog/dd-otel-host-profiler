@@ -430,6 +430,26 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 	for _, attr := range customAttributes {
 		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
 	}
+
+	var runtimeID string
+	var traceID string
+	for _, sample := range profile.Sample {
+		labels := sample.Label
+		if runtimeID == "" {
+			if runtimeIDs, ok := labels["runtime-id"]; ok && len(runtimeIDs) > 0 {
+				runtimeID = runtimeIDs[0]
+			}
+		}
+		if traceID == "" {
+			if traceIDs, ok := labels["trace id"]; ok && len(traceIDs) > 0 {
+				traceID = traceIDs[0]
+			}
+		}
+		if runtimeID != "" && traceID != "" {
+			break
+		}
+	}
+
 	// The profiler_name tag allows us to differentiate the source of the profiles.
 	tags = append(tags,
 		MakeTag("runtime", "native"),
@@ -437,7 +457,9 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		MakeTag("profiler_name", profilerName),
 		MakeTag("profiler_version", r.version),
 		MakeTag("cpu_arch", runtime.GOARCH),
-		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)))
+		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)),
+		MakeTag("runtime-id", runtimeID),
+		MakeTag("trace id", traceID))
 
 	r.profileSeq++
 
