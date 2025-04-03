@@ -432,21 +432,13 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 	}
 
 	var runtimeID string
-	var traceID string
 	for _, sample := range profile.Sample {
 		labels := sample.Label
 		if runtimeID == "" {
 			if runtimeIDs, ok := labels["runtime-id"]; ok && len(runtimeIDs) > 0 {
 				runtimeID = runtimeIDs[0]
+				break
 			}
-		}
-		if traceID == "" {
-			if traceIDs, ok := labels["trace id"]; ok && len(traceIDs) > 0 {
-				traceID = traceIDs[0]
-			}
-		}
-		if runtimeID != "" && traceID != "" {
-			break
 		}
 	}
 
@@ -458,8 +450,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		MakeTag("profiler_version", r.version),
 		MakeTag("cpu_arch", runtime.GOARCH),
 		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)),
-		MakeTag("runtime-id", runtimeID),
-		MakeTag("trace id", traceID))
+		MakeTag("runtime-id", runtimeID))
 
 	r.profileSeq++
 
