@@ -70,6 +70,7 @@ type traceAndMetaKey struct {
 	apmRuntimeID     string
 	apmTraceID       libpf.APMTraceID
 	apmTransactionID libpf.APMTransactionID
+	apmSpanID        libpf.APMSpanID
 	pid              libpf.PID
 	tid              libpf.PID
 }
@@ -222,6 +223,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 		apmRuntimeID:     meta.APMRuntimeID,
 		apmTraceID:       meta.APMTraceID,
 		apmTransactionID: meta.APMTransactionID,
+		apmSpanID:        meta.APMSpanID,
 		pid:              meta.PID,
 		tid:              meta.TID,
 	}
@@ -683,8 +685,13 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMeta
 	}
 
 	if i.apmTransactionID != libpf.InvalidAPMSpanID {
-		transactionID := binary.BigEndian.Uint64(i.apmTransactionID[:])
+		transactionID := binary.LittleEndian.Uint64(i.apmTransactionID[:])
 		labels["local root span id"] = append(labels["local root span id"], fmt.Sprintf("%d", transactionID))
+	}
+
+	if i.apmSpanID != libpf.InvalidAPMSpanID {
+		spanID := binary.LittleEndian.Uint64(i.apmSpanID[:])
+		labels["span id"] = append(labels["span id"], fmt.Sprintf("%d", spanID))
 	}
 
 	if i.pid != 0 {
