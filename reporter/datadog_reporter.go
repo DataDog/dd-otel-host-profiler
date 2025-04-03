@@ -394,7 +394,7 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 
 // reportProfile creates and sends out a profile.
 func (r *DatadogReporter) reportProfile(ctx context.Context) error {
-	profile, startTS, endTS := r.getPprofProfile()
+	profile, startTS, endTS, runtimeID := r.getPprofProfile()
 
 	if len(profile.Sample) == 0 {
 		log.Debugf("Skip sending of pprof profile with no samples")
@@ -431,17 +431,6 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
 	}
 
-	var runtimeID string
-	for _, sample := range profile.Sample {
-		labels := sample.Label
-		if runtimeID == "" {
-			if runtimeIDs, ok := labels["runtime-id"]; ok && len(runtimeIDs) > 0 {
-				runtimeID = runtimeIDs[0]
-				break
-			}
-		}
-	}
-
 	// The profiler_name tag allows us to differentiate the source of the profiles.
 	tags = append(tags,
 		MakeTag("runtime", "native"),
@@ -462,7 +451,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
 func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
-	startTS uint64, endTS uint64) {
+	startTS uint64, endTS uint64, runtimeID string) {
 	traceEvents := r.traceEvents.WLock()
 	samples := maps.Clone(*traceEvents)
 	for key := range *traceEvents {
@@ -593,6 +582,10 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			sample.Location = append(sample.Location, loc)
 		}
 
+		if traceKey.apmRuntimeID != "" {
+			runtimeID = traceKey.apmRuntimeID
+		}
+
 		if !r.timeline {
 			count := int64(len(traceInfo.timestamps))
 			labels := make(map[string][]string)
@@ -621,7 +614,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 
 	profile = profile.Compact()
 
-	return profile, startTS, endTS
+	return profile, startTS, endTS, runtimeID
 }
 
 // createFunctionEntry adds a new function and returns its reference index.
@@ -679,12 +672,6 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMeta
 
 	if i.apmServiceName != "" {
 		labels["apmServiceName"] = append(labels["apmServiceName"], i.apmServiceName)
-	}
-
-	log.Infof("runtimeID =  %s", i.apmRuntimeID)
-	if i.apmRuntimeID != "" {
-		log.Infof("runtimeID =  %s", i.apmRuntimeID)
-		labels["runtime-id"] = append(labels["runtime-id"], i.apmRuntimeID)
 	}
 
 	if i.apmTraceID != [16]byte{} {
