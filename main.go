@@ -184,7 +184,7 @@ func mainWithExitCode() exitCode {
 	addTagsFromArgs(&validatedTags, args)
 
 	containerMetadataProvider, err :=
-		containermetadata.NewContainerMetadataProvider(mainCtx, args.node, intervals.MonitorInterval())
+		containermetadata.NewContainerMetadataProvider(mainCtx, args.node)
 	if err != nil {
 		return failure("Failed to create container metadata provider: %v", err)
 	}
@@ -244,8 +244,6 @@ func mainWithExitCode() exitCode {
 	if err != nil {
 		return failure("Failed to start reporting: %v", err)
 	}
-
-	metrics.SetReporter(rep)
 
 	// Load the eBPF code and map definitions
 	trc, err := tracer.NewTracer(mainCtx, &tracer.Config{
