@@ -258,6 +258,7 @@ func mainWithExitCode() exitCode {
 		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
 		ProbabilisticInterval:  args.probabilisticInterval,
 		ProbabilisticThreshold: uint(args.probabilisticThreshold),
+		CollectCustomLabels:    true,
 	})
 	if err != nil {
 		return failure("Failed to load eBPF tracer: %v", err)

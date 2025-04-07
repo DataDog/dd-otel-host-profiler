@@ -65,10 +65,13 @@ type funcInfo struct {
 // that we don't accidentally merge traces with different fields.
 type traceAndMetaKey struct {
 	hash libpf.TraceHash
-	// comm and apmServiceName are provided by the eBPF programs
+	// comm and apm information are provided by the eBPF programs
 	comm           string
 	executablePath string
 	apmServiceName string
+	apmRuntimeID   string
+	apmTraceID     string
+	apmSpanID      string
 	pid            libpf.PID
 	tid            libpf.PID
 }
@@ -209,11 +212,24 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		r.addProcessMetadata(meta.PID)
 	}
 
+	var traceID string
+	if val, ok := meta.CustomLabels["TraceId"]; ok {
+		traceID = val
+	}
+
+	var spanID string
+	if val, ok := meta.CustomLabels["SpanId"]; ok {
+		spanID = val
+	}
+
 	key := traceAndMetaKey{
 		hash:           trace.Hash,
 		comm:           meta.Comm,
 		executablePath: meta.ExecutablePath,
 		apmServiceName: meta.APMServiceName,
+		apmRuntimeID:   meta.APMRuntimeID,
+		apmTraceID:     traceID,
+		apmSpanID:      spanID,
 		pid:            meta.PID,
 		tid:            meta.TID,
 	}
@@ -360,7 +376,7 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 
 // reportProfile creates and sends out a profile.
 func (r *DatadogReporter) reportProfile(ctx context.Context) error {
-	profile, startTS, endTS := r.getPprofProfile()
+	profile, startTS, endTS, runtimeID := r.getPprofProfile()
 
 	if len(profile.Sample) == 0 {
 		log.Debugf("Skip sending of pprof profile with no samples")
@@ -403,7 +419,8 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		MakeTag("profiler_name", profilerName),
 		MakeTag("profiler_version", r.version),
 		MakeTag("cpu_arch", runtime.GOARCH),
-		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)))
+		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)),
+		MakeTag("runtime-id", runtimeID))
 
 	r.profileSeq++
 
@@ -415,7 +432,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
 func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
-	startTS uint64, endTS uint64) {
+	startTS uint64, endTS uint64, runtimeID string) {
 	traceEvents := r.traceEvents.WLock()
 	hostSamples := maps.Clone(*traceEvents)
 	for key := range *traceEvents {
@@ -554,10 +571,14 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			sample.Location = append(sample.Location, loc)
 		}
 
+		if traceKey.apmRuntimeID != "" {
+			runtimeID = traceKey.apmRuntimeID
+		}
+
 		if !r.timeline {
 			count := int64(len(traceInfo.timestamps))
 			labels := make(map[string][]string)
-			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
+			addTraceLabels(labels, &traceKey, processMeta.containerMetadata, baseExec, 0)
 			sample.Value = append(sample.Value, count, count*samplingPeriod)
 			sample.Label = labels
 			profile.Sample = append(profile.Sample, sample)
@@ -567,7 +588,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 				sampleWithTimestamp := &pprofile.Sample{}
 				*sampleWithTimestamp = *sample
 				labels := make(map[string][]string)
-				addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, ts)
+				addTraceLabels(labels, &traceKey, processMeta.containerMetadata, baseExec, ts)
 				sampleWithTimestamp.Label = labels
 				profile.Sample = append(profile.Sample, sampleWithTimestamp)
 			}
@@ -582,7 +603,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 
 	profile = profile.Compact()
 
-	return profile, startTS, endTS
+	return profile, startTS, endTS, runtimeID
 }
 
 // createFunctionEntry adds a new function and returns its reference index.
@@ -609,7 +630,7 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 	return function
 }
 
-func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
+func addTraceLabels(labels map[string][]string, i *traceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
 	baseExec string, timestamp uint64) {
 	if i.comm != "" {
 		labels["thread_name"] = append(labels["thread_name"], i.comm)
@@ -629,6 +650,14 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMeta
 
 	if i.apmServiceName != "" {
 		labels["apmServiceName"] = append(labels["apmServiceName"], i.apmServiceName)
+	}
+
+	if i.apmTraceID != "" {
+		labels["trace id"] = append(labels["trace id"], i.apmTraceID)
+	}
+
+	if i.apmSpanID != "" {
+		labels["span id"] = append(labels["span id"], i.apmSpanID)
 	}
 
 	if i.pid != 0 {
