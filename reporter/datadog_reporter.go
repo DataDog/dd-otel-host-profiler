@@ -87,6 +87,7 @@ type traceEvents struct {
 
 type processMetadata struct {
 	updatedAt         time.Time
+	executablePath    string
 	containerMetadata containermetadata.ContainerMetadata
 }
 
@@ -525,7 +526,17 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 		}
 
 		processMeta, _ := r.processes.Get(traceKey.pid)
-		execPath := traceKey.executablePath
+		execPath := processMeta.executablePath
+		if execPath == "" {
+			// If we were unable to get the process metadata, we use the executable path
+			// from the trace key.
+			// This can happen if the process has already exited when process metadata
+			// was collected.
+			// We prioritize the executable path from process metadata over the trace key
+			// because in some cases executable path from trace key is taken too early in
+			// the process lifetime, eg. before the process execs into another binary.
+			execPath = traceKey.executablePath
+		}
 
 		// Check if the last frame is a kernel frame.
 		if len(traceInfo.frameTypes) > 0 &&
@@ -695,6 +706,11 @@ func getBuildID(gnuBuildID, goBuildID, fileHash string) string {
 }
 
 func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
+	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
+		return
+	}
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
 	if err != nil {
 		log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)
@@ -703,6 +719,7 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 
 	r.processes.Add(pid, processMetadata{
 		updatedAt:         time.Now(),
+		executablePath:    execPath,
 		containerMetadata: containerMetadata,
 	})
 }
