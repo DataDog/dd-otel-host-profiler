@@ -661,7 +661,9 @@ func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, re
 	r.Header.Set("Dd-Evp-Origin", profilerName)
 	r.Header.Set("Dd-Evp-Origin-Version", d.version)
 	r.Header.Set("Content-Type", reqData.contentType)
-	r.Header.Set("Content-Encoding", reqData.contentEncoding)
+	if reqData.contentEncoding != "" {
+		r.Header.Set("Content-Encoding", reqData.contentEncoding)
+	}
 	return r, nil
 }
 

@@ -106,7 +106,11 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 
 func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool, expectedContentEncoding string) {
 	require.Equal(t, "POST", req.Method)
-	require.Equal(t, expectedContentEncoding, req.Header.Get("Content-Encoding"))
+	if expectedContentEncoding != "" {
+		require.Equal(t, expectedContentEncoding, req.Header.Get("Content-Encoding"))
+	} else {
+		require.NotContains(t, req.Header, "Content-Encoding")
+	}
 
 	_, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 	require.NoError(t, err)
