@@ -87,6 +87,8 @@ func NewElf(path string, fileID libpf.FileID, opener process.FileOpener) (*Elf, 
 		if err != nil {
 			log.Debugf(
 				"Unable to get Go build ID for executable %s: %s", path, err)
+			// If it's go but we can't get the build ID, it might be a bazel binary
+			elf.gnuBuildID = ""
 		} else {
 			elf.goBuildID = goBuildID
 		}
