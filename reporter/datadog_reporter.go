@@ -255,10 +255,12 @@ func (r *DatadogReporter) ExecutableKnown(fileID libpf.FileID) bool {
 func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataArgs) {
 	buildID := args.GnuBuildID
 
-	elf, err := symbol.NewElf(args.FileName, args.FileID, args.Open)
-	if err == nil {
-		if elf.IsGolang() && elf.GnuBuildID() == "" {
-			buildID = ""
+	if r.symbolUploader != nil && args.Interp == libpf.Native {
+		elf, err := symbol.NewElf(args.FileName, args.FileID, args.Open)
+		if err == nil {
+			if elf.IsGolang() && elf.GnuBuildID() == "" {
+				buildID = ""
+			}
 		}
 	}
 
