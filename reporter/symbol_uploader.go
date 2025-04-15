@@ -120,7 +120,7 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
-	compressDebugSections := !cfg.DisableDebugSectionCompression && ObjcopyHasZstdSupport()
+	compressDebugSections := !cfg.DisableDebugSectionCompression && CheckObjcopyZstdSupport()
 
 	return &DatadogSymbolUploader{
 		symbolEndpoints:       cfg.SymbolEndpoints,
@@ -137,7 +137,7 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 	}, nil
 }
 
-func ObjcopyHasZstdSupport() bool {
+func CheckObjcopyZstdSupport() bool {
 	return exec.Command("objcopy", "--compress-debug-sections=zstd", "--version").Run() == nil
 }
 
