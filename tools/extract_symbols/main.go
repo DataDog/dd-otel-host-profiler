@@ -37,7 +37,7 @@ func extractDebugInfos(elfFile, outFile string) error {
 		}
 	}
 
-	return reporter.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo, dynamicSymbolsDump, reporter.CheckObjcopyZstdSupport())
+	return reporter.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo, dynamicSymbolsDump)
 }
 
 func main() {
