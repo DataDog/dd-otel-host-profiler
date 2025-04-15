@@ -25,6 +25,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/reporter"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
 // Assert that we implement the full Reporter interface.
@@ -252,13 +253,22 @@ func (r *DatadogReporter) ExecutableKnown(fileID libpf.FileID) bool {
 // ExecutableMetadata accepts a fileID with the corresponding filename
 // and caches this information.
 func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataArgs) {
+	buildID := args.GnuBuildID
+
+	elf, err := symbol.NewElf(args.FileName, args.FileID, args.Open)
+	if err == nil {
+		if elf.IsGolang() && elf.GnuBuildID() == "" {
+			buildID = ""
+		}
+	}
+
 	r.executables.Add(args.FileID, execInfo{
 		fileName: path.Base(args.FileName),
-		buildID:  args.GnuBuildID,
+		buildID:  buildID,
 	})
 
 	if r.symbolUploader != nil && args.Interp == libpf.Native {
-		r.symbolUploader.UploadSymbols(args.FileID, args.FileName, args.GnuBuildID, args.Open)
+		r.symbolUploader.UploadSymbols(args.FileID, args.FileName, buildID, args.Open)
 	}
 }
 
