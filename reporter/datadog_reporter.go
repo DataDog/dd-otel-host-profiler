@@ -258,7 +258,7 @@ func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataAr
 	if r.symbolUploader != nil && args.Interp == libpf.Native {
 		elf, err := symbol.NewElf(args.FileName, args.FileID, args.Open)
 		if err == nil {
-			if elf.IsGolang() && elf.GnuBuildID() == "" {
+			if elf.IsGolang() && elf.GoBuildID() == "" {
 				buildID = ""
 			}
 		}
