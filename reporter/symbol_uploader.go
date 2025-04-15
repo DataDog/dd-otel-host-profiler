@@ -440,7 +440,7 @@ func (d *DatadogSymbolUploader) createSymbolFile(ctx context.Context, e *symbol.
 		// Temporary file will be cleaned by the symbol.Elf.Close()
 	}
 
-	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo, dynamicSymbols)
+	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo, dynamicSymbols, e.GnuBuildID() == "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to copy symbols: %w", err)
 	}
@@ -490,10 +490,14 @@ func dumpGoPCLnTabData(goPCLnTabInfo *pclntab.GoPCLnTabInfo) (goPCLnTabDump, err
 	return goPCLnTabDump{goPCLnTabPath: gopclntabFile.Name(), goFuncPath: gofuncFile.Name()}, nil
 }
 
-func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInfo *pclntab.GoPCLnTabInfo, dynamicSymbols *symbol.DynamicSymbolsDump) error {
+func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInfo *pclntab.GoPCLnTabInfo, dynamicSymbols *symbol.DynamicSymbolsDump, stripGnuBuildID bool) error {
 	args := []string{
 		"--only-keep-debug",
 		"--remove-section=.gdb_index",
+	}
+
+	if stripGnuBuildID {
+		args = append(args, "--remove-section=.note.gnu.build-id")
 	}
 
 	if goPCLnTabInfo != nil {
