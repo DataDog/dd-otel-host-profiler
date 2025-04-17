@@ -39,8 +39,9 @@ const (
 
 // execInfo enriches an executable with additional metadata.
 type execInfo struct {
-	fileName string
-	buildID  string
+	fileName   string
+	gnuBuildID string
+	goBuildID  string
 }
 
 // sourceInfo allows mapping a frame to its source origin.
@@ -253,8 +254,9 @@ func (r *DatadogReporter) ExecutableKnown(fileID libpf.FileID) bool {
 // and caches this information.
 func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataArgs) {
 	r.executables.Add(args.FileID, execInfo{
-		fileName: path.Base(args.FileName),
-		buildID:  args.GnuBuildID,
+		fileName:   path.Base(args.FileName),
+		gnuBuildID: args.GnuBuildID,
+		goBuildID:  args.GoBuildID,
 	})
 
 	if r.symbolUploader != nil && args.Interp == libpf.Native {
@@ -503,9 +505,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 					var buildID = traceInfo.files[i].StringNoQuotes()
 					if exists {
 						fileName = executionInfo.fileName
-						if executionInfo.buildID != "" {
-							buildID = executionInfo.buildID
-						}
+						buildID = getBuildID(executionInfo.gnuBuildID, executionInfo.goBuildID, buildID)
 					}
 
 					tmpMapping := createPprofMapping(profile, uint64(traceInfo.linenos[i]),
@@ -704,6 +704,23 @@ func createPprofMapping(profile *pprofile.Profile, offset uint64,
 	}
 	profile.Mapping = append(profile.Mapping, mapping)
 	return mapping
+}
+
+func getBuildID(gnuBuildID, goBuildID, fileHash string) string {
+	// When building Go binaries, Bazel will set the Go build ID to "redacted" to
+	// achieve deterministic builds. Since Go 1.24, the Gnu Build ID is inherited
+	// from the Go build ID - if the Go build ID is "redacted", the Gnu Build ID will
+	// be a hash of "redacted". In this case, we should use the file hash instead of build IDs.
+	if goBuildID == "redacted" {
+		return fileHash
+	}
+	if gnuBuildID != "" {
+		return gnuBuildID
+	}
+	if goBuildID != "" {
+		return goBuildID
+	}
+	return fileHash
 }
 
 func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {

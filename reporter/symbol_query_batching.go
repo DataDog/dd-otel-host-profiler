@@ -69,20 +69,6 @@ func (e *ElfWithBackendSources) fillWithError(err error) {
 	}
 }
 
-func getBuildID(e *symbol.Elf) string {
-	// Only consider the first non-empty buildID between gnuBuildID, goBuildID and fileHash
-	// This simplifies the logic and profile will contain only this buildID anyway.
-	buildID := e.GnuBuildID()
-	if buildID != "" {
-		return buildID
-	}
-	buildID = e.GoBuildID()
-	if buildID != "" {
-		return buildID
-	}
-	return e.FileHash()
-}
-
 func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, queriers []SymbolQuerier) []ElfWithBackendSources {
 	if len(batch) == 0 {
 		return nil
@@ -106,7 +92,7 @@ func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, querie
 			continue
 		}
 
-		buildID := getBuildID(e)
+		buildID := getBuildID(e.GnuBuildID(), e.GoBuildID(), e.FileHash())
 		if buildID == "" {
 			result.fillWithError(errors.New("empty buildID"))
 			continue
