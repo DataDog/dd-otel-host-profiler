@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/xsync"
 	"go.opentelemetry.io/ebpf-profiler/reporter"
+	"go.opentelemetry.io/ebpf-profiler/reporter/samples"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 )
@@ -35,6 +36,7 @@ const (
 	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
 	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
 	executableCacheLifetime = 1 * time.Hour   // executable cache items will be removed if unused after this interval
+	framesCacheLifetime     = 1 * time.Hour   // frames cache items will be removed if unused after this interval
 )
 
 // execInfo enriches an executable with additional metadata.
@@ -65,6 +67,7 @@ type traceAndMetaKey struct {
 	hash libpf.TraceHash
 	// comm and apmServiceName are provided by the eBPF programs
 	comm           string
+	executablePath string
 	apmServiceName string
 	pid            libpf.PID
 	tid            libpf.PID
@@ -84,7 +87,7 @@ type traceEvents struct {
 
 type processMetadata struct {
 	updatedAt         time.Time
-	execPath          string
+	executablePath    string
 	containerMetadata containermetadata.ContainerMetadata
 }
 
@@ -95,8 +98,8 @@ type DatadogReporter struct {
 	// profiler version
 	version string
 
-	// stopSignal is the stop signal for shutting down all background tasks.
-	stopSignal chan libpf.Void
+	// runLoop handles the run loop
+	runLoop *runLoop
 
 	// To fill in the OTLP/profiles signal with the relevant information,
 	// this structure holds in long term storage information that might
@@ -152,12 +155,11 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	if err != nil {
 		return nil, err
 	}
-	// TODO: Consider purging stale entries from frames to avoid memory leaks.
-	// Currently, setting a lifetime via go-freelru will cause the frames to be
-	// removed from the cache after the lifetime expires, regardless of whether
-	// they are still in use or not.
-	// This leads to mappings missing function name information, which is
-	// required for the profile to be correctly displayed in the Datadog UI.
+	frames.SetLifetime(framesCacheLifetime)
+	// Using SetLifetime / GetAndRefresh on frames prevents useful information from being
+	// evicted from the cache.
+	// But it also means that active frames will never be evicted, and thus that their corresponding values
+	// (which are maps) may grow indefinitely (cf. https://github.com/open-telemetry/opentelemetry-ebpf-profiler/pull/260).
 
 	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.ProcessesCacheElements, libpf.PID.Hash32)
 	if err != nil {
@@ -177,10 +179,12 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	}
 
 	return &DatadogReporter{
-		config:                    cfg,
-		version:                   cfg.Version,
-		samplesPerSecond:          cfg.SamplesPerSecond,
-		stopSignal:                make(chan libpf.Void),
+		config:           cfg,
+		version:          cfg.Version,
+		samplesPerSecond: cfg.SamplesPerSecond,
+		runLoop: &runLoop{
+			stopSignal: make(chan libpf.Void),
+		},
 		executables:               executables,
 		frames:                    frames,
 		containerMetadataProvider: p,
@@ -196,14 +200,8 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	}, nil
 }
 
-// SupportsReportTraceEvent returns true if the reporter supports reporting trace events
-// via ReportTraceEvent().
-func (r *DatadogReporter) SupportsReportTraceEvent() bool {
-	return true
-}
-
 // ReportTraceEvent enqueues reported trace events for the Datadog reporter.
-func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.TraceEventMeta) {
+func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.TraceEventMeta) error {
 	traceEventsMap := r.traceEvents.WLock()
 	defer r.traceEvents.WUnlock(&traceEventsMap)
 
@@ -214,6 +212,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 	key := traceAndMetaKey{
 		hash:           trace.Hash,
 		comm:           meta.Comm,
+		executablePath: meta.ExecutablePath,
 		apmServiceName: meta.APMServiceName,
 		pid:            meta.PID,
 		tid:            meta.TID,
@@ -222,7 +221,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 	if tr, exists := (*traceEventsMap)[key]; exists {
 		tr.timestamps = append(tr.timestamps, uint64(meta.Timestamp))
 		(*traceEventsMap)[key] = tr
-		return
+		return nil
 	}
 
 	(*traceEventsMap)[key] = &traceEvents{
@@ -234,19 +233,14 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *reporter.Tr
 		mappingFileOffsets: trace.MappingFileOffsets,
 		timestamps:         []uint64{uint64(meta.Timestamp)},
 	}
-}
 
-// ReportFramesForTrace is a NOP for DatadogReporter.
-func (r *DatadogReporter) ReportFramesForTrace(_ *libpf.Trace) {}
-
-// ReportCountForTrace is a NOP for DatadogReporter.
-func (r *DatadogReporter) ReportCountForTrace(_ libpf.TraceHash, _ uint16, _ *reporter.TraceEventMeta) {
+	return nil
 }
 
 // ExecutableKnown returns true if the metadata of the Executable specified by fileID is
 // cached in the reporter.
 func (r *DatadogReporter) ExecutableKnown(fileID libpf.FileID) bool {
-	_, known := r.executables.Get(fileID)
+	_, known := r.executables.GetAndRefresh(fileID, executableCacheLifetime)
 	return known
 }
 
@@ -268,7 +262,7 @@ func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataAr
 // cached in the reporter.
 func (r *DatadogReporter) FrameKnown(frameID libpf.FrameID) bool {
 	known := false
-	if frameMapLock, exists := r.frames.Get(frameID.FileID()); exists {
+	if frameMapLock, exists := r.frames.GetAndRefresh(frameID.FileID(), framesCacheLifetime); exists {
 		frameMap := frameMapLock.RLock()
 		defer frameMapLock.RUnlock(&frameMap)
 		_, known = (*frameMap)[frameID.AddressOrLine()]
@@ -285,7 +279,7 @@ func (r *DatadogReporter) FrameMetadata(args *reporter.FrameMetadataArgs) {
 		fileID, args.FunctionName, args.FunctionOffset,
 		args.SourceFile, args.SourceLine)
 
-	if frameMapLock, exists := r.frames.Get(fileID); exists {
+	if frameMapLock, exists := r.frames.GetAndRefresh(fileID, framesCacheLifetime); exists {
 		frameMap := frameMapLock.WLock()
 		defer frameMapLock.WUnlock(&frameMap)
 
@@ -329,17 +323,9 @@ func (r *DatadogReporter) ReportHostMetadataBlocking(_ context.Context,
 	return nil
 }
 
-// ReportMetrics is a NOP for DatadogReporter.
-func (r *DatadogReporter) ReportMetrics(_ uint32, _ []uint32, _ []int64) {}
-
 // Stop triggers a graceful shutdown of DatadogReporter.
 func (r *DatadogReporter) Stop() {
-	close(r.stopSignal)
-}
-
-// GetMetrics returns internal metrics of DatadogReporter.
-func (r *DatadogReporter) GetMetrics() reporter.Metrics {
-	return reporter.Metrics{}
+	r.runLoop.Stop()
 }
 
 // Start sets up and manages the reporting connection to the Datadog Backend.
@@ -351,35 +337,21 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 		r.symbolUploader.Start(ctx)
 	}
 
-	go func() {
-		tick := time.NewTicker(r.config.ReportInterval)
-		defer tick.Stop()
-		purgeTick := time.NewTicker(5 * time.Minute)
-		defer purgeTick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-r.stopSignal:
-				return
-			case <-tick.C:
-				if err := r.reportProfile(ctx); err != nil {
-					log.Errorf("Request failed: %v", err)
-				}
-				tick.Reset(libpf.AddJitter(r.config.ReportInterval, 0.2))
-			case <-purgeTick.C:
-				// Allow the GC to purge expired entries to avoid memory leaks.
-				r.executables.PurgeExpired()
-				r.frames.PurgeExpired()
-				r.processes.PurgeExpired()
-			}
+	r.runLoop.Start(ctx, r.config.ReportInterval, func() {
+		if err := r.reportProfile(ctx); err != nil {
+			log.Errorf("Request failed: %v", err)
 		}
-	}()
+	}, func() {
+		// Allow the GC to purge expired entries to avoid memory leaks.
+		r.executables.PurgeExpired()
+		r.frames.PurgeExpired()
+		r.processes.PurgeExpired()
+	})
 
 	// When Stop() is called and a signal to 'stop' is received, then:
 	// - cancel the reporting functions currently running (using context)
 	go func() {
-		<-r.stopSignal
+		<-r.runLoop.stopSignal
 		cancelReporting()
 	}()
 
@@ -445,13 +417,13 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 	startTS uint64, endTS uint64) {
 	traceEvents := r.traceEvents.WLock()
-	samples := maps.Clone(*traceEvents)
+	hostSamples := maps.Clone(*traceEvents)
 	for key := range *traceEvents {
 		delete(*traceEvents, key)
 	}
 	r.traceEvents.WUnlock(&traceEvents)
 
-	numSamples := len(samples)
+	numSamples := len(hostSamples)
 
 	const unknownStr = "UNKNOWN"
 
@@ -472,7 +444,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 	fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
 	totalSampleCount := 0
 
-	for traceKey, traceInfo := range samples {
+	for traceKey, traceInfo := range hostSamples {
 		sample := &pprofile.Sample{}
 
 		for _, ts := range traceInfo.timestamps {
@@ -525,7 +497,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 				// Store interpreted frame information as Line message:
 				line := pprofile.Line{}
 
-				fileIDInfoLock, exists := r.frames.Get(traceInfo.files[i])
+				fileIDInfoLock, exists := r.frames.GetAndRefresh(traceInfo.files[i], framesCacheLifetime)
 				if !exists {
 					// At this point, we do not have enough information for the frame.
 					// Therefore, we report a dummy entry and use the interpreter as filename.
@@ -554,7 +526,17 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 		}
 
 		processMeta, _ := r.processes.Get(traceKey.pid)
-		execPath := processMeta.execPath
+		execPath := processMeta.executablePath
+		if execPath == "" {
+			// If we were unable to get the process metadata, we use the executable path
+			// from the trace key.
+			// This can happen if the process has already exited when process metadata
+			// was collected.
+			// We prioritize the executable path from process metadata over the trace key
+			// because in some cases executable path from trace key is taken too early in
+			// the process lifetime, eg. before the process execs into another binary.
+			execPath = traceKey.executablePath
+		}
 
 		// Check if the last frame is a kernel frame.
 		if len(traceInfo.frameTypes) > 0 &&
@@ -737,7 +719,7 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 
 	r.processes.Add(pid, processMetadata{
 		updatedAt:         time.Now(),
-		execPath:          execPath,
+		executablePath:    execPath,
 		containerMetadata: containerMetadata,
 	})
 }
