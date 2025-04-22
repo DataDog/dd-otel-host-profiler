@@ -111,9 +111,6 @@ type uploadProfileData struct {
 type DatadogReporter struct {
 	config *Config
 
-	// profiler version
-	version string
-
 	// runLoop handles the run loop
 	runLoop *runLoop
 
@@ -132,24 +129,6 @@ type DatadogReporter struct {
 
 	// processes stores the metadata associated to a PID.
 	processes *lru.SyncedLRU[libpf.PID, processMetadata]
-
-	// samplesPerSecond is the number of samples per second.
-	samplesPerSecond int
-
-	// intakeURL is the intake URL
-	intakeURL string
-
-	// pprofPrefix defines a file where the agent should dump pprof CPU profile.
-	pprofPrefix string
-
-	// tags is a list of tags alongside the profile.
-	tags Tags
-
-	// timeline is a flag to include timestamps on samples for the timeline feature.
-	timeline bool
-
-	// API key for agentless mode
-	apiKey string
 
 	symbolUploader *DatadogSymbolUploader
 
@@ -197,9 +176,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	}
 
 	return &DatadogReporter{
-		config:           cfg,
-		version:          cfg.Version,
-		samplesPerSecond: cfg.SamplesPerSecond,
+		config: cfg,
 		runLoop: &runLoop{
 			stopSignal: make(chan libpf.Void),
 		},
@@ -208,12 +185,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		containerMetadataProvider: p,
 		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceEvents{}),
 		processes:                 processes,
-		intakeURL:                 cfg.IntakeURL,
-		pprofPrefix:               cfg.PprofPrefix,
-		apiKey:                    cfg.APIKey,
 		symbolUploader:            symbolUploader,
-		tags:                      cfg.Tags,
-		timeline:                  cfg.Timeline,
 		profileSeq:                0,
 		profiles:                  make(chan uploadProfileData, 15),
 	}, nil
@@ -413,10 +385,10 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data uploadProfileD
 		return fmt.Errorf("failed to compress profile: %w", err)
 	}
 
-	if r.pprofPrefix != "" {
+	if r.config.PprofPrefix != "" {
 		// write profile to disk
 		endTime := time.Unix(0, int64(endTS))
-		profileName := fmt.Sprintf("%s%s.pprof", r.pprofPrefix, endTime.Format("20060102T150405Z"))
+		profileName := fmt.Sprintf("%s%s.pprof", r.config.PprofPrefix, endTime.Format("20060102T150405Z"))
 		f, err := os.Create(profileName)
 		if err != nil {
 			return err
@@ -427,7 +399,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data uploadProfileD
 		}
 	}
 
-	tags := r.tags
+	tags := r.config.Tags
 	customAttributes := []string{"container_id", "container_name", "thread_name", "pod_name"}
 	for _, attr := range customAttributes {
 		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
@@ -437,7 +409,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data uploadProfileD
 		MakeTag("runtime", data.runtime),
 		MakeTag("remote_symbols", "yes"),
 		MakeTag("profiler_name", profilerName),
-		MakeTag("profiler_version", r.version),
+		MakeTag("profiler_version", r.config.Version),
 		MakeTag("cpu_arch", runtime.GOARCH),
 		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)),
 		MakeTag("service", servicePrefix+data.serviceName))
@@ -446,8 +418,8 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data uploadProfileD
 
 	log.Infof("Tags: %v", tags.String())
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
-		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), r.intakeURL,
-		tags, r.version, r.apiKey, data.containerID, data.family)
+		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), r.config.IntakeURL,
+		tags, r.config.Version, r.config.APIKey, data.containerID, data.family)
 }
 
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
@@ -516,7 +488,7 @@ func (r *DatadogReporter) getPprofProfile() {
 		// in profile and make sure information is deduplicated.
 		funcMap := make(map[funcInfo]*pprofile.Function)
 
-		samplingPeriod := 1000000000 / int64(r.samplesPerSecond)
+		samplingPeriod := 1000000000 / int64(r.config.SamplesPerSecond)
 		profile := &pprofile.Profile{
 			SampleType: []*pprofile.ValueType{{Type: "cpu-samples", Unit: "count"},
 				{Type: "cpu-time", Unit: "nanoseconds"}},
@@ -630,7 +602,7 @@ func (r *DatadogReporter) getPprofProfile() {
 				sample.Location = append(sample.Location, loc)
 			}
 
-			if !r.timeline {
+			if !r.config.Timeline {
 				count := int64(len(traceInfo.timestamps))
 				labels := make(map[string][]string)
 				addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
