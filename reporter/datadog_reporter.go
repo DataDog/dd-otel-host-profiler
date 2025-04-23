@@ -41,6 +41,7 @@ const (
 	framesCacheLifetime     = 1 * time.Hour   // frames cache items will be removed if unused after this interval
 
 	profileUploadWorkerCount = 5
+	profileUploadQueueSize   = 128
 )
 
 // execInfo enriches an executable with additional metadata.
@@ -196,7 +197,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		processes:                 processes,
 		symbolUploader:            symbolUploader,
 		profileSeq:                0,
-		profiles:                  make(chan *uploadProfileData, 15),
+		profiles:                  make(chan *uploadProfileData, profileUploadQueueSize),
 	}, nil
 }
 
@@ -580,8 +581,7 @@ func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAnd
 		family = "ebpf"
 	}
 
-	select {
-	case r.profiles <- &uploadProfileData{
+	r.profiles <- &uploadProfileData{
 		profile:         profile,
 		start:           start,
 		end:             end,
@@ -591,9 +591,6 @@ func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAnd
 		runtime:         runtimeTag,
 		family:          family,
 		profileSeq:      profileSeq,
-	}:
-	default:
-		log.Warnf("Dropping profile data")
 	}
 }
 
