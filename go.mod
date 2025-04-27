@@ -13,7 +13,6 @@ require (
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.10.0
-	github.com/tklauser/numcpus v0.10.0
 	github.com/urfave/cli/v3 v3.1.1
 	github.com/zeebo/xxh3 v1.0.2
 	go.opentelemetry.io/ebpf-profiler v0.0.0-20241114112653-6d846a2023a0
@@ -90,6 +89,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/richardartoul/molecule v1.0.1-0.20240531184615-7ca0df43c0b3 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
+	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
@@ -128,4 +128,4 @@ require (
 // To update the Datadog/opentelemetry-ebpf-profiler dependency on latest commit on datadog branch, change the following line to:
 // replace go.opentelemetry.io/ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler datadog
 // and run `go mod tidy`
-replace go.opentelemetry.io/ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20250418111143-e5bfbb4ee768
+replace go.opentelemetry.io/ebpf-profiler => github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20250427124427-bdecaafa3d27
