@@ -22,7 +22,6 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/tklauser/numcpus"
 	"go.opentelemetry.io/ebpf-profiler/host"
 	"go.opentelemetry.io/ebpf-profiler/metrics"
 	otelreporter "go.opentelemetry.io/ebpf-profiler/reporter"
@@ -30,7 +29,6 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/tracehandler"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
-	"go.opentelemetry.io/ebpf-profiler/util"
 	"golang.org/x/sys/unix"
 	"gopkg.in/DataDog/dd-trace-go.v1/profiler"
 
@@ -66,6 +64,10 @@ const (
 
 	// Go 'flag' package calls os.Exit(2) on flag parse errors, if ExitOnError is set
 	exitParseError exitCode = 2
+
+	defaultFramesCacheSize      = 65536
+	defaultExecutablesCacheSize = 65536
+	defaultProcessesCacheSize   = 16384
 )
 
 func startTraceHandling(ctx context.Context, rep otelreporter.TraceReporter,
@@ -157,13 +159,8 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to probe eBPF syscall: %v", err)
 	}
 
-	presentCores, err := numcpus.GetPresent()
-	if err != nil {
-		return failure("Failed to read CPU file: %v", err)
-	}
-
-	traceHandlerCacheSize :=
-		traceCacheSize(args.monitorInterval, int(args.samplesPerSecond), uint16(presentCores))
+	// disable trace handler cache because it consumes too much memory for almost no CPU benefit
+	traceHandlerCacheSize := uint32(0)
 
 	intervals := times.New(args.reporterInterval, args.monitorInterval,
 		args.probabilisticInterval)
@@ -217,10 +214,10 @@ func mainWithExitCode() exitCode {
 		IntakeURL:                intakeURL,
 		Version:                  versionInfo.Version,
 		ReportInterval:           intervals.ReportInterval(),
-		ExecutablesCacheElements: traceHandlerCacheSize,
+		ExecutablesCacheElements: defaultExecutablesCacheSize,
 		// Next step: Calculate FramesCacheElements from numCores and samplingRate.
-		FramesCacheElements:    traceHandlerCacheSize,
-		ProcessesCacheElements: traceHandlerCacheSize,
+		FramesCacheElements:    defaultFramesCacheSize,
+		ProcessesCacheElements: defaultProcessesCacheSize,
 		SamplesPerSecond:       int(args.samplesPerSecond),
 		PprofPrefix:            args.pprofPrefix,
 		Tags:                   validatedTags,
@@ -293,7 +290,8 @@ func mainWithExitCode() exitCode {
 	// change this log line update also the system test.
 	log.Printf("Attached sched monitor")
 
-	if err := startTraceHandling(mainCtx, rep, intervals, trc, traceHandlerCacheSize); err != nil {
+	traceHandlerIntervals := times.New(args.reporterInterval, 60*time.Second, args.probabilisticInterval)
+	if err := startTraceHandling(mainCtx, rep, traceHandlerIntervals, trc, traceHandlerCacheSize); err != nil {
 		return failure("Failed to start trace handling: %v", err)
 	}
 
@@ -310,37 +308,6 @@ func mainWithExitCode() exitCode {
 
 	log.Info("Exiting ...")
 	return exitSuccess
-}
-
-// traceCacheSize defines the maximum number of elements for the caches in tracehandler.
-//
-// The caches in tracehandler have a size-"processing overhead" trade-off: Every cache miss will
-// trigger additional processing for that trace in userspace (Go). For most maps, we use
-// maxElementsPerInterval as a base sizing factor. For the tracehandler caches, we also multiply
-// with traceCacheIntervals. For typical/small values of maxElementsPerInterval, this can lead to
-// non-optimal map sizing (reduced cache_hit:cache_miss ratio and increased processing overhead).
-// Simply increasing traceCacheIntervals is problematic when maxElementsPerInterval is large
-// (e.g. too many CPU cores present) as we end up using too much memory. A minimum size is
-// therefore used here.
-func traceCacheSize(monitorInterval time.Duration, samplesPerSecond int,
-	presentCPUCores uint16) uint32 {
-	const (
-		traceCacheIntervals = 6
-		traceCacheMinSize   = 65536
-	)
-
-	maxElements := maxElementsPerInterval(monitorInterval, samplesPerSecond, presentCPUCores)
-
-	size := maxElements * uint32(traceCacheIntervals)
-	if size < traceCacheMinSize {
-		size = traceCacheMinSize
-	}
-	return util.NextPowerOfTwo(size)
-}
-
-func maxElementsPerInterval(monitorInterval time.Duration, samplesPerSecond int,
-	presentCPUCores uint16) uint32 {
-	return uint32(uint16(samplesPerSecond) * uint16(monitorInterval.Seconds()) * presentCPUCores)
 }
 
 func sanityCheck(args *arguments) exitCode {
