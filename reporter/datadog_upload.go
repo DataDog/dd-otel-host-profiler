@@ -23,7 +23,7 @@ type profileData struct {
 }
 
 func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endTime time.Time,
-	url string, tags Tags, profilerVersion string, apiKey string, containerID string, family string) error {
+	url string, tags Tags, profilerVersion string, apiKey string, containerID string, entityID string, family string) error {
 	contentType, body, err := buildMultipartForm(profiles, startTime, endTime, tags, family)
 	if err != nil {
 		return err
@@ -43,7 +43,9 @@ func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endT
 	if containerID != "" {
 		req.Header.Set("Datadog-Container-Id", containerID)
 	}
-
+	if entityID != "" {
+		req.Header.Set("Datadog-Entity-Id", entityID)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err

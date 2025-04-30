@@ -132,6 +132,7 @@ type containerMetadataProvider struct {
 // ContainerMetadata contains the container and/or pod metadata.
 type ContainerMetadata struct {
 	ContainerID   string
+	EntityID      string
 	PodName       string
 	ContainerName string
 }

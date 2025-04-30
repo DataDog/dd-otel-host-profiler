@@ -101,6 +101,7 @@ type uploadProfileData struct {
 	end             time.Time
 	profile         *pprofile.Profile
 	containerID     string
+	entityID        string
 	serviceName     string
 	runtime         string
 	family          string
@@ -111,6 +112,7 @@ type uploadProfileData struct {
 type serviceEntity struct {
 	service         string
 	containerID     string
+	entityID        string
 	inferredService bool
 }
 
@@ -431,7 +433,8 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 	log.Infof("Tags: %v", tags.String())
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
 		data.start, data.end, r.config.IntakeURL,
-		tags, r.config.Version, r.config.APIKey, data.containerID, data.family)
+		tags, r.config.Version, r.config.APIKey,
+		data.containerID, data.entityID, data.family)
 }
 
 func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAndMetaKey]*traceEvents, entity serviceEntity, start, end time.Time, profileSeq uint64) {
@@ -588,6 +591,7 @@ func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAnd
 		serviceName:     entity.service,
 		inferredService: entity.inferredService,
 		containerID:     entity.containerID,
+		entityID:        entity.entityID,
 		runtime:         runtimeTag,
 		family:          family,
 		profileSeq:      profileSeq,
@@ -622,7 +626,6 @@ func (r *DatadogReporter) getPprofProfile() {
 			log.Infof("No process metadata found for PID %d", traceKey.pid)
 		}
 
-		containerID := processMeta.containerMetadata.ContainerID
 		service := traceInfo.ddService
 		execPath := getExecutablePath(&processMeta, &traceKey)
 		inferredService := false
@@ -643,7 +646,12 @@ func (r *DatadogReporter) getPprofProfile() {
 			inferredService = true
 		}
 
-		entity := serviceEntity{service + r.config.SplitServiceSuffix, containerID, inferredService}
+		entity := serviceEntity{
+			service:         service + r.config.SplitServiceSuffix,
+			containerID:     processMeta.containerMetadata.ContainerID,
+			entityID:        processMeta.containerMetadata.EntityID,
+			inferredService: inferredService,
+		}
 		if _, exists := entityToSample[entity]; !exists {
 			entityToSample[entity] = make(map[traceAndMetaKey]*traceEvents)
 		}
