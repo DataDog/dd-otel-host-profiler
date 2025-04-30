@@ -116,6 +116,11 @@ type serviceEntity struct {
 	inferredService bool
 }
 
+type profileStats struct {
+	totalSampleCount  int
+	pidWithNoMetadata int
+}
+
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
 type DatadogReporter struct {
 	config *Config
@@ -437,7 +442,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 		data.containerID, data.entityID, data.family)
 }
 
-func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAndMetaKey]*traceEvents, entity serviceEntity, start, end time.Time, profileSeq uint64) {
+func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAndMetaKey]*traceEvents, entity serviceEntity, start, end time.Time, profileSeq uint64) profileStats {
 	numSamples := len(hostSamples)
 
 	const unknownStr = "UNKNOWN"
@@ -458,6 +463,7 @@ func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAnd
 
 	fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
 	totalSampleCount := 0
+	pidsWithNoProcessMetadata := libpf.Set[libpf.PID]{}
 	for traceKey, traceInfo := range hostSamples {
 		sample := &pprofile.Sample{}
 
@@ -529,7 +535,10 @@ func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAnd
 			sample.Location = append(sample.Location, loc)
 		}
 
-		processMeta, _ := r.processes.Get(traceKey.pid)
+		processMeta, ok := r.processes.Get(traceKey.pid)
+		if !ok {
+			pidsWithNoProcessMetadata[traceKey.pid] = libpf.Void{}
+		}
 		execPath := getExecutablePath(&processMeta, &traceKey)
 
 		// Check if the last frame is a kernel frame.
@@ -569,9 +578,6 @@ func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAnd
 		totalSampleCount += len(traceInfo.timestamps)
 	}
 
-	log.Infof("Reporting pprof profile with %d samples from %v to %v",
-		totalSampleCount, start.Format(time.RFC3339), end.Format(time.RFC3339))
-
 	profile.DurationNanos = end.Sub(start).Nanoseconds()
 	profile.TimeNanos = start.UnixNano()
 
@@ -596,6 +602,11 @@ func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAnd
 		family:          family,
 		profileSeq:      profileSeq,
 	}
+
+	return profileStats{
+		totalSampleCount:  totalSampleCount,
+		pidWithNoMetadata: len(pidsWithNoProcessMetadata),
+	}
 }
 
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
@@ -616,15 +627,14 @@ func (r *DatadogReporter) getPprofProfile() {
 	entityToSample := make(map[serviceEntity]map[traceAndMetaKey]*traceEvents)
 
 	if !r.config.EnableSplitByService {
-		r.createProfileForServiceEntity(hostSamples, serviceEntity{service: r.config.ServiceName}, intervalStart, intervalEnd, profileSeq)
+		stats := r.createProfileForServiceEntity(hostSamples, serviceEntity{service: r.config.ServiceName}, intervalStart, intervalEnd, profileSeq)
+		log.Infof("Reporting single profile #%d from %v to %v: %d samples, %d PIDs with no process metadata",
+			profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), stats.totalSampleCount, stats.pidWithNoMetadata)
 		return
 	}
 
 	for traceKey, traceInfo := range hostSamples {
-		processMeta, ok := r.processes.Get(traceKey.pid)
-		if !ok {
-			log.Infof("No process metadata found for PID %d", traceKey.pid)
-		}
+		processMeta, _ := r.processes.Get(traceKey.pid)
 
 		service := traceInfo.ddService
 		execPath := getExecutablePath(&processMeta, &traceKey)
@@ -659,10 +669,15 @@ func (r *DatadogReporter) getPprofProfile() {
 		entityToSample[entity][traceKey] = traceInfo
 	}
 
-	log.Infof("Split-by-service: %d profiles", len(entityToSample))
+	totalSampleCount := 0
+	totalPIDsWithNoProcessMetadata := 0
 	for e, s := range entityToSample {
-		r.createProfileForServiceEntity(s, e, intervalStart, intervalEnd, profileSeq)
+		stats := r.createProfileForServiceEntity(s, e, intervalStart, intervalEnd, profileSeq)
+		totalSampleCount += stats.totalSampleCount
+		totalPIDsWithNoProcessMetadata += stats.pidWithNoMetadata
 	}
+	log.Infof("Reporting %d profiles #%d from %v to %v: %d samples, %d PIDs with no process metadata",
+		len(entityToSample), profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), totalSampleCount, totalPIDsWithNoProcessMetadata)
 }
 
 // createFunctionEntry adds a new function and returns its reference index.
@@ -794,7 +809,7 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
 	if err != nil {
-		log.Infof("Failed to get container metadata for PID %d: %v", pid, err)
+		log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)
 		// Even upon failure, we might still have managed to get the containerID
 	}
 
