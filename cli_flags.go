@@ -118,7 +118,7 @@ func parseArgs() (*arguments, error) {
 				Value:       "dd-otel-host-profiler",
 				Usage:       "Service name.",
 				Destination: &args.serviceName,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_SERVICE"),
+				Sources:     cli.EnvVars("DD_SERVICE", "DD_HOST_PROFILING_SERVICE"),
 			},
 			&cli.StringFlag{
 				Name:        "environment",
