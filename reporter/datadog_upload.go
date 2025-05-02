@@ -23,7 +23,8 @@ type profileData struct {
 }
 
 func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endTime time.Time,
-	url string, tags Tags, profilerVersion string, apiKey string, containerID string, entityID string, family string) error {
+	url string, tags Tags, profilerVersion string, apiKey string, containerID string, entityID string,
+	family string) error {
 	contentType, body, err := buildMultipartForm(profiles, startTime, endTime, tags, family)
 	if err != nil {
 		return err

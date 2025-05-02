@@ -76,3 +76,13 @@ type SymbolUploaderConfig struct {
 	// Version is the version of the profiler.
 	Version string
 }
+
+func (c *Config) getRuntimeAndFamily() (runtimeTag, family string) {
+	runtimeTag = "native"
+	family = "native"
+	if c.UseEBPFAsRuntimeAndFamily {
+		runtimeTag = "ebpf"
+		family = "ebpf"
+	}
+	return runtimeTag, family
+}

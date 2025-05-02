@@ -97,16 +97,12 @@ type processMetadata struct {
 }
 
 type uploadProfileData struct {
-	start           time.Time
-	end             time.Time
-	profile         *pprofile.Profile
-	containerID     string
-	entityID        string
-	serviceName     string
-	runtime         string
-	family          string
-	profileSeq      uint64
-	inferredService bool
+	start       time.Time
+	end         time.Time
+	profile     *pprofile.Profile
+	containerID string
+	entityID    string
+	tags        Tags
 }
 
 type serviceEntity struct {
@@ -147,6 +143,12 @@ type DatadogReporter struct {
 	symbolUploader *DatadogSymbolUploader
 
 	containerMetadataProvider containermetadata.Provider
+
+	// tags is the list of tags to be added to the profile.
+	tags Tags
+
+	// family is the family of the profiler.
+	family string
 
 	// profileSeq is the sequence number of the profile (ie. number of profiles uploaded until now).
 	profileSeq uint64
@@ -192,6 +194,8 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		}
 	}
 
+	runtimeTag, family := cfg.getRuntimeAndFamily()
+
 	return &DatadogReporter{
 		config: cfg,
 		runLoop: &runLoop{
@@ -203,6 +207,8 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceEvents{}),
 		processes:                 processes,
 		symbolUploader:            symbolUploader,
+		tags:                      createTags(cfg.Tags, runtimeTag, cfg.Version),
+		family:                    family,
 		profileSeq:                0,
 		profiles:                  make(chan *uploadProfileData, profileUploadQueueSize),
 	}, nil
@@ -416,33 +422,13 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 		}
 	}
 
-	tags := r.config.Tags
-	customAttributes := []string{"container_id", "container_name", "thread_name", "pod_name"}
-	for _, attr := range customAttributes {
-		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
-	}
-	// The profiler_name tag allows us to differentiate the source of the profiles.
-	tags = append(tags,
-		MakeTag("runtime", data.runtime),
-		MakeTag("remote_symbols", "yes"),
-		MakeTag("profiler_name", profilerName),
-		MakeTag("profiler_version", r.config.Version),
-		MakeTag("cpu_arch", runtime.GOARCH),
-		MakeTag("profile_seq", strconv.FormatUint(data.profileSeq, 10)),
-		MakeTag("service", data.serviceName))
-
-	if data.inferredService {
-		tags = append(tags, MakeTag("service_inferred", "yes"))
-	}
-
-	log.Infof("Tags: %v", tags.String())
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
 		data.start, data.end, r.config.IntakeURL,
-		tags, r.config.Version, r.config.APIKey,
-		data.containerID, data.entityID, data.family)
+		data.tags, r.config.Version, r.config.APIKey,
+		data.containerID, data.entityID, r.family)
 }
 
-func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAndMetaKey]*traceEvents, entity serviceEntity, start, end time.Time, profileSeq uint64) profileStats {
+func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEvents, start, end time.Time) (*pprofile.Profile, profileStats) {
 	numSamples := len(hostSamples)
 
 	const unknownStr = "UNKNOWN"
@@ -583,27 +569,7 @@ func (r *DatadogReporter) createProfileForServiceEntity(hostSamples map[traceAnd
 
 	profile = profile.Compact()
 
-	runtimeTag := "native"
-	family := "native"
-	if r.config.UseEBPFAsRuntimeAndFamily {
-		runtimeTag = "ebpf"
-		family = "ebpf"
-	}
-
-	r.profiles <- &uploadProfileData{
-		profile:         profile,
-		start:           start,
-		end:             end,
-		serviceName:     entity.service,
-		inferredService: entity.inferredService,
-		containerID:     entity.containerID,
-		entityID:        entity.entityID,
-		runtime:         runtimeTag,
-		family:          family,
-		profileSeq:      profileSeq,
-	}
-
-	return profileStats{
+	return profile, profileStats{
 		totalSampleCount:  totalSampleCount,
 		pidWithNoMetadata: len(pidsWithNoProcessMetadata),
 	}
@@ -627,7 +593,16 @@ func (r *DatadogReporter) getPprofProfile() {
 	entityToSample := make(map[serviceEntity]map[traceAndMetaKey]*traceEvents)
 
 	if !r.config.EnableSplitByService {
-		stats := r.createProfileForServiceEntity(hostSamples, serviceEntity{service: r.config.ServiceName}, intervalStart, intervalEnd, profileSeq)
+		profile, stats := r.createProfile(hostSamples, intervalStart, intervalEnd)
+
+		tags := createTagsForProfile(r.tags, profileSeq, r.config.ServiceName, false)
+		r.profiles <- &uploadProfileData{
+			profile: profile,
+			start:   intervalStart,
+			end:     intervalEnd,
+			tags:    tags,
+		}
+		log.Infof("Tags: %v", tags)
 		log.Infof("Reporting single profile #%d from %v to %v: %d samples, %d PIDs with no process metadata",
 			profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), stats.totalSampleCount, stats.pidWithNoMetadata)
 		return
@@ -662,22 +637,62 @@ func (r *DatadogReporter) getPprofProfile() {
 			entityID:        processMeta.containerMetadata.EntityID,
 			inferredService: inferredService,
 		}
-		if _, exists := entityToSample[entity]; !exists {
-			entityToSample[entity] = make(map[traceAndMetaKey]*traceEvents)
+		serviceSamples, exists := entityToSample[entity]
+		if !exists {
+			serviceSamples = make(map[traceAndMetaKey]*traceEvents)
+			entityToSample[entity] = serviceSamples
 		}
 
-		entityToSample[entity][traceKey] = traceInfo
+		serviceSamples[traceKey] = traceInfo
 	}
 
 	totalSampleCount := 0
 	totalPIDsWithNoProcessMetadata := 0
 	for e, s := range entityToSample {
-		stats := r.createProfileForServiceEntity(s, e, intervalStart, intervalEnd, profileSeq)
+		profile, stats := r.createProfile(s, intervalStart, intervalEnd)
 		totalSampleCount += stats.totalSampleCount
 		totalPIDsWithNoProcessMetadata += stats.pidWithNoMetadata
+		tags := createTagsForProfile(r.tags, profileSeq, e.service, e.inferredService)
+		r.profiles <- &uploadProfileData{
+			profile:     profile,
+			start:       intervalStart,
+			end:         intervalEnd,
+			containerID: e.containerID,
+			entityID:    e.entityID,
+			tags:        tags,
+		}
+		log.Debugf("Reporting profile for service %s: %d samples, %d PIDs with no process metadata, tags: %v", e.service, stats.totalSampleCount, stats.pidWithNoMetadata, tags)
 	}
 	log.Infof("Reporting %d profiles #%d from %v to %v: %d samples, %d PIDs with no process metadata",
 		len(entityToSample), profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), totalSampleCount, totalPIDsWithNoProcessMetadata)
+}
+
+func createTags(userTags Tags, runtimeTag, version string) Tags {
+	tags := append(Tags{}, userTags...)
+	customAttributes := []string{"container_id", "container_name", "thread_name", "pod_name"}
+	for _, attr := range customAttributes {
+		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
+	}
+
+	tags = append(tags,
+		MakeTag("runtime", runtimeTag),
+		MakeTag("remote_symbols", "yes"),
+		MakeTag("profiler_name", profilerName),
+		MakeTag("profiler_version", version),
+		MakeTag("cpu_arch", runtime.GOARCH))
+
+	return tags
+}
+
+func createTagsForProfile(tags Tags, profileSeq uint64, service string, inferredService bool) Tags {
+	newTags := append(Tags{}, tags...)
+	newTags = append(newTags,
+		MakeTag("profile_seq", strconv.FormatUint(profileSeq, 10)),
+		MakeTag("service", service))
+	if inferredService {
+		newTags = append(newTags, MakeTag("service_inferred", "yes"))
+	}
+	return newTags
 }
 
 // createFunctionEntry adds a new function and returns its reference index.
