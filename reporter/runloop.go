@@ -33,8 +33,8 @@ func (rl *runLoop) Start(ctx context.Context, reportInterval time.Duration, run,
 			case <-rl.stopSignal:
 				return
 			case <-tick.C:
+				tick.Reset(libpf.AddJitter(reportInterval, 0.05))
 				run()
-				tick.Reset(libpf.AddJitter(reportInterval, 0.2))
 			case <-purgeTick.C:
 				purge()
 			}

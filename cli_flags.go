@@ -53,7 +53,7 @@ type arguments struct {
 	samplesPerSecond          uint64
 	pprofPrefix               string
 	sendErrorFrames           bool
-	serviceName               string
+	hostServiceName           string
 	environment               string
 	uploadSymbolQueryInterval time.Duration
 	uploadSymbols             bool
@@ -71,6 +71,9 @@ type arguments struct {
 	additionalSymbolEndpoints []reporter.SymbolEndpoint
 	agentless                 bool
 	enableGoRuntimeProfiler   bool
+	enableSplitByService      bool
+	useEBPFAsRuntimeAndFamily bool
+	splitServiceSuffix        string
 	cmd                       *cli.Command
 }
 
@@ -110,12 +113,10 @@ func parseArgs() (*arguments, error) {
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_TRACE_AGENT_URL", "DD_TRACE_AGENT_URL"),
 			},
 			&cli.StringFlag{
-				Name:        "service",
-				Aliases:     []string{"S"},
-				Value:       "dd-otel-host-profiler",
-				Usage:       "Service name.",
-				Destination: &args.serviceName,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_SERVICE", "DD_SERVICE"),
+				Name:        "host-service",
+				Usage:       "Host service name when split by service is disabled",
+				Destination: &args.hostServiceName,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_SERVICE"),
 			},
 			&cli.StringFlag{
 				Name:        "environment",
@@ -357,6 +358,27 @@ func parseArgs() (*arguments, error) {
 				Destination: &args.uploadSymbolQueryInterval,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SYMBOL_QUERY_INTERVAL"),
 			},
+			&cli.BoolFlag{
+				Name:        "split-by-service",
+				Value:       false,
+				Usage:       "Split profiles by service.",
+				Destination: &args.enableSplitByService,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_SPLIT_BY_SERVICE"),
+			},
+			&cli.BoolFlag{
+				Name:        "use-ebpf-as-runtime-and-family",
+				Value:       false,
+				Usage:       "Use eBPF as runtime and family in profiles.",
+				Destination: &args.useEBPFAsRuntimeAndFamily,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_USE_EBPF_AS_RUNTIME_AND_FAMILY"),
+			},
+			&cli.StringFlag{
+				Name:        "split-by-service-suffix",
+				Value:       "",
+				Usage:       "Suffix to add to service name in profiles when split-by-service is enabled.",
+				Destination: &args.splitServiceSuffix,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_SPLIT_SERVICE_SUFFIX"),
+			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			args.cmd = cmd
@@ -371,6 +393,7 @@ func parseArgs() (*arguments, error) {
 	if args.cmd == nil {
 		return nil, nil
 	}
+
 	return &args, nil
 }
 

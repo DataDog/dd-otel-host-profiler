@@ -23,8 +23,9 @@ type profileData struct {
 }
 
 func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endTime time.Time,
-	url string, tags Tags, profilerVersion string, apiKey string) error {
-	contentType, body, err := buildMultipartForm(profiles, startTime, endTime, tags)
+	url string, tags Tags, profilerVersion string, apiKey string, containerID string, entityID string,
+	family string) error {
+	contentType, body, err := buildMultipartForm(profiles, startTime, endTime, tags, family)
 	if err != nil {
 		return err
 	}
@@ -40,7 +41,12 @@ func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endT
 	if apiKey != "" {
 		req.Header.Set("Dd-Api-Key", apiKey)
 	}
-
+	if containerID != "" {
+		req.Header.Set("Datadog-Container-Id", containerID)
+	}
+	if entityID != "" {
+		req.Header.Set("Datadog-Entity-Id", entityID)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -76,14 +82,14 @@ func (t Tags) String() string {
 }
 
 func buildMultipartForm(profiles []profileData, startTime, endTime time.Time,
-	tags Tags) (string, io.Reader, error) {
+	tags Tags, family string) (string, io.Reader, error) {
 	var buf bytes.Buffer
 
 	mw := multipart.NewWriter(&buf)
 
 	event := &uploadEvent{
 		Version: "4",
-		Family:  "native",
+		Family:  family,
 		Start:   startTime.Format(time.RFC3339Nano),
 		End:     endTime.Format(time.RFC3339Nano),
 		Tags:    tags.String(),

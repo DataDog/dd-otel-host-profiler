@@ -32,11 +32,16 @@ import (
 var _ reporter.Reporter = (*DatadogReporter)(nil)
 
 const (
+	unknownServiceStr = "unknown-service"
+
 	profilerName            = "dd-otel-host-profiler"
 	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
 	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
 	executableCacheLifetime = 1 * time.Hour   // executable cache items will be removed if unused after this interval
 	framesCacheLifetime     = 1 * time.Hour   // frames cache items will be removed if unused after this interval
+
+	profileUploadWorkerCount = 5
+	profileUploadQueueSize   = 128
 )
 
 // execInfo enriches an executable with additional metadata.
@@ -82,7 +87,7 @@ type traceEvents struct {
 	mappingEnds        []libpf.Address
 	mappingFileOffsets []uint64
 	timestamps         []uint64 // in nanoseconds
-
+	ddService          string
 }
 
 type processMetadata struct {
@@ -91,12 +96,30 @@ type processMetadata struct {
 	containerMetadata containermetadata.ContainerMetadata
 }
 
+type uploadProfileData struct {
+	start       time.Time
+	end         time.Time
+	profile     *pprofile.Profile
+	containerID string
+	entityID    string
+	tags        Tags
+}
+
+type serviceEntity struct {
+	service         string
+	containerID     string
+	entityID        string
+	inferredService bool
+}
+
+type profileStats struct {
+	totalSampleCount  int
+	pidWithNoMetadata int
+}
+
 // DatadogReporter receives and transforms information to be OTLP/profiles compliant.
 type DatadogReporter struct {
 	config *Config
-
-	// profiler version
-	version string
 
 	// runLoop handles the run loop
 	runLoop *runLoop
@@ -117,30 +140,23 @@ type DatadogReporter struct {
 	// processes stores the metadata associated to a PID.
 	processes *lru.SyncedLRU[libpf.PID, processMetadata]
 
-	// samplesPerSecond is the number of samples per second.
-	samplesPerSecond int
-
-	// intakeURL is the intake URL
-	intakeURL string
-
-	// pprofPrefix defines a file where the agent should dump pprof CPU profile.
-	pprofPrefix string
-
-	// tags is a list of tags alongside the profile.
-	tags Tags
-
-	// timeline is a flag to include timestamps on samples for the timeline feature.
-	timeline bool
-
-	// API key for agentless mode
-	apiKey string
-
 	symbolUploader *DatadogSymbolUploader
 
 	containerMetadataProvider containermetadata.Provider
 
+	// tags is the list of tags to be added to the profile.
+	tags Tags
+
+	// family is the family of the profiler.
+	family string
+
 	// profileSeq is the sequence number of the profile (ie. number of profiles uploaded until now).
 	profileSeq uint64
+
+	// intervalStart is the timestamp of the start of the current interval.
+	intervalStart time.Time
+
+	profiles chan *uploadProfileData
 }
 
 func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, error) {
@@ -178,10 +194,10 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		}
 	}
 
+	runtimeTag, family := cfg.getRuntimeAndFamily()
+
 	return &DatadogReporter{
-		config:           cfg,
-		version:          cfg.Version,
-		samplesPerSecond: cfg.SamplesPerSecond,
+		config: cfg,
 		runLoop: &runLoop{
 			stopSignal: make(chan libpf.Void),
 		},
@@ -190,13 +206,11 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		containerMetadataProvider: p,
 		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceEvents{}),
 		processes:                 processes,
-		intakeURL:                 cfg.IntakeURL,
-		pprofPrefix:               cfg.PprofPrefix,
-		apiKey:                    cfg.APIKey,
 		symbolUploader:            symbolUploader,
-		tags:                      cfg.Tags,
-		timeline:                  cfg.Timeline,
+		tags:                      createTags(cfg.Tags, runtimeTag, cfg.Version),
+		family:                    family,
 		profileSeq:                0,
+		profiles:                  make(chan *uploadProfileData, profileUploadQueueSize),
 	}, nil
 }
 
@@ -232,6 +246,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		mappingEnds:        trace.MappingEnd,
 		mappingFileOffsets: trace.MappingFileOffsets,
 		timestamps:         []uint64{uint64(meta.Timestamp)},
+		ddService:          meta.EnvVars["DD_SERVICE"],
 	}
 
 	return nil
@@ -337,16 +352,33 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 		r.symbolUploader.Start(ctx)
 	}
 
+	r.intervalStart = time.Now()
+
 	r.runLoop.Start(ctx, r.config.ReportInterval, func() {
-		if err := r.reportProfile(ctx); err != nil {
-			log.Errorf("Request failed: %v", err)
-		}
+		r.getPprofProfile()
 	}, func() {
 		// Allow the GC to purge expired entries to avoid memory leaks.
 		r.executables.PurgeExpired()
 		r.frames.PurgeExpired()
 		r.processes.PurgeExpired()
 	})
+
+	for range profileUploadWorkerCount {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-r.runLoop.stopSignal:
+					return
+				case profile := <-r.profiles:
+					if err := r.reportProfile(ctx, profile); err != nil {
+						log.Errorf("Request failed: %v", err)
+					}
+				}
+			}
+		}()
+	}
 
 	// When Stop() is called and a signal to 'stop' is received, then:
 	// - cancel the reporting functions currently running (using context)
@@ -359,8 +391,8 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 }
 
 // reportProfile creates and sends out a profile.
-func (r *DatadogReporter) reportProfile(ctx context.Context) error {
-	profile, startTS, endTS := r.getPprofProfile()
+func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfileData) error {
+	profile := data.profile
 
 	if len(profile.Sample) == 0 {
 		log.Debugf("Skip sending of pprof profile with no samples")
@@ -377,10 +409,9 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		return fmt.Errorf("failed to compress profile: %w", err)
 	}
 
-	if r.pprofPrefix != "" {
+	if r.config.PprofPrefix != "" {
 		// write profile to disk
-		endTime := time.Unix(0, int64(endTS))
-		profileName := fmt.Sprintf("%s%s.pprof", r.pprofPrefix, endTime.Format("20060102T150405Z"))
+		profileName := fmt.Sprintf("%s%s.pprof", r.config.PprofPrefix, data.end.Format("20060102T150405Z"))
 		f, err := os.Create(profileName)
 		if err != nil {
 			return err
@@ -391,38 +422,13 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 		}
 	}
 
-	tags := r.tags
-	customAttributes := []string{"container_id", "container_name", "thread_name", "pod_name"}
-	for _, attr := range customAttributes {
-		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
-	}
-	// The profiler_name tag allows us to differentiate the source of the profiles.
-	tags = append(tags,
-		MakeTag("runtime", "native"),
-		MakeTag("remote_symbols", "yes"),
-		MakeTag("profiler_name", profilerName),
-		MakeTag("profiler_version", r.version),
-		MakeTag("cpu_arch", runtime.GOARCH),
-		MakeTag("profile_seq", strconv.FormatUint(r.profileSeq, 10)))
-
-	r.profileSeq++
-
-	log.Infof("Tags: %v", tags.String())
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
-		time.Unix(0, int64(startTS)), time.Unix(0, int64(endTS)), r.intakeURL,
-		tags, r.version, r.apiKey)
+		data.start, data.end, r.config.IntakeURL,
+		data.tags, r.config.Version, r.config.APIKey,
+		data.containerID, data.entityID, r.family)
 }
 
-// getPprofProfile returns a pprof profile containing all collected samples up to this moment.
-func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
-	startTS uint64, endTS uint64) {
-	traceEvents := r.traceEvents.WLock()
-	hostSamples := maps.Clone(*traceEvents)
-	for key := range *traceEvents {
-		delete(*traceEvents, key)
-	}
-	r.traceEvents.WUnlock(&traceEvents)
-
+func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEvents, start, end time.Time) (*pprofile.Profile, profileStats) {
 	numSamples := len(hostSamples)
 
 	const unknownStr = "UNKNOWN"
@@ -431,8 +437,8 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 	// in profile and make sure information is deduplicated.
 	funcMap := make(map[funcInfo]*pprofile.Function)
 
-	samplingPeriod := 1000000000 / int64(r.samplesPerSecond)
-	profile = &pprofile.Profile{
+	samplingPeriod := 1000000000 / int64(r.config.SamplesPerSecond)
+	profile := &pprofile.Profile{
 		SampleType: []*pprofile.ValueType{{Type: "cpu-samples", Unit: "count"},
 			{Type: "cpu-time", Unit: "nanoseconds"}},
 		Sample:            make([]*pprofile.Sample, 0, numSamples),
@@ -443,19 +449,9 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 
 	fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
 	totalSampleCount := 0
-
+	pidsWithNoProcessMetadata := libpf.Set[libpf.PID]{}
 	for traceKey, traceInfo := range hostSamples {
 		sample := &pprofile.Sample{}
-
-		for _, ts := range traceInfo.timestamps {
-			if ts < startTS || startTS == 0 {
-				startTS = ts
-				continue
-			}
-			if ts > endTS {
-				endTS = ts
-			}
-		}
 
 		// Walk every frame of the trace.
 		for i := range traceInfo.frameTypes {
@@ -525,7 +521,10 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			sample.Location = append(sample.Location, loc)
 		}
 
-		processMeta, _ := r.processes.Get(traceKey.pid)
+		processMeta, ok := r.processes.Get(traceKey.pid)
+		if !ok {
+			pidsWithNoProcessMetadata[traceKey.pid] = libpf.Void{}
+		}
 		execPath := getExecutablePath(&processMeta, &traceKey)
 
 		// Check if the last frame is a kernel frame.
@@ -544,7 +543,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 			sample.Location = append(sample.Location, loc)
 		}
 
-		if !r.timeline {
+		if !r.config.Timeline {
 			count := int64(len(traceInfo.timestamps))
 			labels := make(map[string][]string)
 			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
@@ -564,15 +563,136 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 		}
 		totalSampleCount += len(traceInfo.timestamps)
 	}
-	log.Infof("Reporting pprof profile with %d samples from %v to %v",
-		totalSampleCount, startTS, endTS)
 
-	profile.DurationNanos = int64(endTS - startTS)
-	profile.TimeNanos = int64(startTS)
+	profile.DurationNanos = end.Sub(start).Nanoseconds()
+	profile.TimeNanos = start.UnixNano()
 
 	profile = profile.Compact()
 
-	return profile, startTS, endTS
+	return profile, profileStats{
+		totalSampleCount:  totalSampleCount,
+		pidWithNoMetadata: len(pidsWithNoProcessMetadata),
+	}
+}
+
+// getPprofProfile returns a pprof profile containing all collected samples up to this moment.
+func (r *DatadogReporter) getPprofProfile() {
+	intervalEnd := time.Now()
+	intervalStart := r.intervalStart
+	r.intervalStart = intervalEnd
+	profileSeq := r.profileSeq
+	r.profileSeq++
+
+	events := r.traceEvents.WLock()
+	hostSamples := maps.Clone(*events)
+	for key := range *events {
+		delete(*events, key)
+	}
+	r.traceEvents.WUnlock(&events)
+
+	entityToSample := make(map[serviceEntity]map[traceAndMetaKey]*traceEvents)
+
+	if !r.config.EnableSplitByService {
+		profile, stats := r.createProfile(hostSamples, intervalStart, intervalEnd)
+
+		tags := createTagsForProfile(r.tags, profileSeq, r.config.HostServiceName, false)
+		r.profiles <- &uploadProfileData{
+			profile: profile,
+			start:   intervalStart,
+			end:     intervalEnd,
+			tags:    tags,
+		}
+		log.Infof("Tags: %v", tags)
+		log.Infof("Reporting single profile #%d from %v to %v: %d samples, %d PIDs with no process metadata",
+			profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), stats.totalSampleCount, stats.pidWithNoMetadata)
+		return
+	}
+
+	for traceKey, traceInfo := range hostSamples {
+		processMeta, _ := r.processes.Get(traceKey.pid)
+
+		service := traceInfo.ddService
+		execPath := getExecutablePath(&processMeta, &traceKey)
+		inferredService := false
+
+		if service == "" && execPath != "" && execPath != "/" {
+			service = path.Base(execPath)
+			inferredService = true
+		}
+
+		if service == "" && len(traceInfo.frameTypes) > 0 &&
+			traceInfo.frameTypes[len(traceInfo.frameTypes)-1] == libpf.KernelFrame {
+			service = "system"
+			inferredService = true
+		}
+
+		if service == "" {
+			service = unknownServiceStr
+			inferredService = true
+		}
+
+		entity := serviceEntity{
+			service:         service + r.config.SplitServiceSuffix,
+			containerID:     processMeta.containerMetadata.ContainerID,
+			entityID:        processMeta.containerMetadata.EntityID,
+			inferredService: inferredService,
+		}
+		serviceSamples, exists := entityToSample[entity]
+		if !exists {
+			serviceSamples = make(map[traceAndMetaKey]*traceEvents)
+			entityToSample[entity] = serviceSamples
+		}
+
+		serviceSamples[traceKey] = traceInfo
+	}
+
+	totalSampleCount := 0
+	totalPIDsWithNoProcessMetadata := 0
+	for e, s := range entityToSample {
+		profile, stats := r.createProfile(s, intervalStart, intervalEnd)
+		totalSampleCount += stats.totalSampleCount
+		totalPIDsWithNoProcessMetadata += stats.pidWithNoMetadata
+		tags := createTagsForProfile(r.tags, profileSeq, e.service, e.inferredService)
+		r.profiles <- &uploadProfileData{
+			profile:     profile,
+			start:       intervalStart,
+			end:         intervalEnd,
+			containerID: e.containerID,
+			entityID:    e.entityID,
+			tags:        tags,
+		}
+		log.Debugf("Reporting profile for service %s: %d samples, %d PIDs with no process metadata, tags: %v", e.service, stats.totalSampleCount, stats.pidWithNoMetadata, tags)
+	}
+	log.Infof("Reporting %d profiles #%d from %v to %v: %d samples, %d PIDs with no process metadata",
+		len(entityToSample), profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), totalSampleCount, totalPIDsWithNoProcessMetadata)
+}
+
+func createTags(userTags Tags, runtimeTag, version string) Tags {
+	tags := append(Tags{}, userTags...)
+	customAttributes := []string{"container_id", "container_name", "thread_name", "pod_name"}
+	for _, attr := range customAttributes {
+		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
+	}
+
+	tags = append(tags,
+		MakeTag("runtime", runtimeTag),
+		MakeTag("remote_symbols", "yes"),
+		MakeTag("profiler_name", profilerName),
+		MakeTag("profiler_version", version),
+		MakeTag("cpu_arch", runtime.GOARCH))
+
+	return tags
+}
+
+func createTagsForProfile(tags Tags, profileSeq uint64, service string, inferredService bool) Tags {
+	newTags := append(Tags{}, tags...)
+	newTags = append(newTags,
+		MakeTag("profile_seq", strconv.FormatUint(profileSeq, 10)),
+		MakeTag("service", service))
+	if inferredService {
+		newTags = append(newTags, MakeTag("service_inferred", "yes"))
+	}
+	return newTags
 }
 
 // createFunctionEntry adds a new function and returns its reference index.
@@ -701,6 +821,7 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
 		return
 	}
+
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
 	if err != nil {
 		log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)

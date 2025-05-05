@@ -23,6 +23,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/host"
+	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/metrics"
 	otelreporter "go.opentelemetry.io/ebpf-profiler/reporter"
 	"go.opentelemetry.io/ebpf-profiler/times"
@@ -180,10 +181,17 @@ func mainWithExitCode() exitCode {
 	// Add tags from the arguments
 	addTagsFromArgs(&validatedTags, args)
 
-	containerMetadataProvider, err :=
-		containermetadata.NewContainerMetadataProvider(mainCtx, args.node)
-	if err != nil {
-		return failure("Failed to create container metadata provider: %v", err)
+	var containerMetadataProvider containermetadata.Provider
+	if args.enableSplitByService {
+		// If we're splitting by service, we only need the container ID because Datadog
+		// agent will add the rest of the metadata.
+		containerMetadataProvider = containermetadata.NewContainerIDProvider()
+	} else {
+		containerMetadataProvider, err =
+			containermetadata.NewContainerMetadataProvider(mainCtx, args.node)
+		if err != nil {
+			return failure("Failed to create container metadata provider: %v", err)
+		}
 	}
 
 	var symbolEndpoints = args.additionalSymbolEndpoints
@@ -210,19 +218,30 @@ func mainWithExitCode() exitCode {
 		}
 	}
 
+	if args.hostServiceName == "" && !args.enableSplitByService {
+		return failure("Service name is required when running in non-split-by-service mode")
+	}
+	if args.hostServiceName != "" && args.enableSplitByService {
+		log.Warning("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
+	}
+
 	rep, err := reporter.NewDatadog(&reporter.Config{
 		IntakeURL:                intakeURL,
 		Version:                  versionInfo.Version,
 		ReportInterval:           intervals.ReportInterval(),
 		ExecutablesCacheElements: defaultExecutablesCacheSize,
 		// Next step: Calculate FramesCacheElements from numCores and samplingRate.
-		FramesCacheElements:    defaultFramesCacheSize,
-		ProcessesCacheElements: defaultProcessesCacheSize,
-		SamplesPerSecond:       int(args.samplesPerSecond),
-		PprofPrefix:            args.pprofPrefix,
-		Tags:                   validatedTags,
-		Timeline:               args.timeline,
-		APIKey:                 apiKey,
+		FramesCacheElements:       defaultFramesCacheSize,
+		ProcessesCacheElements:    defaultProcessesCacheSize,
+		SamplesPerSecond:          int(args.samplesPerSecond),
+		PprofPrefix:               args.pprofPrefix,
+		Tags:                      validatedTags,
+		Timeline:                  args.timeline,
+		APIKey:                    apiKey,
+		EnableSplitByService:      args.enableSplitByService,
+		SplitServiceSuffix:        args.splitServiceSuffix,
+		UseEBPFAsRuntimeAndFamily: args.useEBPFAsRuntimeAndFamily,
+		HostServiceName:           args.hostServiceName,
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,
@@ -242,6 +261,11 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to start reporting: %v", err)
 	}
 
+	includeEnvVars := libpf.Set[string]{}
+	if args.enableSplitByService {
+		includeEnvVars["DD_SERVICE"] = libpf.Void{}
+	}
+
 	// Load the eBPF code and map definitions
 	trc, err := tracer.NewTracer(mainCtx, &tracer.Config{
 		Reporter:               rep,
@@ -255,6 +279,7 @@ func mainWithExitCode() exitCode {
 		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
 		ProbabilisticInterval:  args.probabilisticInterval,
 		ProbabilisticThreshold: uint(args.probabilisticThreshold),
+		IncludeEnvVars:         includeEnvVars,
 	})
 	if err != nil {
 		return failure("Failed to load eBPF tracer: %v", err)
