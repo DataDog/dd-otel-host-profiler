@@ -6,7 +6,6 @@
 package reporter
 
 import (
-	"context"
 	"debug/elf"
 	"encoding/json"
 	"io"
@@ -96,7 +95,7 @@ func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
 	assert.NotNil(t, goPCLnTabInfo)
 
 	outputFile := filepath.Join(tmpDir, "output.dbg")
-	err = CopySymbols(context.Background(), filename, outputFile, goPCLnTabInfo, nil, false)
+	err = CopySymbols(t.Context(), filename, outputFile, goPCLnTabInfo, nil, false)
 	require.NoError(t, err)
 	f, err := elf.Open(outputFile)
 	require.NoError(t, err)
@@ -350,7 +349,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeNoSymbols, buildID, &symbol.DiskOpener{})
 		uploader.Stop()
@@ -362,7 +361,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeSymtab, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
@@ -374,7 +373,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeDebugInfos, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
@@ -386,7 +385,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsym, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
@@ -398,7 +397,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{uploadDynamicSymbols: true})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsym, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
@@ -410,7 +409,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{uploadGoPCLnTab: true})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeNoSymbols, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
@@ -422,7 +421,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{uploadGoPCLnTab: true})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeDebugInfosCorruptGoPCLnTab, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
@@ -434,7 +433,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{uploadDynamicSymbols: true, uploadGoPCLnTab: true})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsymCorruptGoPCLnTab, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
@@ -446,7 +445,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{uploadGoPCLnTab: true})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsymCorruptGoPCLnTab, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()
@@ -458,7 +457,7 @@ func TestSymbolUpload(t *testing.T) {
 		httpmock.ZeroCallCounters()
 		uploader, err := newTestUploader(uploaderOpts{disableDebugSectionCompression: true})
 		require.NoError(t, err)
-		uploader.Start(context.Background())
+		uploader.Start(t.Context())
 
 		uploader.UploadSymbols(libpf.FileID{}, goExeDebugInfos, "build_id", &symbol.DiskOpener{})
 		uploader.Stop()

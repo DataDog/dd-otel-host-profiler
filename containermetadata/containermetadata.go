@@ -368,53 +368,6 @@ func getDockerClient() *client.Client {
 	return nil
 }
 
-// putCache updates the container id metadata cache for the provided pod.
-func (p *containerMetadataProvider) putCache(pod *corev1.Pod) {
-	log.Debugf("Update container metadata cache for pod %s", pod.Name)
-
-	for i := range pod.Status.ContainerStatuses {
-		var containerID string
-		var err error
-		if containerID, err = matchContainerID(
-			pod.Status.ContainerStatuses[i].ContainerID); err != nil {
-			log.Debugf("failed to get kubernetes container metadata for pod %s: %v", pod.Name, err)
-			continue
-		}
-
-		p.containerMetadataCache.Add(containerID, ContainerMetadata{
-			ContainerID:   containerID,
-			PodName:       pod.Name,
-			ContainerName: pod.Status.ContainerStatuses[i].Name,
-		})
-	}
-}
-
-func matchContainerID(containerIDStr string) (string, error) {
-	containerIDParts := containerIDPattern.FindStringSubmatch(containerIDStr)
-	if len(containerIDParts) != 2 {
-		return "", fmt.Errorf("could not get string submatch for container id %v",
-			containerIDStr)
-	}
-	return containerIDParts[1], nil
-}
-
-func getNodeName() (string, error) {
-	nodeName := os.Getenv(kubernetesNodeName)
-	if nodeName != "" {
-		return nodeName, nil
-	}
-	log.Debugf("%s not set", kubernetesNodeName)
-
-	// The Elastic manifest for kubernetes uses NODE_NAME instead of KUBERNETES_NODE_NAME.
-	// Therefore, we check for both environment variables.
-	nodeName = os.Getenv(genericNodeName)
-	if nodeName == "" {
-		return "", errors.New("kubernetes node name not configured")
-	}
-
-	return nodeName, nil
-}
-
 // GetContainerMetadata implements the Handler interface.
 func (p *containerMetadataProvider) GetContainerMetadata(pid libpf.PID) (ContainerMetadata, error) {
 	// Fast path, check container metadata has been cached
@@ -483,6 +436,53 @@ func (p *containerMetadataProvider) GetContainerMetadata(pid libpf.PID) (Contain
 	}
 
 	return data, err
+}
+
+// putCache updates the container id metadata cache for the provided pod.
+func (p *containerMetadataProvider) putCache(pod *corev1.Pod) {
+	log.Debugf("Update container metadata cache for pod %s", pod.Name)
+
+	for i := range pod.Status.ContainerStatuses {
+		var containerID string
+		var err error
+		if containerID, err = matchContainerID(
+			pod.Status.ContainerStatuses[i].ContainerID); err != nil {
+			log.Debugf("failed to get kubernetes container metadata for pod %s: %v", pod.Name, err)
+			continue
+		}
+
+		p.containerMetadataCache.Add(containerID, ContainerMetadata{
+			ContainerID:   containerID,
+			PodName:       pod.Name,
+			ContainerName: pod.Status.ContainerStatuses[i].Name,
+		})
+	}
+}
+
+func matchContainerID(containerIDStr string) (string, error) {
+	containerIDParts := containerIDPattern.FindStringSubmatch(containerIDStr)
+	if len(containerIDParts) != 2 {
+		return "", fmt.Errorf("could not get string submatch for container id %v",
+			containerIDStr)
+	}
+	return containerIDParts[1], nil
+}
+
+func getNodeName() (string, error) {
+	nodeName := os.Getenv(kubernetesNodeName)
+	if nodeName != "" {
+		return nodeName, nil
+	}
+	log.Debugf("%s not set", kubernetesNodeName)
+
+	// The Elastic manifest for kubernetes uses NODE_NAME instead of KUBERNETES_NODE_NAME.
+	// Therefore, we check for both environment variables.
+	nodeName = os.Getenv(genericNodeName)
+	if nodeName == "" {
+		return "", errors.New("kubernetes node name not configured")
+	}
+
+	return nodeName, nil
 }
 
 func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID string) (

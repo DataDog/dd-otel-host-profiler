@@ -98,7 +98,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 
 	queriers := []SymbolQuerier{querier1, querier2}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	t.Run("Empty batch", func(t *testing.T) {

@@ -145,66 +145,6 @@ func buildSourcemapIntakeURL(site string) string {
 	return fmt.Sprintf("https://sourcemap-intake.%s%s", site, sourceMapEndpoint)
 }
 
-func (d *DatadogSymbolUploader) symbolRetrievalWorker(_ context.Context, file fileData, outputChan chan<- *symbol.Elf) {
-	// Record immediately to avoid duplicate uploads
-	d.uploadCache.Add(file.fileID, struct{}{})
-	elf := d.getSymbolsFromDisk(file)
-	if elf == nil {
-		// Remove from cache because we might have symbols for this exe in another context
-		d.uploadCache.Remove(file.fileID)
-		return
-	}
-	outputChan <- elf
-}
-
-func (d *DatadogSymbolUploader) queryWorker(ctx context.Context, batch []*symbol.Elf, outputChan chan<- ElfWithBackendSources) {
-	for _, e := range ExecuteSymbolQueryBatch(ctx, batch, d.symbolQueriers) {
-		outputChan <- e
-	}
-}
-
-func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elf ElfWithBackendSources) {
-	var endpointIndices []int
-	removeFromCache := false
-	defer func() {
-		if removeFromCache {
-			d.uploadCache.Remove(elf.FileID())
-		}
-		elf.Close()
-	}()
-
-	for i, backendSymbolSource := range elf.BackendSymbolSources {
-		if backendSymbolSource.Err != nil {
-			log.Warnf("Failed to query symbols for executable %s: %v", elf, backendSymbolSource.Err)
-			removeFromCache = true
-			continue
-		}
-
-		if backendSymbolSource.SymbolSource != symbol.SourceNone {
-			log.Debugf("Existing symbols for executable %s on endpoint#%d: %v", elf, i, backendSymbolSource.SymbolSource)
-		}
-
-		upload, symbolSource := d.shouldUpload(elf.Elf, backendSymbolSource.SymbolSource, i)
-
-		if upload {
-			endpointIndices = append(endpointIndices, i)
-		}
-		if symbolSource == symbol.SourceNone {
-			// Remove from cache because we might have symbols for this exe in another context
-			removeFromCache = true
-		}
-	}
-
-	if len(endpointIndices) == 0 {
-		return
-	}
-
-	if !d.upload(ctx, elf.Elf, endpointIndices) {
-		// Remove from cache to retry later
-		removeFromCache = true
-	}
-}
-
 func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 	symbolRetrievalQueue := make(chan fileData, defaultSymbolRetrievalQueueSize)
 
@@ -277,6 +217,66 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, bui
 	default:
 		log.Warnf("Symbol upload queue is full, skipping symbol upload for file %q with file ID %q and build ID %q",
 			filePath, fileID.StringNoQuotes(), buildID)
+	}
+}
+
+func (d *DatadogSymbolUploader) symbolRetrievalWorker(_ context.Context, file fileData, outputChan chan<- *symbol.Elf) {
+	// Record immediately to avoid duplicate uploads
+	d.uploadCache.Add(file.fileID, struct{}{})
+	elf := d.getSymbolsFromDisk(file)
+	if elf == nil {
+		// Remove from cache because we might have symbols for this exe in another context
+		d.uploadCache.Remove(file.fileID)
+		return
+	}
+	outputChan <- elf
+}
+
+func (d *DatadogSymbolUploader) queryWorker(ctx context.Context, batch []*symbol.Elf, outputChan chan<- ElfWithBackendSources) {
+	for _, e := range ExecuteSymbolQueryBatch(ctx, batch, d.symbolQueriers) {
+		outputChan <- e
+	}
+}
+
+func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elf ElfWithBackendSources) {
+	var endpointIndices []int
+	removeFromCache := false
+	defer func() {
+		if removeFromCache {
+			d.uploadCache.Remove(elf.FileID())
+		}
+		elf.Close()
+	}()
+
+	for i, backendSymbolSource := range elf.BackendSymbolSources {
+		if backendSymbolSource.Err != nil {
+			log.Warnf("Failed to query symbols for executable %s: %v", elf, backendSymbolSource.Err)
+			removeFromCache = true
+			continue
+		}
+
+		if backendSymbolSource.SymbolSource != symbol.SourceNone {
+			log.Debugf("Existing symbols for executable %s on endpoint#%d: %v", elf, i, backendSymbolSource.SymbolSource)
+		}
+
+		upload, symbolSource := d.shouldUpload(elf.Elf, backendSymbolSource.SymbolSource, i)
+
+		if upload {
+			endpointIndices = append(endpointIndices, i)
+		}
+		if symbolSource == symbol.SourceNone {
+			// Remove from cache because we might have symbols for this exe in another context
+			removeFromCache = true
+		}
+	}
+
+	if len(endpointIndices) == 0 {
+		return
+	}
+
+	if !d.upload(ctx, elf.Elf, endpointIndices) {
+		// Remove from cache to retry later
+		removeFromCache = true
 	}
 }
 

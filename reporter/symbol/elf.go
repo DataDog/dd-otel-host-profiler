@@ -105,6 +105,24 @@ func NewElf(path string, fileID libpf.FileID, opener process.FileOpener) (*Elf, 
 	return elf, nil
 }
 
+func NewElfForTest(arch, gnuBuildID, goBuildID, fileHash string) *Elf {
+	return &Elf{
+		arch:       arch,
+		gnuBuildID: gnuBuildID,
+		goBuildID:  goBuildID,
+		fileHash:   fileHash,
+	}
+}
+
+func NewElfFromDisk(path string) (*Elf, error) {
+	fileID, err := libpf.FileIDFromExecutableFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file ID: %w", err)
+	}
+
+	return NewElf(path, fileID, &DiskOpener{})
+}
+
 func (e *Elf) FileHash() string {
 	return e.fileHash
 }
@@ -168,19 +186,6 @@ func (e *Elf) GoPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
 	return e.goPCLnTabInfo, e.goPCLnTabInfoErr
 }
 
-func (e *Elf) goPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
-	if !e.isGolang {
-		return nil, errors.New("not a Go executable")
-	}
-
-	goPCLnTab, err := pclntab.FindGoPCLnTab(e.wrapper.elfFile)
-	if err != nil {
-		return nil, err
-	}
-
-	return goPCLnTab, nil
-}
-
 func (e *Elf) SymbolPathOnDisk() string {
 	if e.separateSymbols != nil && e.separateSymbols.symbolSource > e.symbolSource {
 		return e.separateSymbols.wrapper.actualFilePath
@@ -224,27 +229,22 @@ func (e *Elf) DumpDynamicSymbols() (*DynamicSymbolsDump, error) {
 	return dynamicSymbolsDump, nil
 }
 
+func (e *Elf) goPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
+	if !e.isGolang {
+		return nil, errors.New("not a Go executable")
+	}
+
+	goPCLnTab, err := pclntab.FindGoPCLnTab(e.wrapper.elfFile)
+	if err != nil {
+		return nil, err
+	}
+
+	return goPCLnTab, nil
+}
+
 func (d *DynamicSymbolsDump) Remove() {
 	os.Remove(d.DynSymPath)
 	os.Remove(d.DynStrPath)
-}
-
-func NewElfForTest(arch, gnuBuildID, goBuildID, fileHash string) *Elf {
-	return &Elf{
-		arch:       arch,
-		gnuBuildID: gnuBuildID,
-		goBuildID:  goBuildID,
-		fileHash:   fileHash,
-	}
-}
-
-func NewElfFromDisk(path string) (*Elf, error) {
-	fileID, err := libpf.FileIDFromExecutableFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get file ID: %w", err)
-	}
-
-	return NewElf(path, fileID, &DiskOpener{})
 }
 
 type DiskOpener struct{}

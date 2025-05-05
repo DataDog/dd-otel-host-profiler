@@ -17,6 +17,22 @@ const (
 	SourceDebugInfo
 )
 
+func NewSource(s string) (Source, error) {
+	switch s {
+	case "none":
+		return SourceNone, nil
+	case "dynamic_symbol_table":
+		return SourceDynamicSymbolTable, nil
+	case "symbol_table":
+		return SourceSymbolTable, nil
+	case "debug_info":
+		return SourceDebugInfo, nil
+	case "gopclntab":
+		return SourceGoPCLnTab, nil
+	}
+	return SourceNone, fmt.Errorf("unknown symbol source: %s", s)
+}
+
 func (s Source) String() string {
 	switch s {
 	case SourceNone:
@@ -32,20 +48,4 @@ func (s Source) String() string {
 	}
 
 	return "unknown"
-}
-
-func NewSource(s string) (Source, error) {
-	switch s {
-	case "none":
-		return SourceNone, nil
-	case "dynamic_symbol_table":
-		return SourceDynamicSymbolTable, nil
-	case "symbol_table":
-		return SourceSymbolTable, nil
-	case "debug_info":
-		return SourceDebugInfo, nil
-	case "gopclntab":
-		return SourceGoPCLnTab, nil
-	}
-	return SourceNone, fmt.Errorf("unknown symbol source: %s", s)
 }

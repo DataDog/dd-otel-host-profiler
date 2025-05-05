@@ -119,9 +119,10 @@ func parseCgroupNodePath(r io.Reader) (cgroupV1BaseControllerPath, emptyControll
 		if len(tokens) != 3 {
 			continue
 		}
-		if tokens[1] == cgroupV1BaseController {
+		switch tokens[1] {
+		case cgroupV1BaseController:
 			cgroupV1BaseControllerPath = tokens[2]
-		} else if tokens[1] == "" {
+		case "":
 			emptyControllerPath = tokens[2]
 		}
 	}

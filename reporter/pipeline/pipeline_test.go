@@ -19,7 +19,7 @@ func TestPipeline(t *testing.T) {
 	t.Run("EmptyPipeline", func(_ *testing.T) {
 		input := make(chan int)
 		p := NewPipeline(input)
-		p.Start(context.Background())
+		p.Start(t.Context())
 		p.Stop()
 	})
 
@@ -30,7 +30,7 @@ func TestPipeline(t *testing.T) {
 			func(_ context.Context, x int) {
 				output <- x * 2
 			}))
-		p.Start(context.Background())
+		p.Start(t.Context())
 		input <- 1
 		require.Equal(t, 2, <-output)
 		p.Stop()
@@ -52,7 +52,7 @@ func TestPipeline(t *testing.T) {
 				output <- sum
 			})
 		p := NewPipeline(input, stage1, stage2)
-		p.Start(context.Background())
+		p.Start(t.Context())
 		go func() {
 			input <- 1
 			input <- 2
@@ -85,7 +85,7 @@ func TestPipeline(t *testing.T) {
 			}, WithConcurrency(10))
 
 		p := NewPipeline(input, stage1, stage2, stage3)
-		p.Start(context.Background())
+		p.Start(t.Context())
 		p.Stop()
 		require.Len(t, output, 1000)
 	})
@@ -102,7 +102,7 @@ func TestPipeline(t *testing.T) {
 				output = append(output, x)
 			})
 		p := NewPipeline(input, stage1, stage2)
-		p.Start(context.Background())
+		p.Start(t.Context())
 		p.Stop()
 		require.Len(t, output, 100)
 		require.Len(t, output[99], 9)
@@ -115,7 +115,7 @@ func TestPipeline(t *testing.T) {
 			WithOutputChanSize(1))
 		p := NewPipeline(input, stage1)
 		output := stage1.GetOutputChannel()
-		p.Start(context.Background())
+		p.Start(t.Context())
 		for i := range 9 {
 			input <- i
 		}
