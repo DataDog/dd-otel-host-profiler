@@ -82,7 +82,7 @@ type traceEvents struct {
 	mappingEnds        []libpf.Address
 	mappingFileOffsets []uint64
 	timestamps         []uint64 // in nanoseconds
-
+	customLabels       map[string]string
 }
 
 type processMetadata struct {
@@ -224,6 +224,10 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		return nil
 	}
 
+	if len(meta.CustomLabels) == 0 {
+		log.Infof("no custom labels")
+	}
+
 	(*traceEventsMap)[key] = &traceEvents{
 		files:              trace.Files,
 		linenos:            trace.Linenos,
@@ -232,6 +236,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		mappingEnds:        trace.MappingEnd,
 		mappingFileOffsets: trace.MappingFileOffsets,
 		timestamps:         []uint64{uint64(meta.Timestamp)},
+		customLabels:       meta.CustomLabels,
 	}
 
 	return nil
@@ -360,7 +365,7 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 
 // reportProfile creates and sends out a profile.
 func (r *DatadogReporter) reportProfile(ctx context.Context) error {
-	profile, startTS, endTS := r.getPprofProfile()
+	profile, startTS, endTS, customLabels := r.getPprofProfile()
 
 	if len(profile.Sample) == 0 {
 		log.Debugf("Skip sending of pprof profile with no samples")
@@ -396,6 +401,12 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 	for _, attr := range customAttributes {
 		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
 	}
+
+	for _, label := range customLabels {
+		log.Infof("custom labels iteration")
+		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: label})
+	}
+
 	// The profiler_name tag allows us to differentiate the source of the profiles.
 	tags = append(tags,
 		MakeTag("runtime", "native"),
@@ -415,7 +426,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context) error {
 
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
 func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
-	startTS uint64, endTS uint64) {
+	startTS uint64, endTS uint64, customLabels []string) {
 	traceEvents := r.traceEvents.WLock()
 	hostSamples := maps.Clone(*traceEvents)
 	for key := range *traceEvents {
@@ -557,7 +568,10 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 		if !r.timeline {
 			count := int64(len(traceInfo.timestamps))
 			labels := make(map[string][]string)
-			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
+			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0, traceInfo.customLabels)
+			for label := range traceInfo.customLabels {
+				customLabels = append(customLabels, label)
+			}
 			sample.Value = append(sample.Value, count, count*samplingPeriod)
 			sample.Label = labels
 			profile.Sample = append(profile.Sample, sample)
@@ -567,7 +581,10 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 				sampleWithTimestamp := &pprofile.Sample{}
 				*sampleWithTimestamp = *sample
 				labels := make(map[string][]string)
-				addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, ts)
+				addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, ts, traceInfo.customLabels)
+				for label := range traceInfo.customLabels {
+					customLabels = append(customLabels, label)
+				}
 				sampleWithTimestamp.Label = labels
 				profile.Sample = append(profile.Sample, sampleWithTimestamp)
 			}
@@ -582,7 +599,7 @@ func (r *DatadogReporter) getPprofProfile() (profile *pprofile.Profile,
 
 	profile = profile.Compact()
 
-	return profile, startTS, endTS
+	return profile, startTS, endTS, customLabels
 }
 
 // createFunctionEntry adds a new function and returns its reference index.
@@ -610,7 +627,7 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 }
 
 func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
-	baseExec string, timestamp uint64) {
+	baseExec string, timestamp uint64, customLabels map[string]string) {
 	if i.comm != "" {
 		labels["thread_name"] = append(labels["thread_name"], i.comm)
 	}
@@ -648,6 +665,10 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMeta
 
 	if timestamp != 0 {
 		labels["end_timestamp_ns"] = append(labels["end_timestamp_ns"], strconv.FormatUint(timestamp, 10))
+	}
+
+	for label, val := range customLabels {
+		labels[label] = append(labels[label], val)
 	}
 }
 
