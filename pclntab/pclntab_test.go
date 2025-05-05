@@ -40,7 +40,7 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	goMinorVersions := []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
+	goMinorVersions := []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
 	for _, goMinorVersion := range goMinorVersions {
 		for name, test := range tests {
 			if goMinorVersion <= 12 && strings.HasPrefix(name, "pie") {

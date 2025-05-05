@@ -9,12 +9,12 @@ all: build
 build:
 	go build $(GO_FLAGS)
 
-GOLANGCI_LINT_VERSION = "v1.61.0"
+GOLANGCI_LINT_VERSION = "v2.1.6"
 GO = $(shell go env GOROOT)/bin/go
 
 lint:
-	$(GO) run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) version
-	$(GO) run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) version
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
 linter-version:
 	@echo $(GOLANGCI_LINT_VERSION)
