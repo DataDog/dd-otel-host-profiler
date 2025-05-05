@@ -37,7 +37,7 @@ sudo mount -t debugfs none /sys/kernel/debug
 After that, you can start the profiler as shown below (make sure you run it as root):
 
 ```
-sudo dd-otel-host-profiler --service "$(hostname)" --agent-url "http://localhost:8126"
+sudo DD_SERVICE="dd-otel-host-profiler" dd-otel-host-profiler --host-service "$(hostname)" --agent-url "http://localhost:8126"
 ```
 
 If your Datadog agent is reachable under a different address, you can modify the `--agent-url` parameter accordingly.

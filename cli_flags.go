@@ -53,7 +53,7 @@ type arguments struct {
 	samplesPerSecond          uint64
 	pprofPrefix               string
 	sendErrorFrames           bool
-	serviceName               string
+	hostServiceName           string
 	environment               string
 	uploadSymbolQueryInterval time.Duration
 	uploadSymbols             bool
@@ -113,12 +113,10 @@ func parseArgs() (*arguments, error) {
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_TRACE_AGENT_URL", "DD_TRACE_AGENT_URL"),
 			},
 			&cli.StringFlag{
-				Name:        "service",
-				Aliases:     []string{"S"},
-				Value:       "dd-otel-host-profiler",
-				Usage:       "Service name.",
-				Destination: &args.serviceName,
-				Sources:     cli.EnvVars("DD_SERVICE", "DD_HOST_PROFILING_SERVICE"),
+				Name:        "host-service",
+				Usage:       "Host service name when split by service is disabled",
+				Destination: &args.hostServiceName,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_SERVICE"),
 			},
 			&cli.StringFlag{
 				Name:        "environment",

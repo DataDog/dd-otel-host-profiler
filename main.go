@@ -218,8 +218,11 @@ func mainWithExitCode() exitCode {
 		}
 	}
 
-	if args.serviceName == "" && !args.enableSplitByService {
+	if args.hostServiceName == "" && !args.enableSplitByService {
 		return failure("Service name is required when running in non-split-by-service mode")
+	}
+	if args.hostServiceName != "" && args.enableSplitByService {
+		log.Warning("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
 	}
 
 	rep, err := reporter.NewDatadog(&reporter.Config{
@@ -238,7 +241,7 @@ func mainWithExitCode() exitCode {
 		EnableSplitByService:      args.enableSplitByService,
 		SplitServiceSuffix:        args.splitServiceSuffix,
 		UseEBPFAsRuntimeAndFamily: args.useEBPFAsRuntimeAndFamily,
-		ServiceName:               args.serviceName,
+		HostServiceName:           args.hostServiceName,
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,

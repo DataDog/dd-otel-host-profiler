@@ -52,8 +52,8 @@ type Config struct {
 	SplitServiceSuffix string
 	// UseEBPFAsRuntimeAndFamily defines whether the agent should use eBPF instead of native as runtime and family in profiles.
 	UseEBPFAsRuntimeAndFamily bool
-	// ServiceName defines the service name to use in profiles (in non-split-by-service mode).
-	ServiceName string
+	// HostServiceName defines the service name to use in profiles (in non-split-by-service mode).
+	HostServiceName string
 	// SymbolUploaderConfig defines the configuration for the symbol uploader.
 	SymbolUploaderConfig SymbolUploaderConfig
 }

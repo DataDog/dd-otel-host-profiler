@@ -595,7 +595,7 @@ func (r *DatadogReporter) getPprofProfile() {
 	if !r.config.EnableSplitByService {
 		profile, stats := r.createProfile(hostSamples, intervalStart, intervalEnd)
 
-		tags := createTagsForProfile(r.tags, profileSeq, r.config.ServiceName, false)
+		tags := createTagsForProfile(r.tags, profileSeq, r.config.HostServiceName, false)
 		r.profiles <- &uploadProfileData{
 			profile: profile,
 			start:   intervalStart,
