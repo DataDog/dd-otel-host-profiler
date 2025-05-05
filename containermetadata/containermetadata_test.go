@@ -9,7 +9,6 @@
 package containermetadata
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -324,7 +323,7 @@ func TestGetKubernetesPodMetadata(t *testing.T) {
 }
 
 func BenchmarkGetKubernetesPodMetadata(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		clientset := fake.NewSimpleClientset()
 		containerMetadataCache, err := lru.NewSynced[string, ContainerMetadata](
 			containerMetadataCacheSize, hashString)
@@ -372,7 +371,7 @@ func BenchmarkGetKubernetesPodMetadata(b *testing.B) {
 				},
 			}
 
-			file, err := os.CreateTemp("", "test_containermetadata_cgroup*")
+			file, err := os.CreateTemp(b.TempDir(), "test_containermetadata_cgroup*")
 			require.NoError(b, err)
 			defer os.Remove(file.Name()) //nolint: gocritic
 
@@ -383,7 +382,7 @@ func BenchmarkGetKubernetesPodMetadata(b *testing.B) {
 
 			opts := v1.CreateOptions{}
 			clientsetPod, err := clientset.CoreV1().Pods("default").Create(
-				context.Background(), pod, opts)
+				b.Context(), pod, opts)
 			require.NoError(b, err)
 			instance.putCache(clientsetPod)
 
