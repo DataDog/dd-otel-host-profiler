@@ -4,7 +4,7 @@ FROM ubuntu:24.04@sha256:d4f6f70979d0758d7a6f81e34a61195677f4f4fa576eaf808b79f17
 RUN apt-get update && \
     apt-get install -y --no-install-recommends binutils ca-certificates
 
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY docker/release/entrypoint.sh /entrypoint.sh
 COPY --parents agent-** /tmp/
 
 RUN mv /tmp/agent-$(uname -p)/dd-otel-host-profiler /usr/local/bin/dd-otel-host-profiler \

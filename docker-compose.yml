@@ -4,15 +4,19 @@ services:
   full-host-profiler:
     build:
       context: .
+      dockerfile: docker/dev/Dockerfile
     privileged: true
     pid: "host"
     environment:
       DD_SITE: ${DD_SITE:-datadoghq.com}
-      DD_SERVICE: ${DD_SERVICE:-dd-otel-host-profiler-dev}
+      DD_HOST_PROFILING_SERVICE: ${DD_HOST_PROFILING_SERVICE:-""}
+      DD_HOST_PROFILING_SPLIT_BY_SERVICE: ${DD_HOST_PROFILING_SPLIT_BY_SERVICE:-true}
+      DD_HOST_PROFILING_SPLIT_SERVICE_SUFFIX: ${DD_HOST_PROFILING_SPLIT_SERVICE_SUFFIX:-""}
+      DD_HOST_PROFILING_USE_EBPF_AS_RUNTIME_AND_FAMILY: ${DD_HOST_PROFILING_USE_EBPF_AS_RUNTIME_AND_FAMILY:-true}
       DD_HOST_PROFILING_UPLOAD_PERIOD: ${DD_HOST_PROFILING_UPLOAD_PERIOD:-60s}
-      DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS: ${DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS:-false}
+      DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS: ${DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS:-true}
       DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_DYNAMIC_SYMBOLS: ${DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_DYNAMIC_SYMBOLS:-true}
-      DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB: ${DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB:-false}
+      DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB: ${DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB:-true}
       DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: ${DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS:-[]}
       VERSION: ${VERSION:-local-dev}
     volumes:
@@ -21,7 +25,7 @@ services:
     secrets:
       - dd-api-key
       - dd-app-key
-    command: ['/bin/sh', '-c', 'export DD_API_KEY=$$(cat /run/secrets/dd-api-key) DD_APP_KEY=$$(cat /run/secrets/dd-app-key); sudo mount -t debugfs none /sys/kernel/debug && cd /app && make && sudo -E /app/dd-otel-host-profiler --agent-url "http://datadog-agent:8126" --sampling-rate 20']
+    command: [ '/launch-profiler.sh']
 
   datadog-agent:
     image: gcr.io/datadoghq/agent:7
