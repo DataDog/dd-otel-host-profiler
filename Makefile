@@ -32,7 +32,7 @@ check-licenses:
 	tools/check-licenses.sh
 
 docker-image:
-	docker build -t dd-otel-host-profiler -f Dockerfile .
+	docker build -t dd-otel-host-profiler -f docker/dev/Dockerfile .
 
 profiler-in-docker: docker-image
 	docker run -v "$$PWD":/app -it --rm --user $(shell id -u):$(shell id -g) dd-otel-host-profiler \
