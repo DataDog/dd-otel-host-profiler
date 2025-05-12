@@ -38,6 +38,45 @@ const (
 	maxArgMapScaleFactor = 8
 )
 
+type additionalSymbolEndpoints []reporter.SymbolEndpoint
+
+func (s *additionalSymbolEndpoints) String() string {
+	if s == nil {
+		return ""
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func (s *additionalSymbolEndpoints) Set(value string) error {
+	if value == "" {
+		return nil
+	}
+	err := json.Unmarshal([]byte(value), s)
+	if err != nil {
+		return errors.New("invalid JSON")
+	}
+	for _, e := range *s {
+		if e.Site == "" || e.APIKey == "" || e.AppKey == "" {
+			return errors.New("site, api key and app key should all be set and non-empty strings")
+		}
+		if !isAPIKeyValid(e.APIKey) {
+			return fmt.Errorf("API key for site %s is not valid", e.Site)
+		}
+		if !isAPPKeyValid(e.AppKey) {
+			return fmt.Errorf("app key for site %s is not valid", e.Site)
+		}
+	}
+	return nil
+}
+
+func (s *additionalSymbolEndpoints) Get() interface{} {
+	return s
+}
+
 type arguments struct {
 	bpfVerifierLogLevel       uint64
 	agentURL                  string
@@ -68,7 +107,7 @@ type arguments struct {
 	apiKey                    string
 	appKey                    string
 	site                      string
-	additionalSymbolEndpoints []reporter.SymbolEndpoint
+	additionalSymbolEndpoints additionalSymbolEndpoints
 	agentless                 bool
 	enableGoRuntimeProfiler   bool
 	enableSplitByService      bool
@@ -313,35 +352,12 @@ func parseArgs() (*arguments, error) {
 				Destination: &args.site,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SITE", "DD_SITE"),
 			},
-			&cli.StringFlag{
-				Name:   "additional-symbol-endpoints",
-				Usage:  "Additional endpoints to upload symbols to.",
-				Hidden: true,
-				// This is required by urfave/cli in order to run the Action when
-				// this flag is defined outside of the command-line arguments.
-				Local:   true,
+			&cli.GenericFlag{
+				Name:    "additional-symbol-endpoints",
+				Usage:   "Additional endpoints to upload symbols to.",
+				Hidden:  true,
 				Sources: cli.EnvVars("DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS"),
-				Action: func(_ context.Context, _ *cli.Command, s string) error {
-					if s == "" {
-						return nil
-					}
-					err := json.Unmarshal([]byte(s), &args.additionalSymbolEndpoints)
-					if err != nil {
-						return errors.New("error parsing DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: invalid JSON")
-					}
-					for _, e := range args.additionalSymbolEndpoints {
-						if e.Site == "" || e.APIKey == "" || e.AppKey == "" {
-							return errors.New("error parsing DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: site, api key and app key should all be set and non-empty strings")
-						}
-						if !isAPIKeyValid(e.APIKey) {
-							return fmt.Errorf("error parsing DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: API key for site %s is not valid", e.Site)
-						}
-						if !isAPPKeyValid(e.AppKey) {
-							return fmt.Errorf("error parsing DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: app key for site %s is not valid", e.Site)
-						}
-					}
-					return nil
-				},
+				Value:   &args.additionalSymbolEndpoints,
 			},
 			&cli.BoolFlag{
 				Name:        "profile",
