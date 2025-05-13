@@ -59,6 +59,7 @@ DD_SITE=datadoghq.com # optional, defaults to "datadoghq.com"
 DD_HOST_PROFILING_UPLOAD_PERIOD=10s # optional, defaults to 60s
 DD_API_KEY=your-api-key # required (not needed on a Datadog workspace) 
 DD_APP_KEY=your-app-key # required (not needed on a Datadog workspace) 
+DD_HOST_PROFILING_TAGS="workspace:YOUR_WORKSPACE_NAME" # recommended on Datadog workspace
 ```
 
 Then, you can run the profiler with the following command:
