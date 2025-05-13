@@ -65,13 +65,13 @@ func (s *additionalSymbolEndpoints) Set(value string) error {
 	}
 	for _, e := range *s {
 		if e.Site == "" || e.APIKey == "" || e.AppKey == "" {
-			return errors.New("site, api key and app key should all be set and non-empty strings")
+			return errors.New("site, API key and application key should all be set and non-empty strings")
 		}
 		if !isAPIKeyValid(e.APIKey) {
 			return fmt.Errorf("API key for site %s is not valid", e.Site)
 		}
 		if !isAPPKeyValid(e.AppKey) {
-			return fmt.Errorf("app key for site %s is not valid", e.Site)
+			return fmt.Errorf("application key for site %s is not valid", e.Site)
 		}
 	}
 	return nil
