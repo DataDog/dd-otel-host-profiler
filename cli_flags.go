@@ -40,6 +40,8 @@ const (
 
 type additionalSymbolEndpoints []reporter.SymbolEndpoint
 
+// String allows us to implement the cli.Value interface
+// It is used to convert the value to a string when printing the help message
 func (s *additionalSymbolEndpoints) String() string {
 	if s == nil {
 		return ""
@@ -51,6 +53,8 @@ func (s *additionalSymbolEndpoints) String() string {
 	return string(b)
 }
 
+// Set allows us to implement the cli.Value interface
+// It is used to set the value from the command line
 func (s *additionalSymbolEndpoints) Set(value string) error {
 	if value == "" {
 		return nil
@@ -73,6 +77,8 @@ func (s *additionalSymbolEndpoints) Set(value string) error {
 	return nil
 }
 
+// Get allows us to implement the cli.Value interface
+// It is not used currently in our setup
 func (s *additionalSymbolEndpoints) Get() interface{} {
 	return s
 }
