@@ -673,13 +673,15 @@ func (r *DatadogReporter) getPprofProfile() {
 
 func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled bool) Tags {
 	tags := append(Tags{}, userTags...)
-	customAttributes := []string{"thread_name"}
 
 	if !splitByServiceEnabled {
-		customAttributes = append(customAttributes, "container_id", "container_name", "pod_name")
-	}
-	for _, attr := range customAttributes {
-		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
+		customContextTagKey := "ddprof.custom_ctx"
+
+		tags = append(tags,
+			MakeTag(customContextTagKey, "container_id"),
+			MakeTag(customContextTagKey, "container_name"),
+			MakeTag(customContextTagKey, "pod_name"),
+		)
 	}
 
 	tags = append(tags,
@@ -730,7 +732,9 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
 	baseExec string, timestamp uint64) {
 	if i.comm != "" {
-		labels["thread_name"] = append(labels["thread_name"], i.comm)
+		// The naming has an impact on the backend side,
+		// this is why we use "thread name" instead of "thread_name"
+		labels["thread name"] = append(labels["thread name"], i.comm)
 	}
 
 	if containerMetadata.PodName != "" {
