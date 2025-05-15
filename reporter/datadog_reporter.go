@@ -673,13 +673,15 @@ func (r *DatadogReporter) getPprofProfile() {
 
 func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled bool) Tags {
 	tags := append(Tags{}, userTags...)
-	customAttributes := []string{"thread_name"}
 
 	if !splitByServiceEnabled {
-		customAttributes = append(customAttributes, "container_id", "container_name", "pod_name")
-	}
-	for _, attr := range customAttributes {
-		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
+		customContextTagKey := "ddprof.custom_ctx"
+
+		tags = append(tags,
+			MakeTag(customContextTagKey, "container_id"),
+			MakeTag(customContextTagKey, "container_name"),
+			MakeTag(customContextTagKey, "pod_name"),
+		)
 	}
 
 	tags = append(tags,
@@ -729,8 +731,18 @@ func createPprofFunctionEntry(funcMap map[funcInfo]*pprofile.Function,
 
 func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
 	baseExec string, timestamp uint64) {
+	// The naming has an impact on the backend side,
+	// this is why we use "thread id", "thread name" and "process name"
+	if i.tid != 0 {
+		labels["thread id"] = append(labels["thread id"], fmt.Sprintf("%d", i.tid))
+	}
+
 	if i.comm != "" {
-		labels["thread_name"] = append(labels["thread_name"], i.comm)
+		labels["thread name"] = append(labels["thread name"], i.comm)
+	}
+
+	if baseExec != "" {
+		labels["process name"] = append(labels["process name"], baseExec)
 	}
 
 	if containerMetadata.PodName != "" {
@@ -751,17 +763,6 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMeta
 
 	if i.pid != 0 {
 		labels["process_id"] = append(labels["process_id"], fmt.Sprintf("%d", i.pid))
-	}
-
-	if i.tid != 0 {
-		// The naming has an impact on the backend side,
-		// this is why we use "thread id" instead of "thread_id"
-		// This is also consistent with ddprof.
-		labels["thread id"] = append(labels["thread id"], fmt.Sprintf("%d", i.tid))
-	}
-
-	if baseExec != "" {
-		labels["process_name"] = append(labels["process_name"], baseExec)
 	}
 
 	if timestamp != 0 {
