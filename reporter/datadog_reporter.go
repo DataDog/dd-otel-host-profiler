@@ -207,7 +207,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceEvents{}),
 		processes:                 processes,
 		symbolUploader:            symbolUploader,
-		tags:                      createTags(cfg.Tags, runtimeTag, cfg.Version),
+		tags:                      createTags(cfg.Tags, runtimeTag, cfg.Version, cfg.EnableSplitByService),
 		family:                    family,
 		profileSeq:                0,
 		profiles:                  make(chan *uploadProfileData, profileUploadQueueSize),
@@ -543,10 +543,14 @@ func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEv
 			sample.Location = append(sample.Location, loc)
 		}
 
+		containerMetadata := containermetadata.ContainerMetadata{}
+		if !r.config.EnableSplitByService {
+			containerMetadata = processMeta.containerMetadata
+		}
 		if !r.config.Timeline {
 			count := int64(len(traceInfo.timestamps))
 			labels := make(map[string][]string)
-			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
+			addTraceLabels(labels, traceKey, containerMetadata, baseExec, 0)
 			sample.Value = append(sample.Value, count, count*samplingPeriod)
 			sample.Label = labels
 			profile.Sample = append(profile.Sample, sample)
@@ -667,9 +671,13 @@ func (r *DatadogReporter) getPprofProfile() {
 		len(entityToSample), profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), totalSampleCount, totalPIDsWithNoProcessMetadata)
 }
 
-func createTags(userTags Tags, runtimeTag, version string) Tags {
+func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled bool) Tags {
 	tags := append(Tags{}, userTags...)
-	customAttributes := []string{"container_id", "container_name", "thread_name", "pod_name"}
+	customAttributes := []string{"thread_name"}
+
+	if !splitByServiceEnabled {
+		customAttributes = append(customAttributes, "container_id", "container_name", "pod_name")
+	}
 	for _, attr := range customAttributes {
 		tags = append(tags, Tag{Key: "ddprof.custom_ctx", Value: attr})
 	}
