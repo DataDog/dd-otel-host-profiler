@@ -194,7 +194,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		}
 	}
 
-	runtimeTag, family := cfg.getRuntimeAndFamily()
+	runtimeTag, family := "ebpf", "ebpf"
 
 	return &DatadogReporter{
 		config: cfg,

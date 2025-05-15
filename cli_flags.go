@@ -117,7 +117,6 @@ type arguments struct {
 	agentless                 bool
 	enableGoRuntimeProfiler   bool
 	enableSplitByService      bool
-	useEBPFAsRuntimeAndFamily bool
 	splitServiceSuffix        string
 	cmd                       *cli.Command
 }
@@ -386,13 +385,6 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Split profiles by service.",
 				Destination: &args.enableSplitByService,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SPLIT_BY_SERVICE"),
-			},
-			&cli.BoolFlag{
-				Name:        "use-ebpf-as-runtime-and-family",
-				Value:       false,
-				Usage:       "Use eBPF as runtime and family in profiles.",
-				Destination: &args.useEBPFAsRuntimeAndFamily,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_USE_EBPF_AS_RUNTIME_AND_FAMILY"),
 			},
 			&cli.StringFlag{
 				Name:        "split-by-service-suffix",
