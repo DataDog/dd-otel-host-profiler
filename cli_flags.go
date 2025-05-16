@@ -302,7 +302,7 @@ func parseArgs() (*arguments, error) {
 			&cli.BoolFlag{
 				Name:        "upload-dynamic-symbols",
 				Usage:       "Enable dynamic symbols upload.",
-				Value:       true,
+				Value:       false,
 				Hidden:      true,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_DYNAMIC_SYMBOLS"),
 				Destination: &args.uploadDynamicSymbols,
