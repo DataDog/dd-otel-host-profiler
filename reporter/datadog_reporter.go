@@ -829,6 +829,7 @@ func (r *DatadogReporter) getDDService(pid libpf.PID) string {
 	envPath, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if err != nil {
 		log.Debugf("Failed to read environ for PID %d: %v", pid, err)
+		return ""
 	}
 
 	for _, envVar := range bytes.Split(envPath, []byte{0}) {
