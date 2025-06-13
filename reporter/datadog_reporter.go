@@ -87,13 +87,13 @@ type traceEvents struct {
 	mappingEnds        []libpf.Address
 	mappingFileOffsets []uint64
 	timestamps         []uint64 // in nanoseconds
-	ddService          string
 }
 
 type processMetadata struct {
 	updatedAt         time.Time
 	executablePath    string
 	containerMetadata containermetadata.ContainerMetadata
+	ddService         string
 }
 
 type uploadProfileData struct {
@@ -220,7 +220,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 	defer r.traceEvents.WUnlock(&traceEventsMap)
 
 	if pMeta, ok := r.processes.Get(meta.PID); !ok || time.Since(pMeta.updatedAt) > pidCacheUpdateInterval {
-		r.addProcessMetadata(meta.PID)
+		r.addProcessMetadata(meta)
 	}
 
 	key := traceAndMetaKey{
@@ -246,7 +246,6 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		mappingEnds:        trace.MappingEnd,
 		mappingFileOffsets: trace.MappingFileOffsets,
 		timestamps:         []uint64{uint64(meta.Timestamp)},
-		ddService:          meta.EnvVars["DD_SERVICE"],
 	}
 
 	return nil
@@ -615,7 +614,7 @@ func (r *DatadogReporter) getPprofProfile() {
 	for traceKey, traceInfo := range hostSamples {
 		processMeta, _ := r.processes.Get(traceKey.pid)
 
-		service := traceInfo.ddService
+		service := processMeta.ddService
 		execPath := getExecutablePath(&processMeta, &traceKey)
 		inferredService := false
 
@@ -824,11 +823,37 @@ func getBuildID(gnuBuildID, goBuildID, fileHash string) string {
 	return fileHash
 }
 
-func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
+func (r *DatadogReporter) getDDService(pid libpf.PID) string {
+	envPath, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	if err != nil {
+		log.Debugf("Failed to read environ for PID %d: %v", pid, err)
+	}
+
+	for _, envVar := range bytes.Split(envPath, []byte{0}) {
+		if bytes.HasPrefix(envVar, []byte("DD_SERVICE=")) {
+			return string(envVar[11:])
+		}
+	}
+	return ""
+}
+
+func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
+	pid := meta.PID
 	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
 		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
 		return
+	}
+
+	ddService, ok := meta.EnvVars["DD_SERVICE"]
+	// If DD_SERVICE is not set and the executable path is different from the one in the trace
+	// (meaning the process has probably exec'd into another binary)
+	// then attempt to retrieve again DD_SERVICE.
+	// This can occur when a container is started, during startup the process is runc
+	// (without the final container environment) that then execs into the final binary
+	// with the container environment.
+	if !ok && meta.ExecutablePath != execPath {
+		ddService = r.getDDService(pid)
 	}
 
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
@@ -841,6 +866,7 @@ func (r *DatadogReporter) addProcessMetadata(pid libpf.PID) {
 		updatedAt:         time.Now(),
 		executablePath:    execPath,
 		containerMetadata: containerMetadata,
+		ddService:         ddService,
 	})
 }
 
