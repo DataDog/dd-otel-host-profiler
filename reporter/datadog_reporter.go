@@ -698,9 +698,11 @@ func createTagsForProfile(tags Tags, profileSeq uint64, service string, inferred
 	newTags = append(newTags,
 		MakeTag("profile_seq", strconv.FormatUint(profileSeq, 10)),
 		MakeTag("service", service))
+	inferredServiceTag := "no"
 	if inferredService {
-		newTags = append(newTags, MakeTag("service_inferred", "yes"))
+		inferredServiceTag = "yes"
 	}
+	newTags = append(newTags, MakeTag("service_inferred", inferredServiceTag))
 	return newTags
 }
 
