@@ -19,6 +19,7 @@ services:
       DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB: ${DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB:-true}
       DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS: ${DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS:-[]}
       DD_HOST_PROFILING_TAGS: ${DD_HOST_PROFILING_TAGS:-""}
+      DD_TRACE_AGENT_URL: ${DD_TRACE_AGENT_URL:-http://datadog-agent:8126}
       VERSION: ${VERSION:-local-dev}
     volumes:
       - .:/app
@@ -26,7 +27,9 @@ services:
     secrets:
       - dd-api-key
       - dd-app-key
-    command: [ '/launch-profiler.sh']
+    # command: [ '/launch-profiler.sh']
+    command: ['/usr/bin/sleep', 'infinity']
+    entrypoint: [ '/app/entrypoint.sh' ]
 
   datadog-agent:
     image: gcr.io/datadoghq/agent:7
