@@ -293,7 +293,7 @@ func parseArgs() (*arguments, error) {
 			},
 			&cli.BoolFlag{
 				Name:        "upload-symbols",
-				Value:       false,
+				Value:       true,
 				Usage:       "Enable local symbol upload.",
 				Hidden:      true,
 				Destination: &args.uploadSymbols,
@@ -310,7 +310,7 @@ func parseArgs() (*arguments, error) {
 			&cli.BoolFlag{
 				Name:        "upload-gopclntab",
 				Usage:       "Enable gopcnltab upload.",
-				Value:       false,
+				Value:       true,
 				Hidden:      true,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB"),
 				Destination: &args.uploadGoPCLnTab,
@@ -381,7 +381,7 @@ func parseArgs() (*arguments, error) {
 			},
 			&cli.BoolFlag{
 				Name:        "split-by-service",
-				Value:       false,
+				Value:       true,
 				Usage:       "Split profiles by service.",
 				Destination: &args.enableSplitByService,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SPLIT_BY_SERVICE"),

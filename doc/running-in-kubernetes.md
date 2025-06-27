@@ -53,8 +53,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        - name: DD_HOST_PROFILING_SERVICE
-          value: "$(KUBERNETES_NODE_NAME)" # will inherit the variable set above
         - name: DD_SERVICE
           value: "dd-otel-host-profiler"
         # ...

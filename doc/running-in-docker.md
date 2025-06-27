@@ -28,7 +28,6 @@ docker run \
   --privileged \
   --cap-add=SYS_ADMIN \
   -e DD_TRACE_AGENT_URL=http://<agent_address>:8126 \
-  -e DD_HOST_PROFILING_SERVICE="$(hostname)" \
   -e DD_SERVICE="dd-otel-host-profiler" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/datadog/dd-otel-host-profiler:latest
