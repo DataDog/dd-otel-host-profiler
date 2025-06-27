@@ -7,7 +7,6 @@ package symbol
 
 import (
 	"debug/elf"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,11 +20,22 @@ import (
 )
 
 const buildIDSectionName = ".note.gnu.build-id"
-const maxBytesLargeSection = 16 * 1024 * 1024
 
 var debugStrSectionNames = []string{".debug_str", ".zdebug_str", ".debug_str.dwo"}
 var debugInfoSectionNames = []string{".debug_info", ".zdebug_info"}
 var globalDebugDirectories = []string{"/usr/lib/debug"}
+
+var sectionTypesToKeepForDynamicSymbols = []elf.SectionType{
+	elf.SHT_GNU_HASH,
+	elf.SHT_HASH,
+	elf.SHT_REL,
+	elf.SHT_RELA,
+	elf.SHT_DYNSYM,
+	elf.SHT_DYNAMIC,
+	elf.SHT_GNU_VERDEF,
+	elf.SHT_GNU_VERNEED,
+	elf.SHT_GNU_VERSYM,
+}
 
 type elfWrapper struct {
 	reader         process.ReadAtCloser
@@ -33,6 +43,11 @@ type elfWrapper struct {
 	filePath       string
 	actualFilePath string
 	opener         process.FileOpener
+}
+
+type SectionInfo struct {
+	Name  string
+	Flags elf.SectionFlag
 }
 
 func (e *elfWrapper) Close() {
@@ -62,65 +77,6 @@ func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
 	return &elfWrapper{reader: r, elfFile: ef, filePath: filePath, actualFilePath: actualFilePath, opener: opener}, nil
 }
 
-func (e *elfWrapper) DumpDynamicSymbols() (*DynamicSymbolsDump, error) {
-	dynSymFile, err := os.CreateTemp("", "dynsym")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
-	}
-	defer func() {
-		dynSymFile.Close()
-		if err != nil {
-			os.Remove(dynSymFile.Name())
-		}
-	}()
-
-	dynStrFile, err := os.CreateTemp("", "dynstr")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file to extract dynamic symbols: %w", err)
-	}
-	defer func() {
-		dynStrFile.Close()
-		if err != nil {
-			os.Remove(dynStrFile.Name())
-		}
-	}()
-
-	dynSymSection := e.elfFile.Section(".dynsym")
-	if dynSymFile == nil {
-		return nil, errors.New("failed to find .dynsym section")
-	}
-	data, err := dynSymSection.Data(maxBytesLargeSection)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read .dynsym section: %w", err)
-	}
-	_, err = dynSymFile.Write(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write .dynsym section: %w", err)
-	}
-
-	dynStrSection := e.elfFile.Section(".dynstr")
-	if dynStrFile == nil {
-		return nil, errors.New("failed to find .dynstr section")
-	}
-	data, err = dynStrSection.Data(maxBytesLargeSection)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read .dynstr section: %w", err)
-	}
-	_, err = dynStrFile.Write(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write .dynstr section: %w", err)
-	}
-
-	return &DynamicSymbolsDump{
-		DynSymPath:  dynSymFile.Name(),
-		DynStrPath:  dynStrFile.Name(),
-		DynSymAddr:  dynSymSection.Addr,
-		DynStrAddr:  dynStrSection.Addr,
-		DynSymAlign: dynSymSection.Addralign,
-		DynStrAlign: dynStrSection.Addralign,
-	}, nil
-}
-
 func (e *elfWrapper) DumpElfData() (string, error) {
 	tempElfFile, err := os.CreateTemp("", "elf")
 	if err != nil {
@@ -139,6 +95,24 @@ func (e *elfWrapper) DumpElfData() (string, error) {
 		return "", fmt.Errorf("failed to dump elf data: %w", err)
 	}
 	return tempElfFile.Name(), nil
+}
+
+func (e *elfWrapper) GetSectionsRequiredForDynamicSymbols() []SectionInfo {
+	var sections []SectionInfo
+	for _, section := range e.elfFile.Sections {
+		if slices.Contains(sectionTypesToKeepForDynamicSymbols, section.Type) {
+			sections = append(sections, SectionInfo{Name: section.Name, Flags: section.Flags})
+		}
+		if section.Type == elf.SHT_DYNSYM {
+			// Add STRTAB (usually .dynstr) section linked to the DYNSYM (usually .dynsym) section if it exists
+			if section.Link != 0 {
+				linkSection := e.elfFile.Sections[section.Link]
+				sections = append(sections, SectionInfo{Name: linkSection.Name, Flags: linkSection.Flags})
+			}
+		}
+	}
+
+	return sections
 }
 
 func (e *elfWrapper) openELF(filePath string) (*elfWrapper, error) {

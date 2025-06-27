@@ -40,17 +40,7 @@ type Elf struct {
 	goPCLnTabInfo    *pclntab.GoPCLnTabInfo
 	goPCLnTabInfoErr error
 
-	dynamicSymbolsDump *DynamicSymbolsDump
-	elfDataDump        string
-}
-
-type DynamicSymbolsDump struct {
-	DynSymPath  string
-	DynStrPath  string
-	DynSymAddr  uint64
-	DynStrAddr  uint64
-	DynSymAlign uint64
-	DynStrAlign uint64
+	elfDataDump string
 }
 
 func NewElf(path string, fileID libpf.FileID, opener process.FileOpener) (*Elf, error) {
@@ -157,9 +147,6 @@ func (e *Elf) Close() {
 	if e.separateSymbols != nil {
 		e.separateSymbols.wrapper.Close()
 	}
-	if e.dynamicSymbolsDump != nil {
-		e.dynamicSymbolsDump.Remove()
-	}
 	if e.elfDataDump != "" {
 		os.Remove(e.elfDataDump)
 	}
@@ -217,16 +204,8 @@ func (e *Elf) DumpElfData() (string, error) {
 	return elfDataDump, nil
 }
 
-func (e *Elf) DumpDynamicSymbols() (*DynamicSymbolsDump, error) {
-	if e.dynamicSymbolsDump != nil {
-		return e.dynamicSymbolsDump, nil
-	}
-	dynamicSymbolsDump, err := e.wrapper.DumpDynamicSymbols()
-	if err != nil {
-		return nil, err
-	}
-	e.dynamicSymbolsDump = dynamicSymbolsDump
-	return dynamicSymbolsDump, nil
+func (e *Elf) GetSectionsRequiredForDynamicSymbols() []SectionInfo {
+	return e.wrapper.GetSectionsRequiredForDynamicSymbols()
 }
 
 func (e *Elf) goPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
@@ -240,11 +219,6 @@ func (e *Elf) goPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
 	}
 
 	return goPCLnTab, nil
-}
-
-func (d *DynamicSymbolsDump) Remove() {
-	os.Remove(d.DynSymPath)
-	os.Remove(d.DynStrPath)
 }
 
 type DiskOpener struct{}

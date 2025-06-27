@@ -29,15 +29,12 @@ func extractDebugInfos(elfFile, outFile string) error {
 		fmt.Printf("Found GoFunc at 0x%x, size %d\n", goPCLnTabInfo.GoFuncAddr, len(goPCLnTabInfo.GoFuncData))
 	}
 
-	var dynamicSymbolsDump *symbol.DynamicSymbolsDump
+	var sectionsToKeep []symbol.SectionInfo
 	if ef.SymbolSource() == symbol.SourceDynamicSymbolTable {
-		dynamicSymbolsDump, err = ef.DumpDynamicSymbols()
-		if err != nil {
-			return fmt.Errorf("failed to dump dynamic symbols: %w", err)
-		}
+		sectionsToKeep = ef.GetSectionsRequiredForDynamicSymbols()
 	}
 
-	return reporter.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo, dynamicSymbolsDump, reporter.CheckObjcopyZstdSupport())
+	return reporter.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo, sectionsToKeep, reporter.CheckObjcopyZstdSupport())
 }
 
 func main() {
