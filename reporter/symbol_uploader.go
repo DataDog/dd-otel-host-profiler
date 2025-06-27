@@ -8,6 +8,7 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"debug/elf"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -223,13 +224,13 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, bui
 func (d *DatadogSymbolUploader) symbolRetrievalWorker(_ context.Context, file fileData, outputChan chan<- *symbol.Elf) {
 	// Record immediately to avoid duplicate uploads
 	d.uploadCache.Add(file.fileID, struct{}{})
-	elf := d.getSymbolsFromDisk(file)
-	if elf == nil {
+	elfSymbols := d.getSymbolsFromDisk(file)
+	if elfSymbols == nil {
 		// Remove from cache because we might have symbols for this exe in another context
 		d.uploadCache.Remove(file.fileID)
 		return
 	}
-	outputChan <- elf
+	outputChan <- elfSymbols
 }
 
 func (d *DatadogSymbolUploader) queryWorker(ctx context.Context, batch []*symbol.Elf, outputChan chan<- ElfWithBackendSources) {
@@ -238,28 +239,28 @@ func (d *DatadogSymbolUploader) queryWorker(ctx context.Context, batch []*symbol
 	}
 }
 
-func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elf ElfWithBackendSources) {
+func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elfSymbols ElfWithBackendSources) {
 	var endpointIndices []int
 	removeFromCache := false
 	defer func() {
 		if removeFromCache {
-			d.uploadCache.Remove(elf.FileID())
+			d.uploadCache.Remove(elfSymbols.FileID())
 		}
-		elf.Close()
+		elfSymbols.Close()
 	}()
 
-	for i, backendSymbolSource := range elf.BackendSymbolSources {
+	for i, backendSymbolSource := range elfSymbols.BackendSymbolSources {
 		if backendSymbolSource.Err != nil {
-			log.Warnf("Failed to query symbols for executable %s: %v", elf, backendSymbolSource.Err)
+			log.Warnf("Failed to query symbols for executable %s: %v", elfSymbols, backendSymbolSource.Err)
 			removeFromCache = true
 			continue
 		}
 
 		if backendSymbolSource.SymbolSource != symbol.SourceNone {
-			log.Debugf("Existing symbols for executable %s on endpoint#%d: %v", elf, i, backendSymbolSource.SymbolSource)
+			log.Debugf("Existing symbols for executable %s on endpoint#%d: %v", elfSymbols, i, backendSymbolSource.SymbolSource)
 		}
 
-		upload, symbolSource := d.shouldUpload(elf.Elf, backendSymbolSource.SymbolSource, i)
+		upload, symbolSource := d.shouldUpload(elfSymbols.Elf, backendSymbolSource.SymbolSource, i)
 
 		if upload {
 			endpointIndices = append(endpointIndices, i)
@@ -274,7 +275,7 @@ func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elf ElfWithBac
 		return
 	}
 
-	if !d.upload(ctx, elf.Elf, endpointIndices) {
+	if !d.upload(ctx, elfSymbols.Elf, endpointIndices) {
 		// Remove from cache to retry later
 		removeFromCache = true
 	}
@@ -315,21 +316,21 @@ func (d *DatadogSymbolUploader) getSymbolsFromDisk(data fileData) *symbol.Elf {
 	filePath := data.filePath
 	fileID := data.fileID
 
-	elf, err := symbol.NewElf(filePath, fileID, data.opener)
+	elfSymbols, err := symbol.NewElf(filePath, fileID, data.opener)
 	if err != nil {
 		log.Debugf("Skipping symbol upload for executable %s: %v",
 			data.filePath, err)
 		return nil
 	}
 
-	symbolSource := d.getSymbolSourceIfGoPCLnTab(elf)
+	symbolSource := d.getSymbolSourceIfGoPCLnTab(elfSymbols)
 	if symbolSource == symbol.SourceNone {
-		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", elf.Path())
-		elf.Close()
+		log.Debugf("Skipping symbol upload for executable %s: no debug symbols found", elfSymbols.Path())
+		elfSymbols.Close()
 		return nil
 	}
 
-	return elf
+	return elfSymbols
 }
 
 func (d *DatadogSymbolUploader) shouldUpload(e *symbol.Elf, existingSymbolSource symbol.Source, ind int) (bool, symbol.Source) {
@@ -438,17 +439,12 @@ func (d *DatadogSymbolUploader) createSymbolFile(ctx context.Context, e *symbol.
 		// Temporary file will be cleaned by the symbol.Elf.Close()
 	}
 
-	var dynamicSymbols *symbol.DynamicSymbolsDump
+	var sectionsToKeep []symbol.SectionInfo
 	if symbolSource == symbol.SourceDynamicSymbolTable {
-		// `objcopy --only-keep-debug` does not keep dynamic symbols, so we need to dump them separately and add them back
-		dynamicSymbols, err = e.DumpDynamicSymbols()
-		if err != nil {
-			return nil, fmt.Errorf("failed to dump dynamic symbols: %w", err)
-		}
-		// Temporary file will be cleaned by the symbol.Elf.Close()
+		sectionsToKeep = e.GetSectionsRequiredForDynamicSymbols()
 	}
 
-	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo, dynamicSymbols, d.compressDebugSections)
+	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo, sectionsToKeep, d.compressDebugSections)
 	if err != nil {
 		return nil, fmt.Errorf("failed to copy symbols: %w", err)
 	}
@@ -499,7 +495,7 @@ func dumpGoPCLnTabData(goPCLnTabInfo *pclntab.GoPCLnTabInfo) (goPCLnTabDump, err
 }
 
 func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInfo *pclntab.GoPCLnTabInfo,
-	dynamicSymbols *symbol.DynamicSymbolsDump, compressDebugSections bool) error {
+	sectionsToKeep []symbol.SectionInfo, compressDebugSections bool) error {
 	args := []string{
 		"--only-keep-debug",
 		"--remove-section=.gdb_index",
@@ -534,16 +530,8 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 		}
 	}
 
-	if dynamicSymbols != nil {
-		args = append(args,
-			"--remove-section=.dynsym",
-			"--remove-section=.dynstr",
-			"--add-section", ".dynsym="+dynamicSymbols.DynSymPath,
-			"--add-section", ".dynstr="+dynamicSymbols.DynStrPath,
-			fmt.Sprintf("--change-section-address=.dynsym=%d", dynamicSymbols.DynSymAddr),
-			fmt.Sprintf("--change-section-address=.dynstr=%d", dynamicSymbols.DynStrAddr),
-			fmt.Sprintf("--set-section-alignment=.dynsym=%d", dynamicSymbols.DynSymAlign),
-			fmt.Sprintf("--set-section-alignment=.dynstr=%d", dynamicSymbols.DynStrAlign))
+	for _, section := range sectionsToKeep {
+		args = append(args, "--set-section-flags", fmt.Sprintf("%s=%s", section.Name, getStringFlags(section.Flags)))
 	}
 
 	if compressDebugSections {
@@ -687,4 +675,18 @@ func (g *goPCLnTabDump) Remove() {
 	if g.goFuncPath != "" {
 		os.Remove(g.goFuncPath)
 	}
+}
+
+func getStringFlags(flags elf.SectionFlag) string {
+	flagsStr := "contents"
+	if flags&elf.SHF_WRITE == 0 {
+		flagsStr += ",readonly"
+	}
+	if flags&elf.SHF_ALLOC != 0 {
+		flagsStr += ",alloc"
+	}
+	if flags&elf.SHF_EXECINSTR != 0 {
+		flagsStr += ",exec"
+	}
+	return flagsStr
 }
