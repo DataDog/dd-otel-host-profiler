@@ -827,24 +827,6 @@ func getBuildID(gnuBuildID, goBuildID, fileHash string) string {
 	return fileHash
 }
 
-func (r *DatadogReporter) getServiceName(pid libpf.PID) string {
-	envPath, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
-	if err != nil {
-		log.Debugf("Failed to read environ for PID %d: %v", pid, err)
-		return ""
-	}
-
-	for _, envVar := range bytes.Split(envPath, []byte{0}) {
-		for _, envVarName := range ServiceNameEnvVars {
-			l := len(envVarName)
-			if len(envVar) > l && envVar[l] == '=' && bytes.HasPrefix(envVar, []byte(envVarName)) {
-				return string(envVar[l+1:])
-			}
-		}
-	}
-	return ""
-}
-
 func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
 	pid := meta.PID
 	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
@@ -868,7 +850,7 @@ func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
 	// (without the final container environment) that then execs into the final binary
 	// with the container environment.
 	if !ok && meta.ExecutablePath != execPath {
-		ddService = r.getServiceName(pid)
+		ddService = getServiceName(pid)
 	}
 
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
@@ -897,4 +879,38 @@ func getExecutablePath(processMeta *processMetadata, traceKey *traceAndMetaKey) 
 		return processMeta.executablePath
 	}
 	return traceKey.executablePath
+}
+
+func getServiceNameFromProcPath(pid libpf.PID, procRoot string) string {
+	envData, err := os.ReadFile(fmt.Sprintf("%s/proc/%d/environ", procRoot, pid))
+	if err != nil {
+		log.Debugf("Failed to read environ for PID %d: %v", pid, err)
+		return ""
+	}
+
+	return parseServiceNameFromEnvironData(envData)
+}
+
+func parseServiceNameFromEnvironData(envData []byte) string {
+	var serviceName string
+	foundIndex := len(ServiceNameEnvVars)
+	for _, envVar := range bytes.Split(envData, []byte{0}) {
+		for i, envVarName := range ServiceNameEnvVars {
+			l := len(envVarName)
+			if len(envVar) > l+1 && envVar[l] == '=' && bytes.HasPrefix(envVar, []byte(envVarName)) {
+				if i < foundIndex {
+					serviceName = string(envVar[l+1:])
+					foundIndex = i
+				}
+				if i == 0 {
+					return serviceName
+				}
+			}
+		}
+	}
+	return serviceName
+}
+
+func getServiceName(pid libpf.PID) string {
+	return getServiceNameFromProcPath(pid, "")
 }
