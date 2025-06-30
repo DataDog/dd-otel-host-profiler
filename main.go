@@ -262,7 +262,9 @@ func mainWithExitCode() exitCode {
 
 	includeEnvVars := libpf.Set[string]{}
 	if args.enableSplitByService {
-		includeEnvVars["DD_SERVICE"] = libpf.Void{}
+		for _, envVar := range reporter.ServiceNameEnvVars {
+			includeEnvVars[envVar] = libpf.Void{}
+		}
 	}
 
 	// Load the eBPF code and map definitions

@@ -44,6 +44,8 @@ const (
 	profileUploadQueueSize   = 128
 )
 
+var ServiceNameEnvVars = []string{"DD_SERVICE", "OTEL_SERVICE_NAME"}
+
 // execInfo enriches an executable with additional metadata.
 type execInfo struct {
 	fileName   string
@@ -825,7 +827,7 @@ func getBuildID(gnuBuildID, goBuildID, fileHash string) string {
 	return fileHash
 }
 
-func (r *DatadogReporter) getDDService(pid libpf.PID) string {
+func (r *DatadogReporter) getServiceName(pid libpf.PID) string {
 	envPath, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if err != nil {
 		log.Debugf("Failed to read environ for PID %d: %v", pid, err)
@@ -833,8 +835,11 @@ func (r *DatadogReporter) getDDService(pid libpf.PID) string {
 	}
 
 	for _, envVar := range bytes.Split(envPath, []byte{0}) {
-		if bytes.HasPrefix(envVar, []byte("DD_SERVICE=")) {
-			return string(envVar[11:])
+		for _, envVarName := range ServiceNameEnvVars {
+			l := len(envVarName)
+			if len(envVar) > l && envVar[l] == '=' && bytes.HasPrefix(envVar, []byte(envVarName)) {
+				return string(envVar[l+1:])
+			}
 		}
 	}
 	return ""
@@ -848,7 +853,14 @@ func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
 		return
 	}
 
-	ddService, ok := meta.EnvVars["DD_SERVICE"]
+	var ddService string
+	var ok bool
+	for _, envVarName := range ServiceNameEnvVars {
+		ddService, ok = meta.EnvVars[envVarName]
+		if ok {
+			break
+		}
+	}
 	// If DD_SERVICE is not set and the executable path is different from the one in the trace
 	// (meaning the process has probably exec'd into another binary)
 	// then attempt to retrieve again DD_SERVICE.
@@ -856,7 +868,7 @@ func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
 	// (without the final container environment) that then execs into the final binary
 	// with the container environment.
 	if !ok && meta.ExecutablePath != execPath {
-		ddService = r.getDDService(pid)
+		ddService = r.getServiceName(pid)
 	}
 
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
