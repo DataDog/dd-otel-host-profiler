@@ -891,6 +891,9 @@ func getServiceNameFromProcPath(pid libpf.PID, procRoot string) string {
 	return parseServiceNameFromEnvironData(envData)
 }
 
+// The order in `ServiceNameEnvVars` indicates which environment variable takes precedence.
+// For example, if a service sets both DD_SERVICE and OTEL_SERVICE_NAME, DD_SERVICE will
+// take precedence.
 func parseServiceNameFromEnvironData(envData []byte) string {
 	var serviceName string
 	foundIndex := len(ServiceNameEnvVars)
