@@ -44,6 +44,8 @@ const (
 	profileUploadQueueSize   = 128
 )
 
+var ServiceNameEnvVars = []string{"DD_SERVICE", "OTEL_SERVICE_NAME"}
+
 // execInfo enriches an executable with additional metadata.
 type execInfo struct {
 	fileName   string
@@ -825,21 +827,6 @@ func getBuildID(gnuBuildID, goBuildID, fileHash string) string {
 	return fileHash
 }
 
-func (r *DatadogReporter) getDDService(pid libpf.PID) string {
-	envPath, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
-	if err != nil {
-		log.Debugf("Failed to read environ for PID %d: %v", pid, err)
-		return ""
-	}
-
-	for _, envVar := range bytes.Split(envPath, []byte{0}) {
-		if bytes.HasPrefix(envVar, []byte("DD_SERVICE=")) {
-			return string(envVar[11:])
-		}
-	}
-	return ""
-}
-
 func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
 	pid := meta.PID
 	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
@@ -848,7 +835,14 @@ func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
 		return
 	}
 
-	ddService, ok := meta.EnvVars["DD_SERVICE"]
+	var ddService string
+	var ok bool
+	for _, envVarName := range ServiceNameEnvVars {
+		ddService, ok = meta.EnvVars[envVarName]
+		if ok {
+			break
+		}
+	}
 	// If DD_SERVICE is not set and the executable path is different from the one in the trace
 	// (meaning the process has probably exec'd into another binary)
 	// then attempt to retrieve again DD_SERVICE.
@@ -856,7 +850,7 @@ func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
 	// (without the final container environment) that then execs into the final binary
 	// with the container environment.
 	if !ok && meta.ExecutablePath != execPath {
-		ddService = r.getDDService(pid)
+		ddService = getServiceName(pid)
 	}
 
 	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
@@ -885,4 +879,41 @@ func getExecutablePath(processMeta *processMetadata, traceKey *traceAndMetaKey) 
 		return processMeta.executablePath
 	}
 	return traceKey.executablePath
+}
+
+func getServiceNameFromProcPath(pid libpf.PID, procRoot string) string {
+	envData, err := os.ReadFile(fmt.Sprintf("%s/proc/%d/environ", procRoot, pid))
+	if err != nil {
+		log.Debugf("Failed to read environ for PID %d: %v", pid, err)
+		return ""
+	}
+
+	return parseServiceNameFromEnvironData(envData)
+}
+
+// The order in `ServiceNameEnvVars` indicates which environment variable takes precedence.
+// For example, if a service sets both DD_SERVICE and OTEL_SERVICE_NAME, DD_SERVICE will
+// take precedence.
+func parseServiceNameFromEnvironData(envData []byte) string {
+	var serviceName string
+	foundIndex := len(ServiceNameEnvVars)
+	for _, envVar := range bytes.Split(envData, []byte{0}) {
+		for i, envVarName := range ServiceNameEnvVars {
+			l := len(envVarName)
+			if len(envVar) > l+1 && envVar[l] == '=' && bytes.HasPrefix(envVar, []byte(envVarName)) {
+				if i < foundIndex {
+					serviceName = string(envVar[l+1:])
+					foundIndex = i
+				}
+				if i == 0 {
+					return serviceName
+				}
+			}
+		}
+	}
+	return serviceName
+}
+
+func getServiceName(pid libpf.PID) string {
+	return getServiceNameFromProcPath(pid, "")
 }
