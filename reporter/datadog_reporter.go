@@ -628,7 +628,6 @@ func (r *DatadogReporter) getPprofProfile() {
 		if service == "" && len(traceInfo.frameTypes) > 0 &&
 			traceInfo.frameTypes[len(traceInfo.frameTypes)-1] == libpf.KernelFrame {
 			service = "system"
-			inferredService = true
 		}
 
 		if service == "" {
