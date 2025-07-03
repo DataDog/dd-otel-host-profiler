@@ -1,6 +1,6 @@
 stages:
   - deploy
-
+  - internal_image_deploy
 
 variables:
   DOWNSTREAM_BRANCH:
@@ -22,3 +22,33 @@ deploy_to_reliability_env:
     UPSTREAM_PROJECT_ID: $CI_PROJECT_ID
     UPSTREAM_PROJECT_NAME: $CI_PROJECT_NAME
     UPSTREAM_COMMIT_SHA: $CI_COMMIT_SHA
+
+prepare_release_tag:
+  stage: internal_image_deploy
+  script:
+    - echo "Preparing release tag"
+    - echo "RELEASE_TAG=${CI_COMMIT_TAG#gitlab-v}" > .env
+    - if [[ $RELEASE_TAG == *-rc* ]]; then
+        echo "RELEASE_PROD=false" >> .env
+      else
+        echo "RELEASE_PROD=true" >> .env
+      fi
+  artifacts:
+    reports:
+      dotenv: .env
+
+publish_internal_container_image:
+  stage: internal_image_deploy
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^gitlab-v\d+\.\d+\.\d+(-rc\d+)?$/
+      when: on_success
+  trigger:
+    project: DataDog/images
+    IMAGE_VERSION: tmpl-v1
+    IMAGE_NAME: dd-otel-host-profiler
+    RELEASE_TAG: $RELEASE_TAG
+    RELEASE_PROD: $RELEASE_PROD
+    RELEASE_STAGING: true
+  needs:
+    - prepare_release_tag
+      artifacts: true
