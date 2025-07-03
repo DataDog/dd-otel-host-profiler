@@ -83,7 +83,9 @@ jobs:
           artifacts: "dd-otel-host-profiler-v*.tar.gz,sha256sums.txt"
           allowUpdates: true
           omitBody:  true
-          draft: true
+          # draft: true
+          prerelease: true
+          removeArtifacts: true
           tag: ${{ env.RELEASE_VERSION }}
       - name: Build and push Docker image
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
@@ -94,3 +96,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           annotations: ${{ steps.meta.outputs.annotations }}
+      - name: Trigger internal image publish
+        # create a new tag to trigger gitlab workflow to publish internal image
+        run: |
+          git tag "gitlab-${{ env.RELEASE_VERSION }}"
+          git push origin "gitlab-${{ env.RELEASE_VERSION }}"
