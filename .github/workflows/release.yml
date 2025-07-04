@@ -4,8 +4,8 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+-?*'
-    branches:
-      - 'main'
+    # branches:
+    #   - 'main'
 
 permissions:
   contents: read
@@ -102,4 +102,4 @@ jobs:
         # create a new tag to trigger gitlab workflow to publish internal image
         run: |
           git tag "gitlab-${{ env.RELEASE_VERSION }}"
-          git push origin "gitlab-${{ env.RELEASE_VERSION }}"
+          git push -f origin "gitlab-${{ env.RELEASE_VERSION }}"
