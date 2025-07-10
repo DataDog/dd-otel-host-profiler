@@ -1,24 +1,181 @@
 stages:
   - deploy
 
-
 variables:
-  DOWNSTREAM_BRANCH:
+  RELIABILITY_ENV_DOWNSTREAM_BRANCH:
     value: "master"
     description: "Run a specific datadog-reliability-env branch downstream"
+  IMAGES_DOWNSTREAM_BRANCH:
+    value: "master"
+    description: "Run a specific images branch downstream"
+  REPUBLISH_LATEST_IMAGES:
+    value: "false"
+    description: "Republish the latest container images"
+  DEPLOY_TO_RELIABILITY_ENV:
+    value: "false"
+    description: "Deploy to reliability env"
 
 deploy_to_reliability_env:
   stage: deploy
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $DEPLOY_TO_RELIABILITY_ENV == "true"
       when: on_success
     - when: manual
       allow_failure: true
   trigger:
     project: DataDog/apm-reliability/datadog-reliability-env
-    branch: $DOWNSTREAM_BRANCH
+    branch: $RELIABILITY_ENV_DOWNSTREAM_BRANCH
   variables:
     UPSTREAM_BRANCH: $CI_COMMIT_REF_NAME
     UPSTREAM_PROJECT_ID: $CI_PROJECT_ID
     UPSTREAM_PROJECT_NAME: $CI_PROJECT_NAME
     UPSTREAM_COMMIT_SHA: $CI_COMMIT_SHA
+
+prepare_release_tag:
+  stage: deploy
+  tags: ["arch:amd64"]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^gitlab-v\d+\.\d+\.\d+(-rc\d+)?$/
+      when: on_success
+    - when: manual
+      allow_failure: true
+  script:
+    - echo "Preparing release tag"
+    # Remove the gitlab-v prefix from the tag
+    - RELEASE_TAG=${CI_COMMIT_TAG#gitlab-v}
+    - echo "RELEASE_TAG=${RELEASE_TAG}" > .env
+    - if [[ "$RELEASE_TAG" == *-rc* ]]; then
+    -   echo "RELEASE_PROD=false" >> .env
+    - else
+    -   echo "RELEASE_PROD=true" >> .env
+    - fi
+    - cat .env
+  artifacts:
+    reports:
+      dotenv: .env
+
+publish_internal_container_image:
+  stage: deploy
+  trigger:
+    project: DataDog/images
+    branch: $IMAGES_DOWNSTREAM_BRANCH
+    strategy: depend
+  variables:
+    IMAGE_VERSION: parametrized
+    IMAGE_NAME: dd-otel-host-profiler
+    RELEASE_TAG: $RELEASE_TAG
+    REF_TAG_VERSION: $RELEASE_TAG
+    RELEASE_PROD: $RELEASE_PROD
+    RELEASE_STAGING: true
+    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
+    X_DOCKER_ENV_PROFILER_VERSION: v$RELEASE_TAG
+    X_DOCKER_ENV_PROFILER_REVISION: $CI_COMMIT_SHORT_SHA
+  needs:
+    - prepare_release_tag
+
+publish_internal_container_image_for_staging:
+  stage: deploy
+  rules:
+    # This job is only triggered when a release candidate tag is created
+    - if: $CI_COMMIT_TAG =~ /^.*-rc\d+$/
+      when: on_success
+  trigger:
+    project: DataDog/images
+    branch: $IMAGES_DOWNSTREAM_BRANCH
+    strategy: depend
+  variables:
+    IMAGE_VERSION: parametrized
+    IMAGE_NAME: dd-otel-host-profiler
+    RELEASE_TAG: 0.x.x-rc
+    REF_TAG_VERSION: $RELEASE_TAG
+    RELEASE_PROD: false
+    RELEASE_STAGING: true
+    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
+    X_DOCKER_ENV_PROFILER_VERSION: v$RELEASE_TAG
+    X_DOCKER_ENV_PROFILER_REVISION: $CI_COMMIT_SHORT_SHA
+  needs:
+    - prepare_release_tag
+
+determine_latest_release_tags:
+  stage: deploy
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/github-cli:2.43.0
+  rules:
+    - if: $REPUBLISH_LATEST_IMAGES == "true"
+      when: on_success
+    - when: manual
+      allow_failure: true
+  script:
+    - set -euo pipefail
+    - git clone -b main https://github.com/Datadog/dd-otel-host-profiler.git && pushd dd-otel-host-profiler
+    - git fetch --tags
+    - LATEST_RELEASE_TAG=$(git describe --match 'v*' --exclude '*-rc*' --abbrev=0 --first-parent)
+    - LATEST_RELEASE_CANDIDATE_TAG=$(git describe --match 'v*-rc*' --abbrev=0 --first-parent)
+    - LATEST_RELEASE_SHORT_SHA=$(git rev-parse --short $LATEST_RELEASE_TAG^{commit})
+    - LATEST_RELEASE_CANDIDATE_SHORT_SHA=$(git rev-parse --short $LATEST_RELEASE_CANDIDATE_TAG^{commit})
+    - popd  # Go back to the job's root directory to create the .env file
+    - echo "LATEST_RELEASE_TAG=${LATEST_RELEASE_TAG#v}" > .env
+    - echo "LATEST_RELEASE_CANDIDATE_TAG=${LATEST_RELEASE_CANDIDATE_TAG#v}" >> .env
+    - echo "LATEST_RELEASE_SHORT_SHA=$LATEST_RELEASE_SHORT_SHA" >> .env
+    - echo "LATEST_RELEASE_CANDIDATE_SHORT_SHA=$LATEST_RELEASE_CANDIDATE_SHORT_SHA" >> .env
+    - cat .env
+  artifacts:
+    reports:
+      dotenv: .env
+
+republish_latest_internal_container_image:
+  stage: deploy
+  trigger:
+    project: DataDog/images
+    branch: $IMAGES_DOWNSTREAM_BRANCH
+    strategy: depend
+  variables:
+    IMAGE_VERSION: parametrized
+    IMAGE_NAME: dd-otel-host-profiler
+    RELEASE_TAG: $LATEST_RELEASE_TAG
+    REF_TAG_VERSION: $LATEST_RELEASE_TAG
+    RELEASE_PROD: true
+    RELEASE_STAGING: false
+    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
+    X_DOCKER_ENV_PROFILER_VERSION: v$LATEST_RELEASE_TAG
+    X_DOCKER_ENV_PROFILER_REVISION: $LATEST_RELEASE_SHORT_SHA
+  needs:
+    - determine_latest_release_tags
+
+republish_latest_candidate_internal_container_image:
+  stage: deploy
+  trigger:
+    project: DataDog/images
+    branch: $IMAGES_DOWNSTREAM_BRANCH
+    strategy: depend
+  variables:
+    IMAGE_VERSION: parametrized
+    IMAGE_NAME: dd-otel-host-profiler
+    RELEASE_TAG: $LATEST_RELEASE_CANDIDATE_TAG
+    REF_TAG_VERSION: $LATEST_RELEASE_CANDIDATE_TAG
+    RELEASE_PROD: false
+    RELEASE_STAGING: true
+    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
+    X_DOCKER_ENV_PROFILER_VERSION: v$LATEST_RELEASE_CANDIDATE_TAG
+    X_DOCKER_ENV_PROFILER_REVISION: $LATEST_RELEASE_CANDIDATE_SHORT_SHA
+  needs:
+    - determine_latest_release_tags
+
+republish_latest_candidate_internal_container_image_for_staging:
+  stage: deploy
+  trigger:
+    project: DataDog/images
+    branch: $IMAGES_DOWNSTREAM_BRANCH
+    strategy: depend
+  variables:
+    IMAGE_VERSION: parametrized
+    IMAGE_NAME: dd-otel-host-profiler
+    RELEASE_TAG: 0.x.x-rc
+    REF_TAG_VERSION: $LATEST_RELEASE_CANDIDATE_TAG
+    RELEASE_PROD: false
+    RELEASE_STAGING: true
+    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
+    X_DOCKER_ENV_PROFILER_VERSION: v$LATEST_RELEASE_CANDIDATE_TAG
+    X_DOCKER_ENV_PROFILER_REVISION: $LATEST_RELEASE_CANDIDATE_SHORT_SHA
+  needs:
+    - determine_latest_release_tags
