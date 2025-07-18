@@ -5,15 +5,15 @@ variables:
   RELIABILITY_ENV_DOWNSTREAM_BRANCH:
     value: "master"
     description: "Run a specific datadog-reliability-env branch downstream"
+  DEPLOY_TO_RELIABILITY_ENV:
+    value: "false"
+    description: "Deploy to reliability env"
   IMAGES_DOWNSTREAM_BRANCH:
     value: "master"
     description: "Run a specific images branch downstream"
   REPUBLISH_LATEST_IMAGES:
     value: "false"
     description: "Republish the latest container images"
-  DEPLOY_TO_RELIABILITY_ENV:
-    value: "false"
-    description: "Deploy to reliability env"
 
 deploy_to_reliability_env:
   stage: deploy

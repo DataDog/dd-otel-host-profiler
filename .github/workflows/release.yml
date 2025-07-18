@@ -4,8 +4,8 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+-?*'
-    # branches:
-    #   - 'main'
+    branches:
+      - 'main'
 
 permissions:
   contents: read
@@ -85,7 +85,6 @@ jobs:
           artifacts: "dd-otel-host-profiler-v*.tar.gz,sha256sums.txt"
           allowUpdates: true
           omitBody:  true
-          # draft: true
           prerelease: true
           removeArtifacts: true
           tag: ${{ env.RELEASE_VERSION }}
