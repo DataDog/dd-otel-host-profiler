@@ -55,7 +55,7 @@ A `docker-compose.yml` file is provided to help run the profiler in a container 
 First, create a `.env` file with the following content:
 
 ```
-DD_SITE=datadoghq.com # optional, defaults to "datadoghq.com"
+DD_SITE=datad0g.com # optional (required on a Datadog workspace), defaults to "datadoghq.com"
 DD_HOST_PROFILING_UPLOAD_PERIOD=10s # optional, defaults to 60s
 DD_API_KEY=your-api-key # required (not needed on a Datadog workspace) 
 DD_APP_KEY=your-app-key # required (not needed on a Datadog workspace) 
