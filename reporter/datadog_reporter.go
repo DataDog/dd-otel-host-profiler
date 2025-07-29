@@ -53,14 +53,6 @@ type execInfo struct {
 	goBuildID  string
 }
 
-// sourceInfo allows mapping a frame to its source origin.
-type sourceInfo struct {
-	lineNumber     libpf.SourceLineno
-	functionOffset uint32
-	functionName   string
-	filePath       string
-}
-
 // funcInfo is a helper to construct profile.Function messages.
 type funcInfo struct {
 	name     string
@@ -133,8 +125,8 @@ type DatadogReporter struct {
 	// executables stores metadata for executables.
 	executables *lru.SyncedLRU[libpf.FileID, execInfo]
 
-	// frames maps frame information to its source location.
-	frames *lru.SyncedLRU[libpf.FileID, *xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]]
+	// Frames maps frame information to its source location.
+	frames *lru.SyncedLRU[libpf.FrameID, samples.SourceInfo]
 
 	// traceEvents stores reported trace events (trace metadata with frames and counts)
 	traceEvents xsync.RWMutex[map[traceAndMetaKey]*traceEvents]
@@ -168,8 +160,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	}
 	executables.SetLifetime(executableCacheLifetime)
 
-	frames, err := lru.NewSynced[libpf.FileID,
-		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.FramesCacheElements, libpf.FileID.Hash32)
+	frames, err := lru.NewSynced[libpf.FrameID, samples.SourceInfo](cfg.FramesCacheElements, libpf.FrameID.Hash32)
 	if err != nil {
 		return nil, err
 	}
@@ -277,57 +268,22 @@ func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataAr
 // FrameKnown returns true if the metadata of the Frame specified by frameID is
 // cached in the reporter.
 func (r *DatadogReporter) FrameKnown(frameID libpf.FrameID) bool {
-	known := false
-	if frameMapLock, exists := r.frames.GetAndRefresh(frameID.FileID(), framesCacheLifetime); exists {
-		frameMap := frameMapLock.RLock()
-		defer frameMapLock.RUnlock(&frameMap)
-		_, known = (*frameMap)[frameID.AddressOrLine()]
-	}
+	_, known := r.frames.GetAndRefresh(frameID, framesCacheLifetime)
 	return known
 }
 
 // FrameMetadata accepts metadata associated with a frame and caches this information.
 func (r *DatadogReporter) FrameMetadata(args *reporter.FrameMetadataArgs) {
-	fileID := args.FrameID.FileID()
-	addressOrLine := args.FrameID.AddressOrLine()
-
 	log.Debugf("FrameMetadata [%x] %v+%v at %v:%v",
-		fileID, args.FunctionName, args.FunctionOffset,
+		args.FrameID.FileID(), args.FunctionName, args.FunctionOffset,
 		args.SourceFile, args.SourceLine)
-
-	if frameMapLock, exists := r.frames.GetAndRefresh(fileID, framesCacheLifetime); exists {
-		frameMap := frameMapLock.WLock()
-		defer frameMapLock.WUnlock(&frameMap)
-
-		sourceFile := args.SourceFile
-
-		if sourceFile == "" {
-			// The new sourceFile may be empty, and we don't want to overwrite
-			// an existing filePath with it.
-			if s, exists := (*frameMap)[addressOrLine]; exists {
-				sourceFile = s.filePath
-			}
-		}
-
-		(*frameMap)[addressOrLine] = sourceInfo{
-			lineNumber:     args.SourceLine,
-			filePath:       sourceFile,
-			functionOffset: args.FunctionOffset,
-			functionName:   args.FunctionName,
-		}
-
-		return
+	si := samples.SourceInfo{
+		LineNumber:     args.SourceLine,
+		FilePath:       args.SourceFile,
+		FunctionOffset: args.FunctionOffset,
+		FunctionName:   args.FunctionName,
 	}
-
-	v := make(map[libpf.AddressOrLineno]sourceInfo)
-	v[addressOrLine] = sourceInfo{
-		lineNumber:     args.SourceLine,
-		filePath:       args.SourceFile,
-		functionOffset: args.FunctionOffset,
-		functionName:   args.FunctionName,
-	}
-	mu := xsync.NewRWMutex(v)
-	r.frames.Add(fileID, &mu)
+	r.frames.Add(args.FrameID, si)
 }
 
 // ReportHostMetadata is a NOP for DatadogReporter.
@@ -494,25 +450,17 @@ func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEv
 				// Store interpreted frame information as Line message:
 				line := pprofile.Line{}
 
-				fileIDInfoLock, exists := r.frames.GetAndRefresh(traceInfo.files[i], framesCacheLifetime)
-				if !exists {
+				if si, exists := r.frames.GetAndRefresh(
+					libpf.NewFrameID(traceInfo.files[i], traceInfo.linenos[i]),
+					framesCacheLifetime); exists {
+					line.Line = int64(si.LineNumber)
+					line.Function = createPprofFunctionEntry(funcMap, profile,
+						si.FunctionName, si.FilePath)
+				} else {
 					// At this point, we do not have enough information for the frame.
 					// Therefore, we report a dummy entry and use the interpreter as filename.
 					line.Function = createPprofFunctionEntry(funcMap, profile,
-						"UNREPORTED", frameKind.String())
-				} else {
-					fileIDInfo := fileIDInfoLock.RLock()
-					if si, exists := (*fileIDInfo)[traceInfo.linenos[i]]; exists {
-						line.Line = int64(si.lineNumber)
-						line.Function = createPprofFunctionEntry(funcMap, profile,
-							si.functionName, si.filePath)
-					} else {
-						// At this point, we do not have enough information for the frame.
-						// Therefore, we report a dummy entry and use the interpreter as filename.
-						line.Function = createPprofFunctionEntry(funcMap, profile,
-							"UNRESOLVED", frameKind.String())
-					}
-					fileIDInfoLock.RUnlock(&fileIDInfo)
+						"UNRESOLVED", frameKind.String())
 				}
 				loc.Line = append(loc.Line, line)
 
