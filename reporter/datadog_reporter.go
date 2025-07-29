@@ -455,7 +455,7 @@ func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEv
 					framesCacheLifetime); exists {
 					line.Line = int64(si.LineNumber)
 					line.Function = createPprofFunctionEntry(funcMap, profile,
-						si.FunctionName, si.FilePath)
+						si.FunctionName.String(), si.FilePath.String())
 				} else {
 					// At this point, we do not have enough information for the frame.
 					// Therefore, we report a dummy entry and use the interpreter as filename.
