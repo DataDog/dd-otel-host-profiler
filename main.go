@@ -66,7 +66,7 @@ const (
 	// Go 'flag' package calls os.Exit(2) on flag parse errors, if ExitOnError is set
 	exitParseError exitCode = 2
 
-	defaultFramesCacheSize      = 65536
+	defaultFramesCacheSize      = 131072
 	defaultExecutablesCacheSize = 65536
 	defaultProcessesCacheSize   = 16384
 )
