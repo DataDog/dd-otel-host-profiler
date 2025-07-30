@@ -279,7 +279,7 @@ func mainWithExitCode() exitCode {
 		SamplesPerSecond:       int(args.samplesPerSecond),
 		MapScaleFactor:         int(args.mapScaleFactor),
 		KernelVersionCheck:     !args.noKernelVersionCheck,
-		DebugTracer:            args.verboseeBPF,
+		VerboseMode:            args.verboseeBPF,
 		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
 		ProbabilisticInterval:  args.probabilisticInterval,
 		ProbabilisticThreshold: uint(args.probabilisticThreshold),
