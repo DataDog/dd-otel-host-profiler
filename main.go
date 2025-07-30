@@ -196,6 +196,9 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to parse the included tracers: %v", err)
 	}
 
+	// Disable Go interpreter because we are doing Go symbolization remotely.
+	includeTracers.Disable(tracertypes.GoTracer)
+
 	validatedTags := ValidateTags(args.tags)
 	log.Debugf("Validated tags: %s", validatedTags)
 
