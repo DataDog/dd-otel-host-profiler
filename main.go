@@ -66,7 +66,7 @@ const (
 	// Go 'flag' package calls os.Exit(2) on flag parse errors, if ExitOnError is set
 	exitParseError exitCode = 2
 
-	defaultFramesCacheSize      = 65536
+	defaultFramesCacheSize      = 131072
 	defaultExecutablesCacheSize = 65536
 	defaultProcessesCacheSize   = 16384
 )
@@ -174,6 +174,9 @@ func mainWithExitCode() exitCode {
 	if err != nil {
 		return failure("Failed to parse the included tracers: %v", err)
 	}
+
+	// Disable Go interpreter because we are doing Go symbolization remotely.
+	includeTracers.Disable(tracertypes.GoTracer)
 
 	validatedTags := ValidateTags(args.tags)
 	log.Debugf("Validated tags: %s", validatedTags)
