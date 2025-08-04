@@ -30,8 +30,6 @@ type Config struct {
 	IntakeURL string
 	// ExecutablesCacheElements defines item capacity of the executables cache.
 	ExecutablesCacheElements uint32
-	// FramesCacheElements defines the item capacity of the frames cache.
-	FramesCacheElements uint32
 	// ProcessesCacheElements defines the item capacity of the processes cache.
 	ProcessesCacheElements uint32
 	// samplesPerSecond defines the number of samples per second.

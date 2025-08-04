@@ -66,7 +66,6 @@ const (
 	// Go 'flag' package calls os.Exit(2) on flag parse errors, if ExitOnError is set
 	exitParseError exitCode = 2
 
-	defaultFramesCacheSize      = 131072
 	defaultExecutablesCacheSize = 65536
 	defaultProcessesCacheSize   = 16384
 )
@@ -233,17 +232,15 @@ func mainWithExitCode() exitCode {
 		Version:                  versionInfo.Version,
 		ReportInterval:           intervals.ReportInterval(),
 		ExecutablesCacheElements: defaultExecutablesCacheSize,
-		// Next step: Calculate FramesCacheElements from numCores and samplingRate.
-		FramesCacheElements:    defaultFramesCacheSize,
-		ProcessesCacheElements: defaultProcessesCacheSize,
-		SamplesPerSecond:       int(args.samplesPerSecond),
-		PprofPrefix:            args.pprofPrefix,
-		Tags:                   validatedTags,
-		Timeline:               args.timeline,
-		APIKey:                 apiKey,
-		EnableSplitByService:   args.enableSplitByService,
-		SplitServiceSuffix:     args.splitServiceSuffix,
-		HostServiceName:        args.hostServiceName,
+		ProcessesCacheElements:   defaultProcessesCacheSize,
+		SamplesPerSecond:         int(args.samplesPerSecond),
+		PprofPrefix:              args.pprofPrefix,
+		Tags:                     validatedTags,
+		Timeline:                 args.timeline,
+		APIKey:                   apiKey,
+		EnableSplitByService:     args.enableSplitByService,
+		SplitServiceSuffix:       args.splitServiceSuffix,
+		HostServiceName:          args.hostServiceName,
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,
