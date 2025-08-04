@@ -80,17 +80,15 @@ type processMetadata struct {
 }
 
 type uploadProfileData struct {
-	start       time.Time
-	end         time.Time
-	profile     *pprofile.Profile
-	containerID string
-	entityID    string
-	tags        Tags
+	start    time.Time
+	end      time.Time
+	profile  *pprofile.Profile
+	entityID string
+	tags     Tags
 }
 
 type serviceEntity struct {
 	service         string
-	containerID     string
 	entityID        string
 	inferredService bool
 }
@@ -330,7 +328,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
 		data.start, data.end, r.config.IntakeURL,
 		data.tags, r.config.Version, r.config.APIKey,
-		data.containerID, data.entityID, r.family)
+		data.entityID, r.family)
 }
 
 func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*samples.TraceEvents, start, end time.Time) (*pprofile.Profile, profileStats) {
@@ -431,14 +429,10 @@ func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*samples
 			sample.Location = append(sample.Location, loc)
 		}
 
-		containerMetadata := containermetadata.ContainerMetadata{}
-		if !r.config.EnableSplitByService {
-			containerMetadata = processMeta.containerMetadata
-		}
 		if !r.config.Timeline {
 			count := int64(len(traceInfo.Timestamps))
 			labels := make(map[string][]string)
-			addTraceLabels(labels, traceKey, containerMetadata, baseExec, 0)
+			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
 			sample.Value = append(sample.Value, count, count*samplingPeriod)
 			sample.Label = labels
 			profile.Sample = append(profile.Sample, sample)
@@ -523,7 +517,6 @@ func (r *DatadogReporter) getPprofProfile() {
 
 		entity := serviceEntity{
 			service:         service + r.config.SplitServiceSuffix,
-			containerID:     processMeta.containerMetadata.ContainerID,
 			entityID:        processMeta.containerMetadata.EntityID,
 			inferredService: inferredService,
 		}
@@ -544,12 +537,11 @@ func (r *DatadogReporter) getPprofProfile() {
 		totalPIDsWithNoProcessMetadata += stats.pidWithNoMetadata
 		tags := createTagsForProfile(r.tags, profileSeq, e.service, e.inferredService)
 		r.profiles <- &uploadProfileData{
-			profile:     profile,
-			start:       intervalStart,
-			end:         intervalEnd,
-			containerID: e.containerID,
-			entityID:    e.entityID,
-			tags:        tags,
+			profile:  profile,
+			start:    intervalStart,
+			end:      intervalEnd,
+			entityID: e.entityID,
+			tags:     tags,
 		}
 		log.Debugf("Reporting profile for service %s: %d samples, %d PIDs with no process metadata, tags: %v", e.service, stats.totalSampleCount, stats.pidWithNoMetadata, tags)
 	}
@@ -637,6 +629,7 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMeta
 		labels["pod_name"] = append(labels["pod_name"], containerMetadata.PodName)
 	}
 
+	// In split by service, ContainerID always empty.
 	if containerMetadata.ContainerID != "" {
 		labels["container_id"] = append(labels["container_id"], containerMetadata.ContainerID)
 	}
@@ -738,10 +731,21 @@ func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
 		ddService = getServiceName(pid)
 	}
 
-	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
-	if err != nil {
-		log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)
-		// Even upon failure, we might still have managed to get the containerID
+	var containerMetadata containermetadata.ContainerMetadata
+	if meta.ContainerID != "" && r.config.EnableSplitByService {
+		// Use containerID when found by the eBPF profiler and not other container metadata is needed
+		// (ie. split by service is enabled).
+		// eBPF profiler only supports cgroup v2 and even with cgroup v2, depending on Kubernetes settings,
+		// containerID might not be available in /proc/<pid>/cgroup.
+		containerMetadata = containermetadata.ContainerMetadata{
+			EntityID: "ci-" + meta.ContainerID,
+		}
+	} else {
+		containerMetadata, err = r.containerMetadataProvider.GetContainerMetadata(pid)
+		if err != nil {
+			log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)
+			// Even upon failure, we might still have managed to get the containerID
+		}
 	}
 
 	r.processes.Add(pid, processMetadata{
