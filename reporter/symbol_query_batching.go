@@ -13,6 +13,7 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
+	samples "github.com/DataDog/dd-otel-host-profiler/reporter/samples"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
@@ -92,7 +93,7 @@ func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, querie
 			continue
 		}
 
-		buildID := getBuildID(e.GnuBuildID(), e.GoBuildID(), e.FileHash())
+		buildID := samples.GetBuildID(e.GnuBuildID(), e.GoBuildID(), e.FileHash())
 		if buildID == "" {
 			result.fillWithError(errors.New("empty buildID"))
 			continue
