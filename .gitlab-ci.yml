@@ -35,20 +35,23 @@ prepare_release_tag:
   stage: deploy
   tags: ["arch:amd64"]
   rules:
-    - if: $CI_COMMIT_TAG =~ /^gitlab-v\d+\.\d+\.\d+(-rc\d+)?$/
+    - if: $CI_COMMIT_TAG =~ /^gitlab-(v\d+\.\d+\.\d+(-rc\d+)?|dev|dev-test)$/
       when: on_success
     - when: manual
       allow_failure: true
   script:
     - echo "Preparing release tag"
-    # Remove the gitlab-v prefix from the tag
-    - RELEASE_TAG=${CI_COMMIT_TAG#gitlab-v}
-    - echo "RELEASE_TAG=${RELEASE_TAG}" > .env
+    # Remove the gitlab- prefix from the tag
+    - RELEASE_TAG=${CI_COMMIT_TAG#gitlab-}
     - if [[ "$RELEASE_TAG" == *-rc* ]]; then
     -   echo "RELEASE_PROD=false" >> .env
     - else
     -   echo "RELEASE_PROD=true" >> .env
     - fi
+    - echo "PROFILER_VERSION=$RELEASE_TAG" >> .env
+    # Remove the v prefix from the tag if present (for release tags)
+    - RELEASE_TAG=${RELEASE_TAG#v}
+    - echo "RELEASE_TAG=${RELEASE_TAG}" >> .env
     - cat .env
   artifacts:
     reports:
@@ -68,7 +71,7 @@ publish_internal_container_image:
     RELEASE_PROD: $RELEASE_PROD
     RELEASE_STAGING: true
     DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
-    X_DOCKER_ENV_PROFILER_VERSION: v$RELEASE_TAG
+    X_DOCKER_ENV_PROFILER_VERSION: $PROFILER_VERSION
     X_DOCKER_ENV_PROFILER_REVISION: $CI_COMMIT_SHORT_SHA
   needs:
     - prepare_release_tag
@@ -91,7 +94,7 @@ publish_internal_container_image_for_staging:
     RELEASE_PROD: false
     RELEASE_STAGING: true
     DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
-    X_DOCKER_ENV_PROFILER_VERSION: v$RELEASE_TAG
+    X_DOCKER_ENV_PROFILER_VERSION: $PROFILER_VERSION
     X_DOCKER_ENV_PROFILER_REVISION: $CI_COMMIT_SHORT_SHA
   needs:
     - prepare_release_tag
