@@ -6,7 +6,6 @@
 package reporter
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"debug/elf"
@@ -86,12 +85,6 @@ type DatadogSymbolUploader struct {
 type goPCLnTabDump struct {
 	goPCLnTabPath string
 	goFuncPath    string
-}
-
-type requestData struct {
-	body            *bytes.Buffer
-	contentType     string
-	contentEncoding string
 }
 
 func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader, error) {
@@ -367,11 +360,15 @@ func (d *DatadogSymbolUploader) shouldUpload(e *symbol.Elf, existingSymbolSource
 
 // Returns true if the upload was successful, false otherwise
 func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, endpointIndices []int) bool {
-	reqData, err := d.buildRequestData(ctx, e)
+	symbolFile, err := d.createSymbolFile(ctx, e)
 	if err != nil {
-		log.Errorf("Failed to build request data for executable %s: %v", e, err)
+		log.Errorf("failed to create symbol file: %v", err)
 		return false
 	}
+	defer os.Remove(symbolFile.Name())
+	defer symbolFile.Close()
+	symbolSource, _ := d.getSymbolSourceWithGoPCLnTab(e)
+	metadata := newSymbolUploadRequestMetadata(e, symbolSource, d.version)
 
 	if d.dryRun {
 		log.Infof("Dry run: would upload symbols for executable: %s", e)
@@ -381,7 +378,12 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, endpo
 	var g errgroup.Group
 	for _, ind := range endpointIndices {
 		g.Go(func() error {
-			return d.uploadSymbols(ctx, reqData, ind)
+			symbolFileDup, innerErr := os.Open(symbolFile.Name())
+			if innerErr != nil {
+				return fmt.Errorf("failed to open symbol file: %w", innerErr)
+			}
+			defer symbolFileDup.Close()
+			return d.uploadSymbols(ctx, symbolFileDup, metadata, ind)
 		})
 	}
 
@@ -556,18 +558,56 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 	return nil
 }
 
-func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, reqData *requestData, endpointIdx int) error {
-	req, err := d.buildSymbolUploadRequest(ctx, reqData, endpointIdx)
+func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *os.File, e *symbolUploadRequestMetadata, endpointIdx int) error {
+	pipeR, pipeW := io.Pipe()
+
+	var compressed *zstd.Writer
+	var mw *multipart.Writer
+	var contentEncoding string
+	if !d.compressDebugSections {
+		compressed = zstd.NewWriter(pipeW)
+		mw = multipart.NewWriter(compressed)
+		contentEncoding = "zstd"
+	} else {
+		mw = multipart.NewWriter(pipeW)
+	}
+
+	req, err := d.buildSymbolUploadRequest(ctx, pipeR, mw.FormDataContentType(), contentEncoding, endpointIdx)
 	if err != nil {
 		return fmt.Errorf("failed to build symbol upload request: %w", err)
 	}
 
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return err
-	}
+	var g errgroup.Group
+	g.Go(func() error {
+		defer pipeW.Close()
+		innerErr := streamRequestBody(symbolFile, e, mw)
+		if innerErr != nil {
+			return fmt.Errorf("failed to stream request body: %w", innerErr)
+		}
+		// Close the multipart writer then the zstd writer
+		innerErr = mw.Close()
+		if innerErr != nil {
+			return fmt.Errorf("failed to close multipart writer: %w", innerErr)
+		}
+		if compressed != nil {
+			innerErr = compressed.Close()
+			if innerErr != nil {
+				return fmt.Errorf("failed to close zstd writer: %w", innerErr)
+			}
+		}
+		return nil
+	})
 
+	resp, err := d.client.Do(req)
+	innerErr := g.Wait()
+	if err != nil {
+		return errors.Join(err, innerErr)
+	}
 	defer resp.Body.Close()
+
+	if innerErr != nil {
+		return innerErr
+	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -578,39 +618,16 @@ func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, reqData *requ
 	return nil
 }
 
-func (d *DatadogSymbolUploader) buildRequestData(ctx context.Context, e *symbol.Elf) (*requestData, error) {
-	symbolFile, err := d.createSymbolFile(ctx, e)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create symbol file: %w", err)
-	}
-	defer os.Remove(symbolFile.Name())
-	defer symbolFile.Close()
-
-	symbolSource, _ := d.getSymbolSourceWithGoPCLnTab(e)
-	return buildRequestBody(symbolFile, newSymbolUploadRequestMetadata(e, symbolSource, d.version), !d.compressDebugSections)
-}
-
-func buildRequestBody(symbolFile *os.File, e *symbolUploadRequestMetadata, compress bool) (*requestData, error) {
-	b := new(bytes.Buffer)
-
-	var compressed *zstd.Writer
-	var mw *multipart.Writer
-	if compress {
-		compressed = zstd.NewWriter(b)
-		mw = multipart.NewWriter(compressed)
-	} else {
-		mw = multipart.NewWriter(b)
-	}
-
+func streamRequestBody(symbolFile *os.File, e *symbolUploadRequestMetadata, mw *multipart.Writer) error {
 	// Copy the symbol file into the multipart writer
 	filePart, err := mw.CreateFormFile("elf_symbol_file", "elf_symbol_file")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create form file: %w", err)
+		return fmt.Errorf("failed to create form file: %w", err)
 	}
 
 	_, err = io.Copy(filePart, symbolFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to copy symbol file: %w", err)
+		return fmt.Errorf("failed to copy symbol file: %w", err)
 	}
 
 	// Write the event metadata into the multipart writer
@@ -619,37 +636,19 @@ func buildRequestBody(symbolFile *os.File, e *symbolUploadRequestMetadata, compr
 		"Content-Type":        []string{"application/json"},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create event part: %w", err)
+		return fmt.Errorf("failed to create event part: %w", err)
 	}
 
 	err = json.NewEncoder(eventPart).Encode(e)
 	if err != nil {
-		return nil, fmt.Errorf("failed to write JSON metadata: %w", err)
+		return fmt.Errorf("failed to write JSON metadata: %w", err)
 	}
 
-	// Close the multipart writer then the zstd writer
-	err = mw.Close()
-	if err != nil {
-		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
-	}
-
-	encoding := ""
-	if compress {
-		err = compressed.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to close zstd writer: %w", err)
-		}
-		encoding = "zstd"
-	}
-
-	r := &requestData{body: b, contentType: mw.FormDataContentType(), contentEncoding: encoding}
-	return r, nil
+	return nil
 }
 
-func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, reqData *requestData, ind int) (*http.Request, error) {
-	// Do not pass directly the request body to the upload function because it might be consumed by multiple requests
-	b := bytes.NewReader(reqData.body.Bytes())
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, d.intakeURLs[ind], b)
+func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, body io.Reader, contentType, contentEncoding string, ind int) (*http.Request, error) {
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, d.intakeURLs[ind], body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -657,9 +656,9 @@ func (d *DatadogSymbolUploader) buildSymbolUploadRequest(ctx context.Context, re
 	r.Header.Set("Dd-Api-Key", d.symbolEndpoints[ind].APIKey)
 	r.Header.Set("Dd-Evp-Origin", profilerName)
 	r.Header.Set("Dd-Evp-Origin-Version", d.version)
-	r.Header.Set("Content-Type", reqData.contentType)
-	if reqData.contentEncoding != "" {
-		r.Header.Set("Content-Encoding", reqData.contentEncoding)
+	r.Header.Set("Content-Type", contentType)
+	if contentEncoding != "" {
+		r.Header.Set("Content-Encoding", contentEncoding)
 	}
 	return r, nil
 }
