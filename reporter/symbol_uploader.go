@@ -364,6 +364,8 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, endpo
 		return false
 	}
 
+	log.Infof("Built request data for executable %s, and will upload to endpoints: %v", e, endpointIndices)
+
 	if d.dryRun {
 		log.Infof("Dry run: would upload symbols for executable: %s", e)
 		return true
