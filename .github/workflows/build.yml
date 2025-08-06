@@ -61,8 +61,8 @@ jobs:
         cat .repo.patch
         exit 1
 
-  test:
-    name: Test
+  build:
+    name: Build and Test
     strategy:
       fail-fast: true
       max-parallel: 2
@@ -77,6 +77,9 @@ jobs:
       with:
         go-version: ${{ inputs.go-version }}
         check-latest: true
+    - name: Build
+      run: |
+        make VERSION=${{ inputs.profiler-version }}
     - name: Install gotestsum
       shell: bash
       run: |
@@ -84,28 +87,8 @@ jobs:
     - name: Tests
       run: |
         gotestsum --junitfile gotestsum-report.xml -- ./... -v -race -covermode=atomic
-
-  build:
-    name: Build
-    strategy:
-      fail-fast: true
-      max-parallel: 2
-      matrix:
-        os: ["arm-4core-linux-ubuntu24.04", "ubuntu-24.04"]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Check out
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Set up Go ${{ inputs.go-version }}
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: ${{ inputs.go-version }}
-          check-latest: true
-      - name: Build
-        run: |
-          make VERSION=${{ inputs.profiler-version }}
-      - name: Upload artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: agent-${{ matrix.os == 'arm-4core-linux-ubuntu24.04' && 'aarch64' || 'x86_64' }}
-          path: dd-otel-host-profiler
+    - name: Upload artifacts
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: agent-${{ matrix.os == 'arm-4core-linux-ubuntu24.04' && 'aarch64' || 'x86_64' }}
+        path: dd-otel-host-profiler
