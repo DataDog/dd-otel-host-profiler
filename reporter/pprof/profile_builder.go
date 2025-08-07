@@ -20,6 +20,8 @@ import (
 
 const unknownStr = "UNKNOWN"
 
+var dummyFileID = libpf.NewFileID(0, 0)
+
 type ProfileBuilder struct {
 	profile            *pprofile.Profile
 	funcMap            map[funcInfo]*pprofile.Function
@@ -89,15 +91,19 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 				// that are not originate from a native or interpreted
 				// program.
 			default:
+				sourceFile := frame.SourceFile.String()
+				if frameKind == libpf.KernelFrame {
+					sourceFile = "kernel"
+				}
+
 				// Store interpreted frame information as Line message:
 				line := pprofile.Line{
 					Line:     int64(frame.SourceLine),
-					Function: b.createPprofFunctionEntry(frame.FunctionName.String(), frame.SourceFile.String()),
+					Function: b.createPprofFunctionEntry(frame.FunctionName.String(), sourceFile),
 				}
 
 				loc.Line = append(loc.Line, line)
-				// To be compliant with the protocol generate a dummy mapping entry.
-				loc.Mapping = b.getDummyMapping(frame.FileID)
+				loc.Mapping = b.getDummyMapping()
 			}
 			sample.Location = append(sample.Location, loc)
 		}
@@ -195,13 +201,13 @@ func (b *ProfileBuilder) createPprofFunctionEntry(name, fileName string) *pprofi
 }
 
 // getDummyMappingIndex inserts or looks up a dummy entry for interpreted FileIDs.
-func (b *ProfileBuilder) getDummyMapping(fileID libpf.FileID) *pprofile.Mapping {
-	if tmpMapping, exists := b.fileIDtoMapping[fileID]; exists {
+func (b *ProfileBuilder) getDummyMapping() *pprofile.Mapping {
+	if tmpMapping, exists := b.fileIDtoMapping[dummyFileID]; exists {
 		return tmpMapping
 	}
 
-	mapping := b.createPprofMapping("DUMMY", fileID.StringNoQuotes())
-	b.fileIDtoMapping[fileID] = mapping
+	mapping := b.createPprofMapping("DUMMY", dummyFileID.StringNoQuotes())
+	b.fileIDtoMapping[dummyFileID] = mapping
 
 	return mapping
 }
