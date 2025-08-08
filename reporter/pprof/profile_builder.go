@@ -35,8 +35,7 @@ type ProfileBuilder struct {
 }
 
 type ProfileStats struct {
-	TotalSampleCount  int
-	PidWithNoMetadata int
+	TotalSampleCount int
 }
 
 func NewProfileBuilder(start, end time.Time, samplesPerSecond int, numSamples int, timeline bool,
@@ -126,7 +125,6 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 			}
 
 		default:
-			b.pidsWithNoMetadata[traceKey.Pid] = libpf.Void{}
 			execPath = traceKey.Comm
 			baseExec = execPath
 		}
@@ -166,8 +164,7 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 func (b *ProfileBuilder) Build() (*pprofile.Profile, ProfileStats) {
 	profile := b.profile.Compact()
 	stats := ProfileStats{
-		TotalSampleCount:  b.totalSampleCount,
-		PidWithNoMetadata: len(b.pidsWithNoMetadata),
+		TotalSampleCount: b.totalSampleCount,
 	}
 	return profile, stats
 }

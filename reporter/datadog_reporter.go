@@ -90,6 +90,9 @@ type DatadogReporter struct {
 	// profileSeq is the sequence number of the profile (ie. number of profiles uploaded until now).
 	profileSeq uint64
 
+	// processAlreadyExitedCount is the number of processes that have already exited when attempting to collect their metadata.
+	processAlreadyExitedCount int
+
 	// intervalStart is the timestamp of the start of the current interval.
 	intervalStart time.Time
 
@@ -324,6 +327,9 @@ func (r *DatadogReporter) getPprofProfile() {
 	profileSeq := r.profileSeq
 	r.profileSeq++
 
+	processAlreadyExitedCount := r.processAlreadyExitedCount
+	r.processAlreadyExitedCount = 0
+
 	events := r.traceEvents.WLock()
 	reportedEvents := *events
 	newEvents := make(rsamples.TraceEventsTree)
@@ -347,19 +353,17 @@ func (r *DatadogReporter) getPprofProfile() {
 		}
 		log.Infof("Tags: %v", tags)
 		log.Infof("Reporting single profile #%d from %v to %v: %d samples, %d PIDs with no process metadata",
-			profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), stats.TotalSampleCount, stats.PidWithNoMetadata)
+			profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), stats.TotalSampleCount, processAlreadyExitedCount)
 		return
 	}
 
 	totalSampleCount := 0
-	totalPIDsWithNoProcessMetadata := 0
 	for e, perServiceEvents := range reportedEvents {
 		profileBuilder := pprof.NewProfileBuilder(intervalStart, intervalEnd, r.config.SamplesPerSecond, len(reportedEvents), r.config.Timeline, r.executables, r.processes)
 
 		profileBuilder.AddEvents(perServiceEvents[support.TraceOriginSampling])
 		profile, stats := profileBuilder.Build()
 		totalSampleCount += stats.TotalSampleCount
-		totalPIDsWithNoProcessMetadata += stats.PidWithNoMetadata
 		tags := createTagsForProfile(r.tags, profileSeq, e.Service, e.InferredService)
 		r.profiles <- &uploadProfileData{
 			profile:  profile,
@@ -368,10 +372,10 @@ func (r *DatadogReporter) getPprofProfile() {
 			entityID: e.EntityID,
 			tags:     tags,
 		}
-		log.Debugf("Reporting profile for service %s: %d samples, %d PIDs with no process metadata, tags: %v", e.Service, stats.TotalSampleCount, stats.PidWithNoMetadata, tags)
+		log.Debugf("Reporting profile for service %s: %d samples, tags: %v", e.Service, stats.TotalSampleCount, tags)
 	}
 	log.Infof("Reporting %d profiles #%d from %v to %v: %d samples, %d PIDs with no process metadata",
-		len(reportedEvents), profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), totalSampleCount, totalPIDsWithNoProcessMetadata)
+		len(reportedEvents), profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), totalSampleCount, processAlreadyExitedCount)
 }
 
 func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled bool) Tags {
@@ -423,6 +427,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	if name, err2 := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid)); err2 == nil {
 		processName = string(name)
 	} else {
+		r.processAlreadyExitedCount++
 		processName = meta.ProcessName
 	}
 
