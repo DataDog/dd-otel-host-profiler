@@ -47,7 +47,7 @@ jobs:
 
   publish:
     env:
-      RELEASE_VERSION: ${{ github.event_name == 'pull_request' && 'dev-test' || 'dev' }}
+      RELEASE_VERSION: ${{ github.event_name == 'pull_request' && 'dev-test-upstream1' || 'dev' }}
     if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'publish-dev-test') )}}
     name: Publish pre-release
     needs: [build]
