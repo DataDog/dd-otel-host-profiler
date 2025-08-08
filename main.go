@@ -197,6 +197,12 @@ func mainWithExitCode() exitCode {
 
 	// Disable Go interpreter because we are doing Go symbolization remotely.
 	includeTracers.Disable(tracertypes.GoTracer)
+	if args.collectContext {
+		includeTracers.Enable(tracertypes.Labels)
+	} else {
+		includeTracers.Disable(tracertypes.Labels)
+	}
+	log.Infof("Enabled tracers: %s", includeTracers.String())
 
 	validatedTags := ValidateTags(args.tags)
 	log.Debugf("Validated tags: %s", validatedTags)

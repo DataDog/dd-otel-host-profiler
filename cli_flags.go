@@ -121,6 +121,7 @@ type arguments struct {
 	goRuntimeMetricsStatsdAddress string
 	enableSplitByService          bool
 	splitServiceSuffix            string
+	collectContext                bool
 	cmd                           *cli.Command
 }
 
@@ -417,6 +418,14 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Use HTTP/2 when available for symbol upload. Only used if upload-symbols is enabled.",
 				Destination: &args.uploadSymbolsHTTP2,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_SYMBOLS_HTTP2"),
+			},
+			&cli.BoolFlag{
+				Name:        "collect-context",
+				Value:       false,
+				Hidden:      true,
+				Usage:       "Enable context collection.",
+				Destination: &args.collectContext,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_COLLECT_CONTEXT"),
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
