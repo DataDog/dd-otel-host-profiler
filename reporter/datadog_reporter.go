@@ -53,14 +53,6 @@ type execInfo struct {
 	goBuildID  string
 }
 
-// sourceInfo allows mapping a frame to its source origin.
-type sourceInfo struct {
-	lineNumber     libpf.SourceLineno
-	functionOffset uint32
-	functionName   string
-	filePath       string
-}
-
 // funcInfo is a helper to construct profile.Function messages.
 type funcInfo struct {
 	name     string
@@ -80,17 +72,6 @@ type traceAndMetaKey struct {
 	tid            libpf.PID
 }
 
-// traceEvents holds known information about a trace.
-type traceEvents struct {
-	files              []libpf.FileID
-	linenos            []libpf.AddressOrLineno
-	frameTypes         []libpf.FrameType
-	mappingStarts      []libpf.Address
-	mappingEnds        []libpf.Address
-	mappingFileOffsets []uint64
-	timestamps         []uint64 // in nanoseconds
-}
-
 type processMetadata struct {
 	updatedAt         time.Time
 	executablePath    string
@@ -99,17 +80,15 @@ type processMetadata struct {
 }
 
 type uploadProfileData struct {
-	start       time.Time
-	end         time.Time
-	profile     *pprofile.Profile
-	containerID string
-	entityID    string
-	tags        Tags
+	start    time.Time
+	end      time.Time
+	profile  *pprofile.Profile
+	entityID string
+	tags     Tags
 }
 
 type serviceEntity struct {
 	service         string
-	containerID     string
 	entityID        string
 	inferredService bool
 }
@@ -133,11 +112,8 @@ type DatadogReporter struct {
 	// executables stores metadata for executables.
 	executables *lru.SyncedLRU[libpf.FileID, execInfo]
 
-	// frames maps frame information to its source location.
-	frames *lru.SyncedLRU[libpf.FileID, *xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]]
-
 	// traceEvents stores reported trace events (trace metadata with frames and counts)
-	traceEvents xsync.RWMutex[map[traceAndMetaKey]*traceEvents]
+	traceEvents xsync.RWMutex[map[traceAndMetaKey]*samples.TraceEvents]
 
 	// processes stores the metadata associated to a PID.
 	processes *lru.SyncedLRU[libpf.PID, processMetadata]
@@ -168,17 +144,6 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 	}
 	executables.SetLifetime(executableCacheLifetime)
 
-	frames, err := lru.NewSynced[libpf.FileID,
-		*xsync.RWMutex[map[libpf.AddressOrLineno]sourceInfo]](cfg.FramesCacheElements, libpf.FileID.Hash32)
-	if err != nil {
-		return nil, err
-	}
-	frames.SetLifetime(framesCacheLifetime)
-	// Using SetLifetime / GetAndRefresh on frames prevents useful information from being
-	// evicted from the cache.
-	// But it also means that active frames will never be evicted, and thus that their corresponding values
-	// (which are maps) may grow indefinitely (cf. https://github.com/open-telemetry/opentelemetry-ebpf-profiler/pull/260).
-
 	processes, err := lru.NewSynced[libpf.PID, processMetadata](cfg.ProcessesCacheElements, libpf.PID.Hash32)
 	if err != nil {
 		return nil, err
@@ -204,9 +169,8 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 			stopSignal: make(chan libpf.Void),
 		},
 		executables:               executables,
-		frames:                    frames,
 		containerMetadataProvider: p,
-		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*traceEvents{}),
+		traceEvents:               xsync.NewRWMutex(map[traceAndMetaKey]*samples.TraceEvents{}),
 		processes:                 processes,
 		symbolUploader:            symbolUploader,
 		tags:                      createTags(cfg.Tags, runtimeTag, cfg.Version, cfg.EnableSplitByService),
@@ -235,19 +199,14 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 	}
 
 	if tr, exists := (*traceEventsMap)[key]; exists {
-		tr.timestamps = append(tr.timestamps, uint64(meta.Timestamp))
+		tr.Timestamps = append(tr.Timestamps, uint64(meta.Timestamp))
 		(*traceEventsMap)[key] = tr
 		return nil
 	}
 
-	(*traceEventsMap)[key] = &traceEvents{
-		files:              trace.Files,
-		linenos:            trace.Linenos,
-		frameTypes:         trace.FrameTypes,
-		mappingStarts:      trace.MappingStart,
-		mappingEnds:        trace.MappingEnd,
-		mappingFileOffsets: trace.MappingFileOffsets,
-		timestamps:         []uint64{uint64(meta.Timestamp)},
+	(*traceEventsMap)[key] = &samples.TraceEvents{
+		Frames:     trace.Frames,
+		Timestamps: []uint64{uint64(meta.Timestamp)},
 	}
 
 	return nil
@@ -272,62 +231,6 @@ func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataAr
 	if r.symbolUploader != nil && args.Interp == libpf.Native {
 		r.symbolUploader.UploadSymbols(args.FileID, args.FileName, args.GnuBuildID, args.Open)
 	}
-}
-
-// FrameKnown returns true if the metadata of the Frame specified by frameID is
-// cached in the reporter.
-func (r *DatadogReporter) FrameKnown(frameID libpf.FrameID) bool {
-	known := false
-	if frameMapLock, exists := r.frames.GetAndRefresh(frameID.FileID(), framesCacheLifetime); exists {
-		frameMap := frameMapLock.RLock()
-		defer frameMapLock.RUnlock(&frameMap)
-		_, known = (*frameMap)[frameID.AddressOrLine()]
-	}
-	return known
-}
-
-// FrameMetadata accepts metadata associated with a frame and caches this information.
-func (r *DatadogReporter) FrameMetadata(args *reporter.FrameMetadataArgs) {
-	fileID := args.FrameID.FileID()
-	addressOrLine := args.FrameID.AddressOrLine()
-
-	log.Debugf("FrameMetadata [%x] %v+%v at %v:%v",
-		fileID, args.FunctionName, args.FunctionOffset,
-		args.SourceFile, args.SourceLine)
-
-	if frameMapLock, exists := r.frames.GetAndRefresh(fileID, framesCacheLifetime); exists {
-		frameMap := frameMapLock.WLock()
-		defer frameMapLock.WUnlock(&frameMap)
-
-		sourceFile := args.SourceFile
-
-		if sourceFile == "" {
-			// The new sourceFile may be empty, and we don't want to overwrite
-			// an existing filePath with it.
-			if s, exists := (*frameMap)[addressOrLine]; exists {
-				sourceFile = s.filePath
-			}
-		}
-
-		(*frameMap)[addressOrLine] = sourceInfo{
-			lineNumber:     args.SourceLine,
-			filePath:       sourceFile,
-			functionOffset: args.FunctionOffset,
-			functionName:   args.FunctionName,
-		}
-
-		return
-	}
-
-	v := make(map[libpf.AddressOrLineno]sourceInfo)
-	v[addressOrLine] = sourceInfo{
-		lineNumber:     args.SourceLine,
-		filePath:       args.SourceFile,
-		functionOffset: args.FunctionOffset,
-		functionName:   args.FunctionName,
-	}
-	mu := xsync.NewRWMutex(v)
-	r.frames.Add(fileID, &mu)
 }
 
 // ReportHostMetadata is a NOP for DatadogReporter.
@@ -360,7 +263,6 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 	}, func() {
 		// Allow the GC to purge expired entries to avoid memory leaks.
 		r.executables.PurgeExpired()
-		r.frames.PurgeExpired()
 		r.processes.PurgeExpired()
 	})
 
@@ -426,10 +328,10 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 	return uploadProfiles(ctx, []profileData{{name: "cpu.pprof", data: b.Bytes()}},
 		data.start, data.end, r.config.IntakeURL,
 		data.tags, r.config.Version, r.config.APIKey,
-		data.containerID, data.entityID, r.family)
+		data.entityID, r.family)
 }
 
-func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEvents, start, end time.Time) (*pprofile.Profile, profileStats) {
+func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*samples.TraceEvents, start, end time.Time) (*pprofile.Profile, profileStats) {
 	numSamples := len(hostSamples)
 
 	const unknownStr = "UNKNOWN"
@@ -455,31 +357,32 @@ func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEv
 		sample := &pprofile.Sample{}
 
 		// Walk every frame of the trace.
-		for i := range traceInfo.frameTypes {
-			loc := createPProfLocation(profile, uint64(traceInfo.linenos[i]))
+		for _, uniqueFrame := range traceInfo.Frames {
+			frame := uniqueFrame.Value()
+			loc := createPProfLocation(profile, uint64(frame.AddressOrLineno))
 
-			switch frameKind := traceInfo.frameTypes[i]; frameKind {
+			switch frameKind := frame.Type; frameKind {
 			case libpf.NativeFrame:
 				// As native frames are resolved in the backend, we use Mapping to
 				// report these frames.
 
-				if tmpMapping, exists := fileIDtoMapping[traceInfo.files[i]]; exists {
+				if tmpMapping, exists := fileIDtoMapping[frame.FileID]; exists {
 					loc.Mapping = tmpMapping
 				} else {
-					executionInfo, exists := r.executables.GetAndRefresh(traceInfo.files[i], executableCacheLifetime)
+					executionInfo, exists := r.executables.GetAndRefresh(frame.FileID, executableCacheLifetime)
 
 					// Next step: Select a proper default value,
 					// if the name of the executable is not known yet.
 					var fileName = unknownStr
-					var buildID = traceInfo.files[i].StringNoQuotes()
+					var buildID = frame.FileID.StringNoQuotes()
 					if exists {
 						fileName = executionInfo.fileName
 						buildID = getBuildID(executionInfo.gnuBuildID, executionInfo.goBuildID, buildID)
 					}
 
-					tmpMapping := createPprofMapping(profile, uint64(traceInfo.linenos[i]),
+					tmpMapping := createPprofMapping(profile, uint64(frame.AddressOrLineno),
 						fileName, buildID)
-					fileIDtoMapping[traceInfo.files[i]] = tmpMapping
+					fileIDtoMapping[frame.FileID] = tmpMapping
 					loc.Mapping = tmpMapping
 				}
 				line := pprofile.Line{Function: createPprofFunctionEntry(funcMap, profile, "",
@@ -492,32 +395,15 @@ func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEv
 				// program.
 			default:
 				// Store interpreted frame information as Line message:
-				line := pprofile.Line{}
-
-				fileIDInfoLock, exists := r.frames.GetAndRefresh(traceInfo.files[i], framesCacheLifetime)
-				if !exists {
-					// At this point, we do not have enough information for the frame.
-					// Therefore, we report a dummy entry and use the interpreter as filename.
-					line.Function = createPprofFunctionEntry(funcMap, profile,
-						"UNREPORTED", frameKind.String())
-				} else {
-					fileIDInfo := fileIDInfoLock.RLock()
-					if si, exists := (*fileIDInfo)[traceInfo.linenos[i]]; exists {
-						line.Line = int64(si.lineNumber)
-						line.Function = createPprofFunctionEntry(funcMap, profile,
-							si.functionName, si.filePath)
-					} else {
-						// At this point, we do not have enough information for the frame.
-						// Therefore, we report a dummy entry and use the interpreter as filename.
-						line.Function = createPprofFunctionEntry(funcMap, profile,
-							"UNRESOLVED", frameKind.String())
-					}
-					fileIDInfoLock.RUnlock(&fileIDInfo)
+				line := pprofile.Line{
+					Line: int64(frame.SourceLine),
+					Function: createPprofFunctionEntry(funcMap, profile,
+						frame.FunctionName.String(), frame.SourceFile.String()),
 				}
-				loc.Line = append(loc.Line, line)
 
+				loc.Line = append(loc.Line, line)
 				// To be compliant with the protocol generate a dummy mapping entry.
-				loc.Mapping = getDummyMapping(fileIDtoMapping, profile, traceInfo.files[i])
+				loc.Mapping = getDummyMapping(fileIDtoMapping, profile, frame.FileID)
 			}
 			sample.Location = append(sample.Location, loc)
 		}
@@ -529,8 +415,7 @@ func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEv
 		execPath := getExecutablePath(&processMeta, &traceKey)
 
 		// Check if the last frame is a kernel frame.
-		if len(traceInfo.frameTypes) > 0 &&
-			traceInfo.frameTypes[len(traceInfo.frameTypes)-1] == libpf.KernelFrame {
+		if isKernel(traceInfo) {
 			// If the last frame is a kernel frame, we need to add a dummy
 			// location with the kernel as the function name.
 			execPath = "kernel"
@@ -544,20 +429,16 @@ func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEv
 			sample.Location = append(sample.Location, loc)
 		}
 
-		containerMetadata := containermetadata.ContainerMetadata{}
-		if !r.config.EnableSplitByService {
-			containerMetadata = processMeta.containerMetadata
-		}
 		if !r.config.Timeline {
-			count := int64(len(traceInfo.timestamps))
+			count := int64(len(traceInfo.Timestamps))
 			labels := make(map[string][]string)
-			addTraceLabels(labels, traceKey, containerMetadata, baseExec, 0)
+			addTraceLabels(labels, traceKey, processMeta.containerMetadata, baseExec, 0)
 			sample.Value = append(sample.Value, count, count*samplingPeriod)
 			sample.Label = labels
 			profile.Sample = append(profile.Sample, sample)
 		} else {
 			sample.Value = append(sample.Value, 1, samplingPeriod)
-			for _, ts := range traceInfo.timestamps {
+			for _, ts := range traceInfo.Timestamps {
 				sampleWithTimestamp := &pprofile.Sample{}
 				*sampleWithTimestamp = *sample
 				labels := make(map[string][]string)
@@ -566,7 +447,7 @@ func (r *DatadogReporter) createProfile(hostSamples map[traceAndMetaKey]*traceEv
 				profile.Sample = append(profile.Sample, sampleWithTimestamp)
 			}
 		}
-		totalSampleCount += len(traceInfo.timestamps)
+		totalSampleCount += len(traceInfo.Timestamps)
 	}
 
 	profile.DurationNanos = end.Sub(start).Nanoseconds()
@@ -595,7 +476,7 @@ func (r *DatadogReporter) getPprofProfile() {
 	}
 	r.traceEvents.WUnlock(&events)
 
-	entityToSample := make(map[serviceEntity]map[traceAndMetaKey]*traceEvents)
+	entityToSample := make(map[serviceEntity]map[traceAndMetaKey]*samples.TraceEvents)
 
 	if !r.config.EnableSplitByService {
 		profile, stats := r.createProfile(hostSamples, intervalStart, intervalEnd)
@@ -625,8 +506,7 @@ func (r *DatadogReporter) getPprofProfile() {
 			inferredService = true
 		}
 
-		if service == "" && len(traceInfo.frameTypes) > 0 &&
-			traceInfo.frameTypes[len(traceInfo.frameTypes)-1] == libpf.KernelFrame {
+		if service == "" && isKernel(traceInfo) {
 			service = "system"
 		}
 
@@ -637,13 +517,12 @@ func (r *DatadogReporter) getPprofProfile() {
 
 		entity := serviceEntity{
 			service:         service + r.config.SplitServiceSuffix,
-			containerID:     processMeta.containerMetadata.ContainerID,
 			entityID:        processMeta.containerMetadata.EntityID,
 			inferredService: inferredService,
 		}
 		serviceSamples, exists := entityToSample[entity]
 		if !exists {
-			serviceSamples = make(map[traceAndMetaKey]*traceEvents)
+			serviceSamples = make(map[traceAndMetaKey]*samples.TraceEvents)
 			entityToSample[entity] = serviceSamples
 		}
 
@@ -658,12 +537,11 @@ func (r *DatadogReporter) getPprofProfile() {
 		totalPIDsWithNoProcessMetadata += stats.pidWithNoMetadata
 		tags := createTagsForProfile(r.tags, profileSeq, e.service, e.inferredService)
 		r.profiles <- &uploadProfileData{
-			profile:     profile,
-			start:       intervalStart,
-			end:         intervalEnd,
-			containerID: e.containerID,
-			entityID:    e.entityID,
-			tags:        tags,
+			profile:  profile,
+			start:    intervalStart,
+			end:      intervalEnd,
+			entityID: e.entityID,
+			tags:     tags,
 		}
 		log.Debugf("Reporting profile for service %s: %d samples, %d PIDs with no process metadata, tags: %v", e.service, stats.totalSampleCount, stats.pidWithNoMetadata, tags)
 	}
@@ -751,6 +629,7 @@ func addTraceLabels(labels map[string][]string, i traceAndMetaKey, containerMeta
 		labels["pod_name"] = append(labels["pod_name"], containerMetadata.PodName)
 	}
 
+	// In split by service, ContainerID always empty.
 	if containerMetadata.ContainerID != "" {
 		labels["container_id"] = append(labels["container_id"], containerMetadata.ContainerID)
 	}
@@ -852,10 +731,21 @@ func (r *DatadogReporter) addProcessMetadata(meta *samples.TraceEventMeta) {
 		ddService = getServiceName(pid)
 	}
 
-	containerMetadata, err := r.containerMetadataProvider.GetContainerMetadata(pid)
-	if err != nil {
-		log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)
-		// Even upon failure, we might still have managed to get the containerID
+	var containerMetadata containermetadata.ContainerMetadata
+	if meta.ContainerID != "" && r.config.EnableSplitByService {
+		// Use containerID when found by the eBPF profiler and not other container metadata is needed
+		// (ie. split by service is enabled).
+		// eBPF profiler only supports cgroup v2 and even with cgroup v2, depending on Kubernetes settings,
+		// containerID might not be available in /proc/<pid>/cgroup.
+		containerMetadata = containermetadata.ContainerMetadata{
+			EntityID: "ci-" + meta.ContainerID,
+		}
+	} else {
+		containerMetadata, err = r.containerMetadataProvider.GetContainerMetadata(pid)
+		if err != nil {
+			log.Debugf("Failed to get container metadata for PID %d: %v", pid, err)
+			// Even upon failure, we might still have managed to get the containerID
+		}
 	}
 
 	r.processes.Add(pid, processMetadata{
@@ -915,4 +805,12 @@ func parseServiceNameFromEnvironData(envData []byte) string {
 
 func getServiceName(pid libpf.PID) string {
 	return getServiceNameFromProcPath(pid, "")
+}
+
+func isKernel(traceInfo *samples.TraceEvents) bool {
+	if len(traceInfo.Frames) == 0 {
+		return false
+	}
+
+	return traceInfo.Frames[len(traceInfo.Frames)-1].Value().Type == libpf.KernelFrame
 }
