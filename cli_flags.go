@@ -117,6 +117,7 @@ type arguments struct {
 	agentless                 bool
 	enableGoRuntimeProfiler   bool
 	enableSplitByService      bool
+	collectContext            bool
 	splitServiceSuffix        string
 	cmd                       *cli.Command
 }
@@ -392,6 +393,14 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Suffix to add to service name in profiles when split-by-service is enabled.",
 				Destination: &args.splitServiceSuffix,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SPLIT_SERVICE_SUFFIX"),
+			},
+			&cli.BoolFlag{
+				Name:        "collect-context",
+				Value:       false,
+				Hidden:      true,
+				Usage:       "Enable context collection.",
+				Destination: &args.collectContext,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_COLLECT_CONTEXT"),
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
