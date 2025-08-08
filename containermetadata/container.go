@@ -72,7 +72,8 @@ func (p *containerIDProvider) GetContainerMetadata(pid libpf.PID) (ContainerMeta
 			isHostCgroupNamespace(cgroupNsFilePath))
 	}
 
-	return ContainerMetadata{ContainerID: containerID, EntityID: entityID}, nil
+	// Only fill EntityID, but not ContainerID, ContainerID is only used by containerMetadataProvider.
+	return ContainerMetadata{EntityID: entityID}, nil
 }
 
 // parseContainerID finds the first container ID reading from r and returns it.

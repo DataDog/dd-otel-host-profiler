@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"strings"
 	"time"
 )
 
@@ -23,8 +24,7 @@ type profileData struct {
 }
 
 func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endTime time.Time,
-	url string, tags Tags, profilerVersion string, apiKey string, containerID string, entityID string,
-	family string) error {
+	url string, tags Tags, profilerVersion string, apiKey string, entityID string, family string) error {
 	contentType, body, err := buildMultipartForm(profiles, startTime, endTime, tags, family)
 	if err != nil {
 		return err
@@ -41,11 +41,11 @@ func uploadProfiles(ctx context.Context, profiles []profileData, startTime, endT
 	if apiKey != "" {
 		req.Header.Set("Dd-Api-Key", apiKey)
 	}
-	if containerID != "" {
-		req.Header.Set("Datadog-Container-Id", containerID)
-	}
 	if entityID != "" {
 		req.Header.Set("Datadog-Entity-Id", entityID)
+		if strings.HasPrefix(entityID, "ci-") {
+			req.Header.Set("Datadog-Container-Id", entityID[3:])
+		}
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
