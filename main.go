@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DataDog/dd-trace-go/v2/profiler"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/host"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -31,7 +32,6 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 	"golang.org/x/sys/unix"
-	"gopkg.in/DataDog/dd-trace-go.v1/profiler"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"

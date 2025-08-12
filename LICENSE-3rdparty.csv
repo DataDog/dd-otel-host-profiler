@@ -1,9 +1,12 @@
 Component,Origin,License,Copyright
+import,github.com/DataDog/datadog-agent/pkg/trace/traceutil/normalize,Apache-2.0,"Copyright 2016-present Datadog, Inc."
 import,github.com/DataDog/datadog-go/v5/statsd,MIT,"Copyright (c) 2015 Datadog, Inc"
 import,github.com/DataDog/dd-otel-host-profiler,Apache-2.0,"Copyright 2017 Datadog, Inc. | Copyright 2024 Datadog, Inc."
+import,github.com/DataDog/dd-trace-go/v2,Apache-2.0,"Copyright 2016 Datadog, Inc. | Copyright (c) 2016-Present, Datadog <info@datadoghq.com> | Copyright 2016-Present Datadog, Inc."
 import,github.com/DataDog/gostackparse,Apache-2.0,"Copyright 2021 Datadog, Inc. | Copyright (c) 2021-Present, Datadog <info@datadoghq.com>"
 import,github.com/DataDog/jsonapi,Apache-2.0,"Copyright [2022-Present] Datadog, Inc."
 import,github.com/DataDog/zstd,BSD-3-Clause,"Copyright (c) 2016, Datadog <info@datadoghq.com>"
+import,github.com/Masterminds/semver/v3,MIT,"Copyright (C) 2014-2019, Matt Butcher and Matt Farina"
 import,github.com/cespare/xxhash/v2,MIT,Copyright (c) 2016 Caleb Spare
 import,github.com/cilium/ebpf,MIT,"Copyright (c) 2017 Nathan Sweet | Copyright (c) 2018, 2019 Cloudflare | Copyright (c) 2019 Authors of Cilium"
 import,github.com/containerd/containerd,Apache-2.0,"Copyright 2012-2015 Docker, Inc."
@@ -61,6 +64,7 @@ import,github.com/opencontainers/image-spec,Apache-2.0,Copyright 2016 The Linux 
 import,github.com/opencontainers/runtime-spec/specs-go,Apache-2.0,Copyright 2015 The Linux Foundation.
 import,github.com/opencontainers/selinux,Apache-2.0,unknown
 import,github.com/pkg/errors,BSD-2-Clause,"Copyright (c) 2015, Dave Cheney <dave@cheney.net>"
+import,github.com/puzpuzpuz/xsync/v3,Apache-2.0,unknown
 import,github.com/richardartoul/molecule,MIT,Copyright (c) 2020 Richard Artoul
 import,github.com/richardartoul/molecule/src/codec,Apache-2.0,unknown
 import,github.com/richardartoul/molecule/src/protowire,BSD-3-Clause,Copyright (c) 2018 The Go Authors. All rights reserved.
@@ -93,7 +97,6 @@ import,google.golang.org/genproto/googleapis/rpc,Apache-2.0,unknown
 import,google.golang.org/genproto/protobuf/field_mask,Apache-2.0,unknown
 import,google.golang.org/grpc,Apache-2.0,Copyright 2014 gRPC authors.
 import,google.golang.org/protobuf,BSD-3-Clause,Copyright (c) 2018 The Go Authors. All rights reserved.
-import,gopkg.in/DataDog/dd-trace-go.v1,Apache-2.0,"Copyright 2016 Datadog, Inc. | Copyright (c) 2016-Present, Datadog <info@datadoghq.com> | Copyright 2016-Present Datadog, Inc."
 import,gopkg.in/evanphx/json-patch.v4,BSD-3-Clause,"Copyright (c) 2014, Evan Phoenix"
 import,gopkg.in/inf.v0,BSD-3-Clause,Copyright (c) 2012 Péter Surányi. Portions Copyright (c) 2009 The Go
 import,gopkg.in/yaml.v3,MIT,Copyright (c) 2006-2010 Kirill Simonov | Copyright (c) 2006-2011 Kirill Simonov | Copyright (c) 2011-2019 Canonical Ltd | Copyright 2011-2016 Canonical Ltd.
