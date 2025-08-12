@@ -84,42 +84,43 @@ func (s *additionalSymbolEndpoints) Get() interface{} {
 }
 
 type arguments struct {
-	bpfVerifierLogLevel       uint64
-	agentURL                  string
-	copyright                 bool
-	mapScaleFactor            uint64
-	monitorInterval           time.Duration
-	clockSyncInterval         time.Duration
-	noKernelVersionCheck      bool
-	node                      string
-	probabilisticInterval     time.Duration
-	probabilisticThreshold    uint64
-	reporterInterval          time.Duration
-	samplesPerSecond          uint64
-	pprofPrefix               string
-	sendErrorFrames           bool
-	hostServiceName           string
-	environment               string
-	uploadSymbolQueryInterval time.Duration
-	uploadSymbols             bool
-	uploadDynamicSymbols      bool
-	uploadGoPCLnTab           bool
-	uploadSymbolsDryRun       bool
-	tags                      string
-	timeline                  bool
-	tracers                   string
-	verboseMode               bool
-	verboseeBPF               bool
-	apiKey                    string
-	appKey                    string
-	site                      string
-	additionalSymbolEndpoints additionalSymbolEndpoints
-	agentless                 bool
-	enableGoRuntimeProfiler   bool
-	goRuntimeProfilerPeriod   time.Duration
-	enableSplitByService      bool
-	splitServiceSuffix        string
-	cmd                       *cli.Command
+	bpfVerifierLogLevel           uint64
+	agentURL                      string
+	copyright                     bool
+	mapScaleFactor                uint64
+	monitorInterval               time.Duration
+	clockSyncInterval             time.Duration
+	noKernelVersionCheck          bool
+	node                          string
+	probabilisticInterval         time.Duration
+	probabilisticThreshold        uint64
+	reporterInterval              time.Duration
+	samplesPerSecond              uint64
+	pprofPrefix                   string
+	sendErrorFrames               bool
+	hostServiceName               string
+	environment                   string
+	uploadSymbolQueryInterval     time.Duration
+	uploadSymbols                 bool
+	uploadDynamicSymbols          bool
+	uploadGoPCLnTab               bool
+	uploadSymbolsDryRun           bool
+	tags                          string
+	timeline                      bool
+	tracers                       string
+	verboseMode                   bool
+	verboseeBPF                   bool
+	apiKey                        string
+	appKey                        string
+	site                          string
+	additionalSymbolEndpoints     additionalSymbolEndpoints
+	agentless                     bool
+	enableGoRuntimeProfiler       bool
+	goRuntimeProfilerPeriod       time.Duration
+	goRuntimeMetricsStatsdAddress string
+	enableSplitByService          bool
+	splitServiceSuffix            string
+	cmd                           *cli.Command
 }
 
 func parseArgs() (*arguments, error) {
@@ -378,6 +379,13 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Set the period for self-profiling with the Go runtime profiler. Only used if --profile is enabled.",
 				Destination: &args.goRuntimeProfilerPeriod,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER_PERIOD"),
+			},
+			&cli.StringFlag{
+				Name:        "runtime-metrics-statsd-address",
+				Usage:       "If set, enables Go runtime metrics collection and sends them to the given StatsD address.",
+				Hidden:      true,
+				Destination: &args.goRuntimeMetricsStatsdAddress,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_METRICS_STATSD_ADDRESS"),
 			},
 			&cli.DurationFlag{
 				Name:        "symbol-query-interval",

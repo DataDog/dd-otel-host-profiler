@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	ddtracer "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
+	"github.com/DataDog/dd-trace-go/v2/profiler"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/host"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -31,7 +33,6 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 	"golang.org/x/sys/unix"
-	"gopkg.in/DataDog/dd-trace-go.v1/profiler"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
@@ -150,6 +151,22 @@ func mainWithExitCode() exitCode {
 			failure("failed to start the runtime profiler: %v", err)
 		}
 		defer profiler.Stop()
+	}
+
+	if args.goRuntimeMetricsStatsdAddress != "" {
+		addr, _ := strings.CutPrefix(args.agentURL, "http://")
+		err = ddtracer.Start(
+			ddtracer.WithService("dd-otel-host-self-profiler"),
+			ddtracer.WithEnv(args.environment),
+			ddtracer.WithServiceVersion(versionInfo.Version),
+			ddtracer.WithAgentAddr(addr),
+			ddtracer.WithDogstatsdAddr(args.goRuntimeMetricsStatsdAddress),
+			ddtracer.WithTraceEnabled(false),
+		)
+		if err != nil {
+			failure("failed to start the tracer: %v", err)
+		}
+		defer ddtracer.Stop()
 	}
 
 	// Context to drive main goroutine and the Tracer monitors.
