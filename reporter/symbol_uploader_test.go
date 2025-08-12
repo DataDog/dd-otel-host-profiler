@@ -32,6 +32,8 @@ import (
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
+var objcopyZstdSupport = CheckObjcopyZstdSupport()
+
 func findSymbol(f *elf.File, name string) *elf.Symbol {
 	syms, err := f.Symbols()
 	if err != nil {
@@ -335,7 +337,11 @@ func TestSymbolUpload(t *testing.T) {
 	}
 
 	checkUploads := func(t *testing.T, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool, expectedUploads []bool) {
-		checkUploadsWithEncoding(t, expectedSymbolSource, expectedGoPCLnTab, expectedUploads, "")
+		expectedEncoding := ""
+		if !objcopyZstdSupport {
+			expectedEncoding = "zstd"
+		}
+		checkUploadsWithEncoding(t, expectedSymbolSource, expectedGoPCLnTab, expectedUploads, expectedEncoding)
 	}
 
 	goExeNoSymbols := buildGo(t, t.TempDir(), buildID, buildOptions{dynsym: false, symtab: false, debugInfos: false})

@@ -102,6 +102,7 @@ type arguments struct {
 	environment                   string
 	uploadSymbolQueryInterval     time.Duration
 	uploadSymbols                 bool
+	uploadSymbolsHTTP2            bool
 	uploadDynamicSymbols          bool
 	uploadGoPCLnTab               bool
 	uploadSymbolsDryRun           bool
@@ -408,6 +409,14 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Suffix to add to service name in profiles when split-by-service is enabled.",
 				Destination: &args.splitServiceSuffix,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SPLIT_SERVICE_SUFFIX"),
+			},
+			&cli.BoolFlag{
+				Name:        "upload-symbols-http2",
+				Value:       false, // HTTP/2 is disabled by default, since support in the backend is recent
+				Hidden:      true,
+				Usage:       "Use HTTP/2 when available for symbol upload. Only used if upload-symbols is enabled.",
+				Destination: &args.uploadSymbolsHTTP2,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_SYMBOLS_HTTP2"),
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {

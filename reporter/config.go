@@ -63,6 +63,8 @@ type SymbolUploaderConfig struct {
 	UploadDynamicSymbols bool
 	// UploadGoPCLnTab defines whether the agent should upload GoPCLnTab section for Go binaries to the backend.
 	UploadGoPCLnTab bool
+	// UseHTTP2 defines whether the agent should use HTTP/2 when uploading symbols.
+	UseHTTP2 bool
 	// SymbolQueryInterval defines the interval at which the agent should query the backend for symbols. A value of 0 disables batching.
 	SymbolQueryInterval time.Duration
 	// DisableDebugSectionCompression defines whether the uploader should disable debug section compression whatever objcopy supports.

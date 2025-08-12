@@ -8,6 +8,7 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"debug/elf"
 	"encoding/json"
 	"errors"
@@ -123,6 +124,14 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 
 	compressDebugSections := !cfg.DisableDebugSectionCompression && CheckObjcopyZstdSupport()
 
+	httpClient := &http.Client{Timeout: uploadTimeout}
+	httpTransport, ok := http.DefaultTransport.(*http.Transport)
+	if ok && !cfg.UseHTTP2 {
+		transport := httpTransport.Clone()
+		transport.TLSNextProto = make(map[string]func(authority string, c *tls.Conn) http.RoundTripper)
+		httpClient.Transport = transport
+	}
+
 	return &DatadogSymbolUploader{
 		symbolEndpoints:       cfg.SymbolEndpoints,
 		intakeURLs:            intakeURLs,
@@ -130,7 +139,7 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 		dryRun:                cfg.DryRun,
 		uploadDynamicSymbols:  cfg.UploadDynamicSymbols,
 		uploadGoPCLnTab:       cfg.UploadGoPCLnTab,
-		client:                &http.Client{Timeout: uploadTimeout},
+		client:                httpClient,
 		uploadCache:           uploadCache,
 		symbolQueriers:        symbolQueriers,
 		symbolQueryInterval:   cfg.SymbolQueryInterval,
