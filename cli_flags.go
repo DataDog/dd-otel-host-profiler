@@ -116,6 +116,7 @@ type arguments struct {
 	additionalSymbolEndpoints additionalSymbolEndpoints
 	agentless                 bool
 	enableGoRuntimeProfiler   bool
+	goRuntimeProfilerPeriod   time.Duration
 	enableSplitByService      bool
 	splitServiceSuffix        string
 	cmd                       *cli.Command
@@ -367,9 +368,16 @@ func parseArgs() (*arguments, error) {
 			&cli.BoolFlag{
 				Name:        "profile",
 				Value:       false,
-				Usage:       "Enable self-profiling with Go runtime profiler.",
+				Usage:       "Enable self-profiling with the Go runtime profiler.",
 				Destination: &args.enableGoRuntimeProfiler,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER"),
+			},
+			&cli.DurationFlag{
+				Name:        "runtime-profile-period",
+				Hidden:      true,
+				Usage:       "Set the period for self-profiling with the Go runtime profiler. Only used if --profile is enabled.",
+				Destination: &args.goRuntimeProfilerPeriod,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER_PERIOD"),
 			},
 			&cli.DurationFlag{
 				Name:        "symbol-query-interval",
