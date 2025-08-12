@@ -266,6 +266,7 @@ func mainWithExitCode() exitCode {
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,
 			UploadGoPCLnTab:      args.uploadGoPCLnTab,
+			UseHTTP2:             args.uploadSymbolsHTTP2,
 			SymbolQueryInterval:  args.uploadSymbolQueryInterval,
 			DryRun:               args.uploadSymbolsDryRun,
 			SymbolEndpoints:      symbolEndpoints,
