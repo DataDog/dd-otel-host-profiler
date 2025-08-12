@@ -300,14 +300,14 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Enable local symbol upload.",
 				Hidden:      true,
 				Destination: &args.uploadSymbols,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS"),
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_SYMBOLS"),
 			},
 			&cli.BoolFlag{
 				Name:        "upload-dynamic-symbols",
 				Usage:       "Enable dynamic symbols upload.",
 				Value:       false,
 				Hidden:      true,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_DYNAMIC_SYMBOLS"),
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_DYNAMIC_SYMBOLS"),
 				Destination: &args.uploadDynamicSymbols,
 			},
 			&cli.BoolFlag{
@@ -315,7 +315,7 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Enable gopcnltab upload.",
 				Value:       true,
 				Hidden:      true,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_GOPCLNTAB"),
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_GOPCLNTAB"),
 				Destination: &args.uploadGoPCLnTab,
 			},
 			&cli.BoolFlag{
@@ -324,7 +324,7 @@ func parseArgs() (*arguments, error) {
 				Usage:       "Local symbol upload dry-run.",
 				Hidden:      true,
 				Destination: &args.uploadSymbolsDryRun,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_EXPERIMENTAL_UPLOAD_SYMBOLS_DRY_RUN"),
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_SYMBOLS_DRY_RUN"),
 			},
 			&cli.StringFlag{
 				Name:        "api-key",
