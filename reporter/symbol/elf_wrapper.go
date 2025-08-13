@@ -217,10 +217,6 @@ func (e *elfWrapper) findDebugSymbolsWithDebugLink() *elfWrapper {
 		if err != nil {
 			continue
 		}
-		if debugELF.elfFile.Section(".debug_frame") == nil {
-			debugELF.Close()
-			continue
-		}
 		fileCRC32, err := debugELF.elfFile.CRC32()
 		if err != nil || fileCRC32 != linkCRC32 {
 			debugELF.Close()
