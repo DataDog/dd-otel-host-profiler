@@ -25,8 +25,7 @@ var dummyFileID = libpf.NewFileID(0, 0)
 type ProfileBuilder struct {
 	profile            *pprofile.Profile
 	funcMap            map[funcInfo]*pprofile.Function
-	fileIDtoMapping    map[libpf.FileID]*pprofile.Mapping
-	executables        *lru.SyncedLRU[libpf.FileID, samples.ExecInfo]
+	mappings           map[uniqueMapping]*pprofile.Mapping
 	processes          *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]
 	timeline           bool
 	totalSampleCount   int
@@ -38,12 +37,20 @@ type ProfileStats struct {
 	TotalSampleCount int
 }
 
+// uniqueMapping defines an unique mapping in a process.
+type uniqueMapping struct {
+	// mapping start in the ELF virtual address space
+	Start libpf.Address
+	// mapping file
+	File libpf.FrameMappingFile
+}
+
 func NewProfileBuilder(start, end time.Time, samplesPerSecond int, numSamples int, timeline bool,
-	executables *lru.SyncedLRU[libpf.FileID, samples.ExecInfo], processes *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]) *ProfileBuilder {
+	processes *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]) *ProfileBuilder {
 	// funcMap is a temporary helper that will build the Function array
 	// in profile and make sure information is deduplicated.
 	funcMap := make(map[funcInfo]*pprofile.Function)
-	fileIDtoMapping := make(map[libpf.FileID]*pprofile.Mapping)
+	mappings := make(map[uniqueMapping]*pprofile.Mapping)
 
 	samplingPeriod := 1000000000 / int64(samplesPerSecond)
 	profile := &pprofile.Profile{
@@ -60,8 +67,7 @@ func NewProfileBuilder(start, end time.Time, samplesPerSecond int, numSamples in
 	return &ProfileBuilder{
 		profile:            profile,
 		funcMap:            funcMap,
-		fileIDtoMapping:    fileIDtoMapping,
-		executables:        executables,
+		mappings:           mappings,
 		processes:          processes,
 		pidsWithNoMetadata: libpf.Set[libpf.PID]{},
 		timeline:           timeline,
@@ -77,33 +83,25 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 		for _, uniqueFrame := range traceInfo.Frames {
 			frame := uniqueFrame.Value()
 			loc := b.createPProfLocation(uint64(frame.AddressOrLineno))
+			loc.Mapping = b.createPprofMappingForFrame(&frame)
 
-			switch frameKind := frame.Type; frameKind {
-			case libpf.NativeFrame:
-				// As native frames are resolved in the backend, we use Mapping to
-				// report these frames.
-				loc.Mapping = b.createPprofMappingForFileID(frame.FileID)
-				loc.Line = append(loc.Line, pprofile.Line{Function: b.createPprofFunctionEntry("", loc.Mapping.File)})
-			case libpf.AbortFrame:
-				// Next step: Figure out how the OTLP protocol
-				// could handle artificial frames, like AbortFrame,
-				// that are not originate from a native or interpreted
-				// program.
-			default:
-				sourceFile := frame.SourceFile.String()
-				if frameKind == libpf.KernelFrame {
+			var sourceFile string
+			if frame.SourceFile == libpf.NullString {
+				if frame.Type == libpf.KernelFrame {
 					sourceFile = "kernel"
+				} else {
+					sourceFile = loc.Mapping.File
 				}
-
-				// Store interpreted frame information as Line message:
-				line := pprofile.Line{
-					Line:     int64(frame.SourceLine),
-					Function: b.createPprofFunctionEntry(frame.FunctionName.String(), sourceFile),
-				}
-
-				loc.Line = append(loc.Line, line)
-				loc.Mapping = b.getDummyMapping()
+			} else {
+				sourceFile = frame.SourceFile.String()
 			}
+
+			line := pprofile.Line{
+				Line:     int64(frame.SourceLine),
+				Function: b.createPprofFunctionEntry(frame.FunctionName.String(), sourceFile),
+			}
+
+			loc.Line = append(loc.Line, line)
 			sample.Location = append(sample.Location, loc)
 		}
 
@@ -199,12 +197,12 @@ func (b *ProfileBuilder) createPprofFunctionEntry(name, fileName string) *pprofi
 
 // getDummyMappingIndex inserts or looks up a dummy entry for interpreted FileIDs.
 func (b *ProfileBuilder) getDummyMapping() *pprofile.Mapping {
-	if tmpMapping, exists := b.fileIDtoMapping[dummyFileID]; exists {
+	if tmpMapping, exists := b.mappings[uniqueMapping{}]; exists {
 		return tmpMapping
 	}
 
-	mapping := b.createPprofMapping("DUMMY", dummyFileID.StringNoQuotes())
-	b.fileIDtoMapping[dummyFileID] = mapping
+	mapping := b.createPprofMapping("DUMMY", dummyFileID.StringNoQuotes(), 0, 0)
+	b.mappings[uniqueMapping{}] = mapping
 
 	return mapping
 }
@@ -219,31 +217,34 @@ func (b *ProfileBuilder) createPProfLocation(address uint64) *pprofile.Location 
 	return location
 }
 
-func (b *ProfileBuilder) createPprofMappingForFileID(fileID libpf.FileID) *pprofile.Mapping {
-	if mapping, exists := b.fileIDtoMapping[fileID]; exists {
+func (b *ProfileBuilder) createPprofMappingForFrame(frame *libpf.Frame) *pprofile.Mapping {
+	if frame.MappingFile == (libpf.FrameMappingFile{}) {
+		return b.getDummyMapping()
+	}
+
+	if mapping, exists := b.mappings[uniqueMapping{Start: frame.MappingStart, File: frame.MappingFile}]; exists {
 		return mapping
 	}
 
-	executionInfo, exists := b.executables.GetAndRefresh(fileID, samples.ExecutableCacheLifetime)
-
+	mf := frame.MappingFile.Value()
 	fileName := unknownStr
-	buildID := fileID.StringNoQuotes()
-	if exists {
-		fileName = executionInfo.FileName
-		buildID = samples.GetBuildID(executionInfo.GnuBuildID, executionInfo.GoBuildID, buildID)
+	if mf.FileName != libpf.NullString {
+		fileName = mf.FileName.String()
 	}
+	buildID := samples.GetBuildID(mf.GnuBuildID, "", mf.FileID.StringNoQuotes())
 
-	mapping := b.createPprofMapping(fileName, buildID)
-	b.fileIDtoMapping[fileID] = mapping
+	mapping := b.createPprofMapping(fileName, buildID, frame.MappingStart, frame.MappingFileOffset)
+	b.mappings[uniqueMapping{Start: frame.MappingStart, File: frame.MappingFile}] = mapping
 	return mapping
 }
 
-func (b *ProfileBuilder) createPprofMapping(fileName, buildID string) *pprofile.Mapping {
+func (b *ProfileBuilder) createPprofMapping(fileName, buildID string, start libpf.Address, offset uint64) *pprofile.Mapping {
 	idx := uint64(len(b.profile.Mapping)) + 1
 	mapping := &pprofile.Mapping{
 		ID:      idx,
 		File:    fileName,
-		Offset:  0,
+		Start:   uint64(start),
+		Offset:  offset,
 		BuildID: buildID,
 	}
 	b.profile.Mapping = append(b.profile.Mapping, mapping)
