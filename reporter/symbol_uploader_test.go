@@ -6,6 +6,7 @@
 package reporter
 
 import (
+	"bytes"
 	"debug/elf"
 	"encoding/json"
 	"io"
@@ -305,6 +306,12 @@ func registerResponders(t *testing.T, buildID string) []chan *http.Request {
 			httpmock.NewStringResponder(200, buildSymbolQueryResponse(t, buildID, symbolSources[i])))
 		httpmock.RegisterResponder("POST", buildSourcemapIntakeURL(e),
 			func(req *http.Request) (*http.Response, error) {
+				// Read request body before sending response otherwise client will receive the response before having sent all the data
+				b, err := io.ReadAll(req.Body)
+				if err != nil {
+					return nil, err
+				}
+				req.Body = io.NopCloser(bytes.NewReader(b))
 				c <- req
 				return httpmock.NewStringResponse(200, ""), nil
 			})
