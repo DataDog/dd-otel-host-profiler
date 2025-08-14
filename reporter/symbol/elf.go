@@ -30,8 +30,6 @@ type Elf struct {
 	isGolang   bool
 	goBuildID  string
 	gnuBuildID string
-	fileHash   string
-	path       string
 	fileID     libpf.FileID
 
 	separateSymbols *elfWrapperWithSource
@@ -43,64 +41,20 @@ type Elf struct {
 	elfDataDump string
 }
 
-func NewElf(path string, fileID libpf.FileID, opener process.FileOpener) (*Elf, error) {
-	wrapper, err := openELF(path, opener)
-
-	// This can happen for short-lived processes that are already gone by the time
-	// we try to upload symbols
+func NewElfFromMapping(m *process.Mapping, gnuBuildID, goBuildID string, fileID libpf.FileID, pr process.Process) (*Elf, error) {
+	wrapper, err := newElfWrapperFromMapping(m, pr)
 	if err != nil {
-		return nil, fmt.Errorf("executable not found: %s, %w", path, err)
+		return nil, fmt.Errorf("failed to create elf wrapper from mapping: %w", err)
 	}
-
-	elf := &Elf{
-		elfWrapperWithSource: elfWrapperWithSource{
-			wrapper:      wrapper,
-			symbolSource: wrapper.symbolSource(),
-		},
-		arch:     runtime.GOARCH,
-		isGolang: wrapper.elfFile.IsGolang(),
-		path:     path,
-		fileHash: fileID.StringNoQuotes(),
-		fileID:   fileID,
-	}
-
-	buildID, err := wrapper.elfFile.GetBuildID()
-	if err != nil {
-		log.Debugf(
-			"Unable to get GNU build ID for executable %s: %s", path, err)
-	} else {
-		elf.gnuBuildID = buildID
-	}
-
-	if elf.isGolang {
-		goBuildID, err := wrapper.elfFile.GetGoBuildID()
-		if err != nil {
-			log.Debugf(
-				"Unable to get Go build ID for executable %s: %s", path, err)
-		} else {
-			elf.goBuildID = goBuildID
-		}
-	}
-
-	if elf.symbolSource < SourceDebugInfo {
-		separateSymbols := wrapper.findSeparateSymbolsWithDebugInfo()
-		if separateSymbols != nil {
-			elf.separateSymbols = &elfWrapperWithSource{
-				wrapper:      separateSymbols,
-				symbolSource: SourceDebugInfo,
-			}
-		}
-	}
-
-	return elf, nil
+	return newElf(wrapper, fileID, gnuBuildID, goBuildID)
 }
 
-func NewElfForTest(arch, gnuBuildID, goBuildID, fileHash string) *Elf {
+func NewElfForTest(arch, gnuBuildID, goBuildID string, fileID libpf.FileID) *Elf {
 	return &Elf{
 		arch:       arch,
 		gnuBuildID: gnuBuildID,
 		goBuildID:  goBuildID,
-		fileHash:   fileHash,
+		fileID:     fileID,
 	}
 }
 
@@ -110,11 +64,29 @@ func NewElfFromDisk(path string) (*Elf, error) {
 		return nil, fmt.Errorf("failed to get file ID: %w", err)
 	}
 
-	return NewElf(path, fileID, &DiskOpener{})
+	wrapper, err := newElfWrapperFromFile(path, &diskHelper{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create elf wrapper for file %s from disk: %w", path, err)
+	}
+
+	goBuildID := ""
+	gnuBuildID, err := wrapper.elfFile.GetBuildID()
+	if err != nil {
+		log.Debugf("failed to get GNU build ID for file %s: %s", path, err)
+	}
+
+	if wrapper.elfFile.IsGolang() {
+		goBuildID, err = wrapper.elfFile.GetGoBuildID()
+		if err != nil {
+			log.Debugf("failed to get Go build ID for file %s: %s", path, err)
+		}
+	}
+
+	return newElf(wrapper, fileID, gnuBuildID, goBuildID)
 }
 
 func (e *Elf) FileHash() string {
-	return e.fileHash
+	return e.fileID.StringNoQuotes()
 }
 
 func (e *Elf) FileID() libpf.FileID {
@@ -138,7 +110,7 @@ func (e *Elf) Arch() string {
 }
 
 func (e *Elf) Path() string {
-	return e.path
+	return e.wrapper.filePath
 }
 
 func (e *Elf) Close() {
@@ -175,10 +147,10 @@ func (e *Elf) GoPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
 
 func (e *Elf) SymbolPathOnDisk() string {
 	if e.separateSymbols != nil && e.separateSymbols.symbolSource > e.symbolSource {
-		return e.separateSymbols.wrapper.actualFilePath
+		return e.separateSymbols.wrapper.GetPersistentPath()
 	}
 
-	return e.wrapper.actualFilePath
+	return e.wrapper.GetPersistentPath()
 }
 
 func (e *Elf) String() string {
@@ -188,7 +160,7 @@ func (e *Elf) String() string {
 		symbolSource = max(symbolSource, SourceGoPCLnTab)
 	}
 	return fmt.Sprintf("%s, arch=%s, gnu_build_id=%s, go_build_id=%s, file_hash=%s, symbol_source=%s, has_gopclntab=%t",
-		e.path, e.arch, e.gnuBuildID, e.goBuildID, e.fileHash, symbolSource, hasPCLnTab,
+		e.wrapper.filePath, e.arch, e.gnuBuildID, e.goBuildID, e.FileHash(), symbolSource, hasPCLnTab,
 	)
 }
 
@@ -196,12 +168,27 @@ func (e *Elf) DumpElfData() (string, error) {
 	if e.elfDataDump != "" {
 		return e.elfDataDump, nil
 	}
-	elfDataDump, err := e.wrapper.DumpElfData()
+
+	elfData, err := e.wrapper.ElfData()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get elf data: %w", err)
 	}
-	e.elfDataDump = elfDataDump
-	return elfDataDump, nil
+
+	tempFile, err := os.CreateTemp("", "elf")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file to dump elf data: %w", err)
+	}
+
+	defer tempFile.Close()
+
+	_, err = tempFile.Write(elfData)
+	if err != nil {
+		os.Remove(tempFile.Name())
+		return "", fmt.Errorf("failed to write elf data to temp file: %w", err)
+	}
+
+	e.elfDataDump = tempFile.Name()
+	return e.elfDataDump, nil
 }
 
 func (e *Elf) GetSectionsRequiredForDynamicSymbols() []SectionInfo {
@@ -221,12 +208,52 @@ func (e *Elf) goPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
 	return goPCLnTab, nil
 }
 
-type DiskOpener struct{}
-
-func (o *DiskOpener) Open(path string) (reader process.ReadAtCloser, actualPath string, err error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, "", err
+func newElf(wrapper *elfWrapper, fileID libpf.FileID, gnuBuildID, goBuildID string) (*Elf, error) {
+	elf := &Elf{
+		elfWrapperWithSource: elfWrapperWithSource{
+			wrapper:      wrapper,
+			symbolSource: wrapper.symbolSource(),
+		},
+		arch:       runtime.GOARCH,
+		isGolang:   wrapper.elfFile.IsGolang(),
+		fileID:     fileID,
+		gnuBuildID: gnuBuildID,
+		goBuildID:  goBuildID,
 	}
-	return f, fmt.Sprintf("/proc/%v/fd/%v", os.Getpid(), f.Fd()), nil
+
+	buildID, err := wrapper.elfFile.GetBuildID()
+	if err != nil {
+		log.Debugf(
+			"Unable to get GNU build ID for executable %s: %s", wrapper.filePath, err)
+	} else {
+		elf.gnuBuildID = buildID
+	}
+
+	if elf.isGolang {
+		goBuildID, err := wrapper.elfFile.GetGoBuildID()
+		if err != nil {
+			log.Debugf(
+				"Unable to get Go build ID for executable %s: %s", wrapper.filePath, err)
+		} else {
+			elf.goBuildID = goBuildID
+		}
+	}
+
+	if elf.symbolSource < SourceDebugInfo {
+		separateSymbols := wrapper.findSeparateSymbolsWithDebugInfo()
+		if separateSymbols != nil {
+			elf.separateSymbols = &elfWrapperWithSource{
+				wrapper:      separateSymbols,
+				symbolSource: SourceDebugInfo,
+			}
+		}
+	}
+
+	return elf, nil
+}
+
+type diskHelper struct{}
+
+func (o *diskHelper) ExtractAsFile(path string) (string, error) {
+	return path, nil
 }

@@ -273,7 +273,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	// Load the eBPF code and map definitions
 	trc, err := tracer.NewTracer(mainCtx, &tracer.Config{
-		Reporter:               rep,
+		ExecutableReporter:     rep,
 		Intervals:              intervals,
 		IncludeTracers:         includeTracers,
 		FilterErrorFrames:      !c.SendErrorFrames,
