@@ -68,9 +68,6 @@ type DatadogReporter struct {
 	// this structure holds in long term storage information that might
 	// be duplicated in other places but not accessible for DatadogReporter.
 
-	// executables stores metadata for executables.
-	executables *lru.SyncedLRU[libpf.FileID, rsamples.ExecInfo]
-
 	// traceEvents stores reported trace events (trace metadata with frames and counts)
 	traceEvents xsync.RWMutex[rsamples.TraceEventsTree]
 
@@ -130,7 +127,6 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		runLoop: &runLoop{
 			stopSignal: make(chan libpf.Void),
 		},
-		executables:               executables,
 		containerMetadataProvider: p,
 		traceEvents:               xsync.NewRWMutex(make(rsamples.TraceEventsTree)),
 		processes:                 processes,
@@ -200,24 +196,9 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 	return nil
 }
 
-// ExecutableKnown returns true if the metadata of the Executable specified by fileID is
-// cached in the reporter.
-func (r *DatadogReporter) ExecutableKnown(fileID libpf.FileID) bool {
-	_, known := r.executables.GetAndRefresh(fileID, rsamples.ExecutableCacheLifetime)
-	return known
-}
-
-// ExecutableMetadata accepts a fileID with the corresponding filename
-// and caches this information.
-func (r *DatadogReporter) ExecutableMetadata(args *reporter.ExecutableMetadataArgs) {
-	r.executables.Add(args.FileID, rsamples.ExecInfo{
-		FileName:   path.Base(args.FileName),
-		GnuBuildID: args.GnuBuildID,
-		GoBuildID:  args.GoBuildID,
-	})
-
-	if r.symbolUploader != nil && args.Interp == libpf.Native {
-		r.symbolUploader.UploadSymbols(args.FileID, args.FileName, args.GnuBuildID, args.Open)
+func (r *DatadogReporter) ReportExecutable(execMeta *reporter.ExecutableMetadata) {
+	if r.symbolUploader != nil {
+		r.symbolUploader.UploadSymbols(execMeta)
 	}
 }
 
@@ -250,7 +231,6 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 		r.getPprofProfile()
 	}, func() {
 		// Allow the GC to purge expired entries to avoid memory leaks.
-		r.executables.PurgeExpired()
 		r.processes.PurgeExpired()
 	})
 
@@ -337,7 +317,7 @@ func (r *DatadogReporter) getPprofProfile() {
 	r.traceEvents.WUnlock(&events)
 
 	if !r.config.EnableSplitByService {
-		profileBuilder := pprof.NewProfileBuilder(intervalStart, intervalEnd, r.config.SamplesPerSecond, len(reportedEvents), r.config.Timeline, r.executables, r.processes)
+		profileBuilder := pprof.NewProfileBuilder(intervalStart, intervalEnd, r.config.SamplesPerSecond, len(reportedEvents), r.config.Timeline, r.processes)
 
 		for _, events := range reportedEvents {
 			profileBuilder.AddEvents(events[support.TraceOriginSampling])
@@ -359,7 +339,7 @@ func (r *DatadogReporter) getPprofProfile() {
 
 	totalSampleCount := 0
 	for s, perServiceEvents := range reportedEvents {
-		profileBuilder := pprof.NewProfileBuilder(intervalStart, intervalEnd, r.config.SamplesPerSecond, len(reportedEvents), r.config.Timeline, r.executables, r.processes)
+		profileBuilder := pprof.NewProfileBuilder(intervalStart, intervalEnd, r.config.SamplesPerSecond, len(reportedEvents), r.config.Timeline, r.processes)
 
 		profileBuilder.AddEvents(perServiceEvents[support.TraceOriginSampling])
 		profile, stats := profileBuilder.Build()

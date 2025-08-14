@@ -28,7 +28,7 @@ import (
 	lru "github.com/elastic/go-freelru"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
-	"go.opentelemetry.io/ebpf-profiler/process"
+	"go.opentelemetry.io/ebpf-profiler/reporter"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
@@ -57,13 +57,6 @@ const (
 	uploadTimeout     = 15 * time.Second
 )
 
-type fileData struct {
-	filePath string
-	fileID   libpf.FileID
-	buildID  string
-	opener   process.FileOpener
-}
-
 type DatadogSymbolUploader struct {
 	symbolEndpoints       []SymbolEndpoint
 	intakeURLs            []string
@@ -77,8 +70,8 @@ type DatadogSymbolUploader struct {
 	client              *http.Client
 	symbolQueriers      []SymbolQuerier
 	symbolQueryInterval time.Duration
-	retrievalQueue      chan fileData
-	pipeline            pipeline.Pipeline[fileData]
+	retrievalQueue      chan *reporter.ExecutableMetadata
+	pipeline            pipeline.Pipeline[*reporter.ExecutableMetadata]
 	mut                 sync.Mutex
 }
 
@@ -149,7 +142,7 @@ func buildSourcemapIntakeURL(site string) string {
 }
 
 func (d *DatadogSymbolUploader) Start(ctx context.Context) {
-	symbolRetrievalQueue := make(chan fileData, defaultSymbolRetrievalQueueSize)
+	symbolRetrievalQueue := make(chan *reporter.ExecutableMetadata, defaultSymbolRetrievalQueueSize)
 
 	queryWorkerCount := defaultQueryWorkerCount
 	symbolQueryMaxBatchSize := defaultSymbolQueryMaxBatchSize
@@ -191,12 +184,12 @@ func (d *DatadogSymbolUploader) Stop() {
 	d.pipeline.Stop()
 }
 
-func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, buildID string,
-	opener process.FileOpener) {
-	_, ok := d.uploadCache.Get(fileID)
+func (d *DatadogSymbolUploader) UploadSymbols(execMeta *reporter.ExecutableMetadata) {
+	mf := execMeta.MappingFile.Value()
+	_, ok := d.uploadCache.Get(mf.FileID)
 	if ok {
 		log.Debugf("Skipping symbol upload for executable %s: already uploaded",
-			filePath)
+			execMeta.Mapping.Path.String())
 		return
 	}
 
@@ -216,20 +209,21 @@ func (d *DatadogSymbolUploader) UploadSymbols(fileID libpf.FileID, filePath, bui
 	// do not seem to be worth it.
 	// We can revisit this choice later if we switch to a different symbol extraction method.
 	select {
-	case d.retrievalQueue <- fileData{filePath, fileID, buildID, opener}:
+	case d.retrievalQueue <- execMeta:
 	default:
-		log.Warnf("Symbol upload queue is full, skipping symbol upload for file %q with file ID %q and build ID %q",
-			filePath, fileID.StringNoQuotes(), buildID)
+		log.Warnf("Symbol upload queue is full, skipping symbol upload for file %q with file ID %q",
+			execMeta.Mapping.Path.String(), mf.FileID.StringNoQuotes())
 	}
 }
 
-func (d *DatadogSymbolUploader) symbolRetrievalWorker(_ context.Context, file fileData, outputChan chan<- *symbol.Elf) {
+func (d *DatadogSymbolUploader) symbolRetrievalWorker(_ context.Context, execMeta *reporter.ExecutableMetadata, outputChan chan<- *symbol.Elf) {
 	// Record immediately to avoid duplicate uploads
-	d.uploadCache.Add(file.fileID, struct{}{})
-	elfSymbols := d.getSymbolsFromDisk(file)
+	mf := execMeta.MappingFile.Value()
+	d.uploadCache.Add(mf.FileID, struct{}{})
+	elfSymbols := d.getSymbolsFromDisk(execMeta)
 	if elfSymbols == nil {
 		// Remove from cache because we might have symbols for this exe in another context
-		d.uploadCache.Remove(file.fileID)
+		d.uploadCache.Remove(mf.FileID)
 		return
 	}
 	outputChan <- elfSymbols
@@ -314,14 +308,11 @@ func (d *DatadogSymbolUploader) getSymbolSourceWithGoPCLnTab(e *symbol.Elf) (sym
 	return max(symbolSource, symbol.SourceGoPCLnTab), goPCLnTabInfo
 }
 
-func (d *DatadogSymbolUploader) getSymbolsFromDisk(data fileData) *symbol.Elf {
-	filePath := data.filePath
-	fileID := data.fileID
-
-	elfSymbols, err := symbol.NewElf(filePath, fileID, data.opener)
+func (d *DatadogSymbolUploader) getSymbolsFromDisk(execMeta *reporter.ExecutableMetadata) *symbol.Elf {
+	mf := execMeta.MappingFile.Value()
+	elfSymbols, err := symbol.NewElfFromMapping(execMeta.Mapping, mf.GnuBuildID, mf.GoBuildID, mf.FileID, execMeta.Process)
 	if err != nil {
-		log.Debugf("Skipping symbol upload for executable %s: %v",
-			data.filePath, err)
+		log.Debugf("Skipping symbol upload for executable %s: %v", execMeta.Mapping.Path.String(), err)
 		return nil
 	}
 
