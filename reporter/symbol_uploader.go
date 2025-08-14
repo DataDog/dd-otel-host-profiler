@@ -49,7 +49,7 @@ const (
 	defaultQueryWorkerCount     = 10
 
 	defaultUploadQueueSize   = 1000
-	defaultUploadWorkerCount = 10
+	defaultUploadWorkerCount = 5
 
 	sourceMapEndpoint = "/api/v2/srcmap"
 
