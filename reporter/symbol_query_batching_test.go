@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/ebpf-profiler/libpf"
 
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
@@ -107,12 +108,12 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 	})
 
 	t.Run("Multiple buildIDs", func(t *testing.T) {
+		fileID := libpf.FileID{}
 		elfs := []*symbol.Elf{
-			symbol.NewElfForTest("arch1", "non_existing_buildid", "", ""),
-			symbol.NewElfForTest("arch1", "buildid1", "buildid2", ""), // multiple buildIDs, gnu_build_id should be used
-			symbol.NewElfForTest("arch2", "buildid1", "", ""),         // arch mismatch
-			symbol.NewElfForTest("arch1", "", "", ""),                 // empty buildID
-			symbol.NewElfForTest("arch1", "buildid2", "", ""),         // multiple matching buildIDs, first one should be used
+			symbol.NewElfForTest("arch1", "non_existing_buildid", "", fileID),
+			symbol.NewElfForTest("arch1", "buildid1", "buildid2", fileID), // multiple buildIDs, gnu_build_id should be used
+			symbol.NewElfForTest("arch2", "buildid1", "", fileID),         // arch mismatch
+			symbol.NewElfForTest("arch1", "buildid2", "", fileID),         // multiple matching buildIDs, first one should be used
 		}
 		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
 		require.ElementsMatch(t, []ElfWithBackendSources{
@@ -152,17 +153,6 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 			{
 				Elf: elfs[3],
 				BackendSymbolSources: []SymbolQueryResult{
-					{
-						Err: errors.New("empty buildID"),
-					},
-					{
-						Err: errors.New("empty buildID"),
-					},
-				},
-			},
-			{
-				Elf: elfs[4],
-				BackendSymbolSources: []SymbolQueryResult{
 					{ // multiple matching buildIDs, first one should be used
 						SymbolSource: symbol.SourceSymbolTable,
 					},
@@ -176,7 +166,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 
 	t.Run("Errors on both endpoints", func(t *testing.T) {
 		elfs := []*symbol.Elf{
-			symbol.NewElfForTest("arch0", "buildid1", "", ""),
+			symbol.NewElfForTest("arch0", "buildid1", "", libpf.FileID{}),
 		}
 		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
 		require.Error(t, results[0].BackendSymbolSources[0].Err)
@@ -185,7 +175,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 
 	t.Run("Errors on one endpoint", func(t *testing.T) {
 		elfs := []*symbol.Elf{
-			symbol.NewElfForTest("arch2", "buildid1", "", ""),
+			symbol.NewElfForTest("arch2", "buildid1", "", libpf.FileID{}),
 		}
 		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
 		require.Error(t, results[0].BackendSymbolSources[1].Err)

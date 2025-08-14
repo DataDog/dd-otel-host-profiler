@@ -8,16 +8,20 @@ package reporter
 import (
 	"debug/elf"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"unique"
 
 	"github.com/DataDog/jsonapi"
 	"github.com/DataDog/zstd"
@@ -27,10 +31,83 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
+	"go.opentelemetry.io/ebpf-profiler/process"
+	"go.opentelemetry.io/ebpf-profiler/remotememory"
+	"go.opentelemetry.io/ebpf-profiler/reporter"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
+
+// dummyProcess implements pfelf.Process for testing purposes
+type dummyProcess struct {
+	pid libpf.PID
+}
+
+func (d *dummyProcess) PID() libpf.PID {
+	return d.pid
+}
+
+func (d *dummyProcess) GetMachineData() process.MachineData {
+	return process.MachineData{}
+}
+
+func (d *dummyProcess) GetMappings() ([]process.Mapping, uint32, error) {
+	return nil, 0, errors.New("not implemented")
+}
+
+func (d *dummyProcess) GetThreads() ([]process.ThreadInfo, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (d *dummyProcess) GetRemoteMemory() remotememory.RemoteMemory {
+	return remotememory.RemoteMemory{}
+}
+
+func (d *dummyProcess) GetMappingFileLastModified(_ *process.Mapping) int64 {
+	return 0
+}
+
+func (d *dummyProcess) CalculateMappingFileID(m *process.Mapping) (libpf.FileID, error) {
+	return libpf.FileIDFromExecutableFile(m.Path.String())
+}
+
+func (d *dummyProcess) OpenMappingFile(m *process.Mapping) (process.ReadAtCloser, error) {
+	return os.Open(m.Path.String())
+}
+
+func (d *dummyProcess) OpenELF(name string) (*pfelf.File, error) {
+	return pfelf.Open(name)
+}
+
+func (d *dummyProcess) ExtractAsFile(name string) (string, error) {
+	return path.Join("/proc", strconv.Itoa(int(d.pid)), "root", name), nil
+}
+
+func (d *dummyProcess) Close() error {
+	return nil
+}
+
+func newExecutableMetadata(t *testing.T, filePath string) *reporter.ExecutableMetadata {
+	fileID, err := libpf.FileIDFromExecutableFile(filePath)
+	require.NoError(t, err)
+	mf := unique.Make(libpf.FrameMappingFileData{
+		FileID:     fileID,
+		FileName:   libpf.Intern(path.Base(filePath)),
+		GnuBuildID: "",
+		GoBuildID:  "",
+	})
+	pr := &dummyProcess{pid: libpf.PID(os.Getpid())}
+	m := &process.Mapping{
+		Path: libpf.Intern(filePath),
+	}
+	return &reporter.ExecutableMetadata{
+		MappingFile:       mf,
+		Process:           pr,
+		Mapping:           m,
+		DebuglinkFileName: "",
+	}
+}
 
 func findSymbol(f *elf.File, name string) *elf.Symbol {
 	syms, err := f.Symbols()
@@ -235,6 +312,7 @@ type buildOptions struct {
 	corruptGoPCLnTab bool
 }
 
+//nolint:unparam
 func buildGo(t *testing.T, tmpDir, buildID string, opts buildOptions) string {
 	f, err := os.CreateTemp(tmpDir, "helloworld")
 	require.NoError(t, err)
@@ -351,7 +429,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeNoSymbols, buildID, &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeNoSymbols))
 		uploader.Stop()
 
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
@@ -363,7 +441,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeSymtab, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeSymtab))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceSymbolTable, false, []bool{true, true, false, false, false})
@@ -375,7 +453,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeDebugInfos, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeDebugInfos))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false})
@@ -387,7 +465,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsym, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsym))
 		uploader.Stop()
 
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
@@ -399,7 +477,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsym, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsym))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceDynamicSymbolTable, false, []bool{true, false, false, false, false})
@@ -411,7 +489,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeNoSymbols, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeNoSymbols))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceGoPCLnTab, true, []bool{true, true, true, false, false})
@@ -423,7 +501,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeDebugInfosCorruptGoPCLnTab, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeDebugInfosCorruptGoPCLnTab))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false})
@@ -435,7 +513,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsymCorruptGoPCLnTab, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsymCorruptGoPCLnTab))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceDynamicSymbolTable, false, []bool{true, false, false, false, false})
@@ -447,7 +525,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeyDynsymCorruptGoPCLnTab, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsymCorruptGoPCLnTab))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceNone, false, []bool{false, false, false, false, false})
@@ -459,7 +537,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(libpf.FileID{}, goExeDebugInfos, "build_id", &symbol.DiskOpener{})
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeDebugInfos))
 		uploader.Stop()
 
 		checkUploadsWithEncoding(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false}, "zstd")
