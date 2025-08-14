@@ -172,13 +172,8 @@ func (e *elfWrapper) findDebugSymbolsWithBuildID() *elfWrapper {
 	}
 
 	// Try to find the debug file
-	debugDirectories := make([]string, 0, len(globalDebugDirectories))
 	for _, dir := range globalDebugDirectories {
-		debugDirectories = append(debugDirectories, filepath.Join(dir, ".build-id"))
-	}
-
-	for _, debugPath := range debugDirectories {
-		debugFile := filepath.Join(debugPath, buildID[:2], buildID[2:]+".debug")
+		debugFile := filepath.Join(dir, ".build-id", buildID[:2], buildID[2:]+".debug")
 		debugELF, err := e.openELF(debugFile)
 		if err != nil {
 			continue
