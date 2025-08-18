@@ -67,7 +67,6 @@ const (
 	// Go 'flag' package calls os.Exit(2) on flag parse errors, if ExitOnError is set
 	exitParseError exitCode = 2
 
-	defaultFramesCacheSize      = 65536
 	defaultExecutablesCacheSize = 65536
 	defaultProcessesCacheSize   = 16384
 )
@@ -196,6 +195,15 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to parse the included tracers: %v", err)
 	}
 
+	// Disable Go interpreter because we are doing Go symbolization remotely.
+	includeTracers.Disable(tracertypes.GoTracer)
+	if args.collectContext {
+		includeTracers.Enable(tracertypes.Labels)
+	} else {
+		includeTracers.Disable(tracertypes.Labels)
+	}
+	log.Infof("Enabled tracers: %s", includeTracers.String())
+
 	validatedTags := ValidateTags(args.tags)
 	log.Debugf("Validated tags: %s", validatedTags)
 
@@ -251,17 +259,15 @@ func mainWithExitCode() exitCode {
 		Version:                  versionInfo.Version,
 		ReportInterval:           intervals.ReportInterval(),
 		ExecutablesCacheElements: defaultExecutablesCacheSize,
-		// Next step: Calculate FramesCacheElements from numCores and samplingRate.
-		FramesCacheElements:    defaultFramesCacheSize,
-		ProcessesCacheElements: defaultProcessesCacheSize,
-		SamplesPerSecond:       int(args.samplesPerSecond),
-		PprofPrefix:            args.pprofPrefix,
-		Tags:                   validatedTags,
-		Timeline:               args.timeline,
-		APIKey:                 apiKey,
-		EnableSplitByService:   args.enableSplitByService,
-		SplitServiceSuffix:     args.splitServiceSuffix,
-		HostServiceName:        args.hostServiceName,
+		ProcessesCacheElements:   defaultProcessesCacheSize,
+		SamplesPerSecond:         int(args.samplesPerSecond),
+		PprofPrefix:              args.pprofPrefix,
+		Tags:                     validatedTags,
+		Timeline:                 args.timeline,
+		APIKey:                   apiKey,
+		EnableSplitByService:     args.enableSplitByService,
+		SplitServiceSuffix:       args.splitServiceSuffix,
+		HostServiceName:          args.hostServiceName,
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,
@@ -298,7 +304,7 @@ func mainWithExitCode() exitCode {
 		SamplesPerSecond:       int(args.samplesPerSecond),
 		MapScaleFactor:         int(args.mapScaleFactor),
 		KernelVersionCheck:     !args.noKernelVersionCheck,
-		DebugTracer:            args.verboseeBPF,
+		VerboseMode:            args.verboseeBPF,
 		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
 		ProbabilisticInterval:  args.probabilisticInterval,
 		ProbabilisticThreshold: uint(args.probabilisticThreshold),
