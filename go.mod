@@ -7,7 +7,7 @@ require (
 	github.com/DataDog/jsonapi v0.12.0
 	github.com/DataDog/zstd v1.5.7
 	github.com/containerd/containerd v1.7.27
-	github.com/docker/docker v27.3.1+incompatible
+	github.com/docker/docker v28.0.0+incompatible
 	github.com/elastic/go-freelru v0.16.0
 	github.com/google/pprof v0.0.0-20241101162523-b92577c0c142
 	github.com/jarcoal/httpmock v1.3.1
