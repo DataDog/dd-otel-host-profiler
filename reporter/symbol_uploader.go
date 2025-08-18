@@ -378,12 +378,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, endpo
 	var g errgroup.Group
 	for _, ind := range endpointIndices {
 		g.Go(func() error {
-			symbolFileDup, innerErr := os.Open(symbolFile.Name())
-			if innerErr != nil {
-				return fmt.Errorf("failed to open symbol file: %w", innerErr)
-			}
-			defer symbolFileDup.Close()
-			return d.uploadSymbols(ctx, symbolFileDup, metadata, ind)
+			return d.uploadSymbols(ctx, symbolFile.Name(), metadata, ind)
 		})
 	}
 
@@ -558,7 +553,13 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 	return nil
 }
 
-func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *os.File, e *symbolUploadRequestMetadata, endpointIdx int) error {
+func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFilePath string, e *symbolUploadRequestMetadata, endpointIdx int) error {
+	symbolFile, err := os.Open(symbolFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open symbol file: %w", err)
+	}
+	defer symbolFile.Close()
+
 	pipeR, pipeW := io.Pipe()
 
 	var compressed *zstd.Writer
@@ -577,37 +578,38 @@ func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFile *o
 		return fmt.Errorf("failed to build symbol upload request: %w", err)
 	}
 
-	var g errgroup.Group
-	g.Go(func() error {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		defer pipeW.Close()
 		innerErr := streamRequestBody(symbolFile, e, mw)
 		if innerErr != nil {
-			return fmt.Errorf("failed to stream request body: %w", innerErr)
+			pipeW.CloseWithError(fmt.Errorf("failed to stream request body: %w", innerErr))
+			return
 		}
 		// Close the multipart writer then the zstd writer
 		innerErr = mw.Close()
 		if innerErr != nil {
-			return fmt.Errorf("failed to close multipart writer: %w", innerErr)
+			pipeW.CloseWithError(fmt.Errorf("failed to close multipart writer: %w", innerErr))
+			return
 		}
 		if compressed != nil {
 			innerErr = compressed.Close()
 			if innerErr != nil {
-				return fmt.Errorf("failed to close zstd writer: %w", innerErr)
+				pipeW.CloseWithError(fmt.Errorf("failed to close zstd writer: %w", innerErr))
+				return
 			}
 		}
-		return nil
-	})
+	}()
 
 	resp, err := d.client.Do(req)
-	innerErr := g.Wait()
+	wg.Wait()
+
 	if err != nil {
-		return errors.Join(err, innerErr)
+		return err
 	}
 	defer resp.Body.Close()
-
-	if innerErr != nil {
-		return innerErr
-	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
