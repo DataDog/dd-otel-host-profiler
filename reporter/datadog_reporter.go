@@ -358,21 +358,21 @@ func (r *DatadogReporter) getPprofProfile() {
 	}
 
 	totalSampleCount := 0
-	for e, perServiceEvents := range reportedEvents {
+	for s, perServiceEvents := range reportedEvents {
 		profileBuilder := pprof.NewProfileBuilder(intervalStart, intervalEnd, r.config.SamplesPerSecond, len(reportedEvents), r.config.Timeline, r.executables, r.processes)
 
 		profileBuilder.AddEvents(perServiceEvents[support.TraceOriginSampling])
 		profile, stats := profileBuilder.Build()
 		totalSampleCount += stats.TotalSampleCount
-		tags := createTagsForProfile(r.tags, profileSeq, e.Service, e.InferredService)
+		tags := createTagsForProfile(r.tags, profileSeq, s.Service, s.InferredService)
 		r.profiles <- &uploadProfileData{
 			profile:  profile,
 			start:    intervalStart,
 			end:      intervalEnd,
-			entityID: e.EntityID,
+			entityID: s.EntityID,
 			tags:     tags,
 		}
-		log.Debugf("Reporting profile for service %s: %d samples, tags: %v", e.Service, stats.TotalSampleCount, tags)
+		log.Debugf("Reporting profile for service %s: %d samples, tags: %v", s.Service, stats.TotalSampleCount, tags)
 	}
 	log.Infof("Reporting %d profiles #%d from %v to %v: %d samples, %d PIDs with no process metadata",
 		len(reportedEvents), profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), totalSampleCount, processAlreadyExitedCount)
