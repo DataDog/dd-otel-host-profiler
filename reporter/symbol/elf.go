@@ -9,11 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"runtime"
+	"strconv"
 
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/process"
+	"go.opentelemetry.io/ebpf-profiler/reporter"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 )
@@ -41,8 +44,8 @@ type Elf struct {
 	elfDataDump string
 }
 
-func NewElfFromMapping(m *process.Mapping, gnuBuildID, goBuildID string, fileID libpf.FileID, pr process.Process) (*Elf, error) {
-	wrapper, err := newElfWrapperFromMapping(m, pr)
+func NewElf(filePath string, opener reporter.FileOpener, gnuBuildID, goBuildID string, fileID libpf.FileID) (*Elf, error) {
+	wrapper, err := newElfWrapperFromFile(filePath, opener)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create elf wrapper from mapping: %w", err)
 	}
@@ -58,27 +61,27 @@ func NewElfForTest(arch, gnuBuildID, goBuildID string, fileID libpf.FileID) *Elf
 	}
 }
 
-func NewElfFromDisk(path string) (*Elf, error) {
-	fileID, err := libpf.FileIDFromExecutableFile(path)
+func NewElfFromDisk(filePath string) (*Elf, error) {
+	fileID, err := libpf.FileIDFromExecutableFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file ID: %w", err)
 	}
 
-	wrapper, err := newElfWrapperFromFile(path, &diskHelper{})
+	wrapper, err := newElfWrapperFromFile(filePath, &DiskOpener{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create elf wrapper for file %s from disk: %w", path, err)
+		return nil, fmt.Errorf("failed to create elf wrapper for file %s from disk: %w", filePath, err)
 	}
 
 	goBuildID := ""
 	gnuBuildID, err := wrapper.elfFile.GetBuildID()
 	if err != nil {
-		log.Debugf("failed to get GNU build ID for file %s: %s", path, err)
+		log.Debugf("failed to get GNU build ID for file %s: %s", filePath, err)
 	}
 
 	if wrapper.elfFile.IsGolang() {
 		goBuildID, err = wrapper.elfFile.GetGoBuildID()
 		if err != nil {
-			log.Debugf("failed to get Go build ID for file %s: %s", path, err)
+			log.Debugf("failed to get Go build ID for file %s: %s", filePath, err)
 		}
 	}
 
@@ -252,8 +255,24 @@ func newElf(wrapper *elfWrapper, fileID libpf.FileID, gnuBuildID, goBuildID stri
 	return elf, nil
 }
 
-type diskHelper struct{}
+type diskFile struct {
+	*os.File
+}
 
-func (o *diskHelper) ExtractAsFile(path string) (string, error) {
-	return path, nil
+func (f *diskFile) OpenablePath() string {
+	return path.Join("/proc", strconv.Itoa(os.Getpid()), "fd", strconv.Itoa(int(f.Fd())))
+}
+
+func (f *diskFile) OSFile() (*os.File, error) {
+	return f.File, nil
+}
+
+type DiskOpener struct{}
+
+func (o *DiskOpener) OpenFile(filePath string) (process.ProcessFile, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	return &diskFile{f}, nil
 }

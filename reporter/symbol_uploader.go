@@ -310,7 +310,7 @@ func (d *DatadogSymbolUploader) getSymbolSourceWithGoPCLnTab(e *symbol.Elf) (sym
 
 func (d *DatadogSymbolUploader) getSymbolsFromDisk(execMeta *reporter.ExecutableMetadata) *symbol.Elf {
 	mf := execMeta.MappingFile.Value()
-	elfSymbols, err := symbol.NewElfFromMapping(execMeta.Mapping, mf.GnuBuildID, mf.GoBuildID, mf.FileID, execMeta.Process)
+	elfSymbols, err := symbol.NewElf(execMeta.Mapping.Path.String(), execMeta.Opener, mf.GnuBuildID, mf.GoBuildID, mf.FileID)
 	if err != nil {
 		log.Debugf("Skipping symbol upload for executable %s: %v", execMeta.Mapping.Path.String(), err)
 		return nil

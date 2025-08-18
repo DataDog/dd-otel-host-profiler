@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"debug/elf"
 	"encoding/json"
-	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -19,7 +18,6 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"unique"
@@ -33,7 +31,6 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 	"go.opentelemetry.io/ebpf-profiler/process"
-	"go.opentelemetry.io/ebpf-profiler/remotememory"
 	"go.opentelemetry.io/ebpf-profiler/reporter"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
@@ -41,55 +38,6 @@ import (
 )
 
 var objcopyZstdSupport = CheckObjcopyZstdSupport()
-
-// dummyProcess implements pfelf.Process for testing purposes
-type dummyProcess struct {
-	pid libpf.PID
-}
-
-func (d *dummyProcess) PID() libpf.PID {
-	return d.pid
-}
-
-func (d *dummyProcess) GetMachineData() process.MachineData {
-	return process.MachineData{}
-}
-
-func (d *dummyProcess) GetMappings() ([]process.Mapping, uint32, error) {
-	return nil, 0, errors.New("not implemented")
-}
-
-func (d *dummyProcess) GetThreads() ([]process.ThreadInfo, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (d *dummyProcess) GetRemoteMemory() remotememory.RemoteMemory {
-	return remotememory.RemoteMemory{}
-}
-
-func (d *dummyProcess) GetMappingFileLastModified(_ *process.Mapping) int64 {
-	return 0
-}
-
-func (d *dummyProcess) CalculateMappingFileID(m *process.Mapping) (libpf.FileID, error) {
-	return libpf.FileIDFromExecutableFile(m.Path.String())
-}
-
-func (d *dummyProcess) OpenMappingFile(m *process.Mapping) (process.ReadAtCloser, error) {
-	return os.Open(m.Path.String())
-}
-
-func (d *dummyProcess) OpenELF(name string) (*pfelf.File, error) {
-	return pfelf.Open(name)
-}
-
-func (d *dummyProcess) ExtractAsFile(name string) (string, error) {
-	return path.Join("/proc", strconv.Itoa(int(d.pid)), "root", name), nil
-}
-
-func (d *dummyProcess) Close() error {
-	return nil
-}
 
 func newExecutableMetadata(t *testing.T, filePath string) *reporter.ExecutableMetadata {
 	fileID, err := libpf.FileIDFromExecutableFile(filePath)
@@ -100,13 +48,12 @@ func newExecutableMetadata(t *testing.T, filePath string) *reporter.ExecutableMe
 		GnuBuildID: "",
 		GoBuildID:  "",
 	})
-	pr := &dummyProcess{pid: libpf.PID(os.Getpid())}
 	m := &process.Mapping{
 		Path: libpf.Intern(filePath),
 	}
 	return &reporter.ExecutableMetadata{
 		MappingFile:       mf,
-		Process:           pr,
+		Opener:            &symbol.DiskOpener{},
 		Mapping:           m,
 		DebuglinkFileName: "",
 	}
