@@ -77,6 +77,8 @@ jobs:
           annotations: |
             org.opencontainers.image.description=The Datadog OpenTelemetry Profiler is a full-host profiler that collects and sends profiling data to Datadog
             org.opencontainers.image.vendor=Datadog
+          flavor: |
+            latest=${{ contains(github.ref_name, '-rc') && 'false' || 'true' }}
       - name: Download artifacts
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
       - name: Create assets
