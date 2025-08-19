@@ -90,15 +90,10 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 				// that are not originate from a native or interpreted
 				// program.
 			default:
-				sourceFile := frame.SourceFile.String()
-				if frameKind == libpf.KernelFrame {
-					sourceFile = "kernel"
-				}
-
 				// Store interpreted frame information as Line message:
 				line := pprofile.Line{
 					Line:     int64(frame.SourceLine),
-					Function: b.createPprofFunctionEntry(frame.FunctionName.String(), sourceFile),
+					Function: b.createPprofFunctionEntry(frame.FunctionName.String(), frame.SourceFile.String()),
 				}
 
 				loc.Line = append(loc.Line, line)
@@ -118,11 +113,7 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 
 		case samples.IsKernel(traceInfo.Frames):
 			execPath = "kernel"
-			if processMeta.ProcessName != "" {
-				baseExec = processMeta.ProcessName
-			} else {
-				baseExec = execPath
-			}
+			baseExec = execPath
 
 		default:
 			execPath = traceKey.Comm
