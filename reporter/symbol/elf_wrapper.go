@@ -54,24 +54,43 @@ func (e *elfWrapper) Close() {
 	_ = e.reader.Close()
 }
 
-func openELF(filePath string, opener process.FileOpener) (*elfWrapper, error) {
+func openELF(filePath string, opener process.FileOpener) (_ *elfWrapper, err error) {
 	r, actualFilePath, err := opener.Open(filePath)
 	if err != nil {
 		return nil, err
 	}
-	// Wrap it in a cacher as we often do short reads
-	buffered, err := readatbuf.New(r, 1024, 4)
+
+	defer func() {
+		if err != nil {
+			_ = r.Close()
+		}
+	}()
+
+	var ef *pfelf.File
+	if actualFilePath == "" {
+		var buffered *readatbuf.Reader
+		// Wrap it in a cacher as we often do short reads
+		buffered, err = readatbuf.New(r, 1024, 4)
+		if err != nil {
+			return nil, err
+		}
+		ef, err = pfelf.NewFile(buffered, 0, false)
+	} else {
+		ef, err = pfelf.Open(actualFilePath)
+	}
+
 	if err != nil {
 		return nil, err
 	}
-	ef, err := pfelf.NewFile(buffered, 0, false)
-	if err != nil {
-		_ = r.Close()
-		return nil, err
-	}
+
+	defer func() {
+		if err != nil {
+			_ = ef.Close()
+		}
+	}()
+
 	err = ef.LoadSections()
 	if err != nil {
-		_ = r.Close()
 		return nil, err
 	}
 	return &elfWrapper{reader: r, elfFile: ef, filePath: filePath, actualFilePath: actualFilePath, opener: opener}, nil
