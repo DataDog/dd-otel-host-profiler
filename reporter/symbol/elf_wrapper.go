@@ -60,13 +60,16 @@ func openELF(filePath string, opener process.FileOpener) (_ *elfWrapper, err err
 		return nil, err
 	}
 
+	var ef *pfelf.File
 	defer func() {
 		if err != nil {
+			if ef != nil {
+				_ = ef.Close()
+			}
 			_ = r.Close()
 		}
 	}()
 
-	var ef *pfelf.File
 	if actualFilePath == "" {
 		var buffered *readatbuf.Reader
 		// Wrap it in a cacher as we often do short reads
@@ -82,12 +85,6 @@ func openELF(filePath string, opener process.FileOpener) (_ *elfWrapper, err err
 	if err != nil {
 		return nil, err
 	}
-
-	defer func() {
-		if err != nil {
-			_ = ef.Close()
-		}
-	}()
 
 	err = ef.LoadSections()
 	if err != nil {
