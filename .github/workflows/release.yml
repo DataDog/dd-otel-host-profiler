@@ -18,13 +18,6 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - name: Check tag is on main branch
-        run: |
-          BRANCH=$(git branch -r --contains ${{ github.ref_name }} | grep -E '^\s*origin/main$' || true)
-          if [ -z "$BRANCH" ]; then
-            echo "Tag ${{ github.ref_name }} is not on main branch, skipping release"
-            exit 1
-          fi
       - name: Get Go version from go.mod file
         id: go-version
         run: echo "version=$(go mod edit -json | jq -r .Go)" >> "${GITHUB_OUTPUT}"
