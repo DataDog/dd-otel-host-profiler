@@ -452,25 +452,25 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	}
 
 	inferredService := false
-	if service == "" && execPath != "" {
+	switch {
+	case service != "":
+		// containerd shim injects an OTEL_SERVICE_NAME environment variable that contains a hash of the container ID
+		// see https://github.com/containerd/containerd/blob/1ce8e1ca0e43ae5942c6b60906b653107c442ce9/cmd/containerd-shim-runc-v2/manager/manager_linux.go#L106
+		// to avoid polluting the interface with multiple service names, we replace it with "containerd-shim"
+		if strings.HasPrefix(service, "containerd-shim-") {
+			service = "containerd-shim"
+		}
+	case execPath != "":
 		service = path.Base(execPath)
 		inferredService = true
-	}
-
-	if service == "" && rsamples.IsKernel(trace.Frames) {
+	case rsamples.IsKernel(trace.Frames):
 		service = "system"
-	}
-
-	if service == "" {
+	case meta.Comm != "":
+		service = meta.Comm
+		inferredService = true
+	default:
 		service = unknownServiceStr
 		inferredService = true
-	}
-
-	// containerd shim injects an OTEL_SERVICE_NAME environment variable that contains a hash of the container ID
-	// see https://github.com/containerd/containerd/blob/1ce8e1ca0e43ae5942c6b60906b653107c442ce9/cmd/containerd-shim-runc-v2/manager/manager_linux.go#L106
-	// to avoid polluting the interface with multiple service names, we replace it with "containerd-shim"
-	if strings.HasPrefix(service, "containerd-shim-") {
-		service = "containerd-shim"
 	}
 
 	var containerMetadata containermetadata.ContainerMetadata
