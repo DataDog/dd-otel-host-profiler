@@ -90,10 +90,14 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 				// that are not originate from a native or interpreted
 				// program.
 			default:
+				functionName := frame.FunctionName.String()
+				if functionName == "" {
+					functionName = unknownStr
+				}
 				// Store interpreted frame information as Line message:
 				line := pprofile.Line{
 					Line:     int64(frame.SourceLine),
-					Function: b.createPprofFunctionEntry(frame.FunctionName.String(), frame.SourceFile.String()),
+					Function: b.createPprofFunctionEntry(functionName, frame.SourceFile.String()),
 				}
 
 				loc.Line = append(loc.Line, line)
