@@ -423,6 +423,9 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
 		execPath = meta.ExecutablePath
 	}
+	// Trim the "(deleted)" suffix if it exists.
+	// This can happen when the executable has been deleted or replaced while the process is running.
+	execPath = strings.TrimSuffix(execPath, " (deleted)")
 
 	var processName string
 	if name, err2 := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid)); err2 == nil {
