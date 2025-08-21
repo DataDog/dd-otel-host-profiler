@@ -194,7 +194,7 @@ func (b *ProfileBuilder) getDummyMapping() *pprofile.Mapping {
 		return tmpMapping
 	}
 
-	mapping := b.createPprofMapping("DUMMY", dummyFileID.StringNoQuotes())
+	mapping := b.createPprofMapping("DUMMY", "")
 	b.fileIDtoMapping[dummyFileID] = mapping
 
 	return mapping
