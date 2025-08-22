@@ -382,9 +382,8 @@ func (r *DatadogReporter) getPprofProfile() {
 func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled bool) Tags {
 	tags := append(Tags{}, userTags...)
 
+	customContextTagKey := "ddprof.custom_ctx"
 	if !splitByServiceEnabled {
-		customContextTagKey := "ddprof.custom_ctx"
-
 		tags = append(tags,
 			MakeTag(customContextTagKey, "container_id"),
 			MakeTag(customContextTagKey, "container_name"),
@@ -397,7 +396,10 @@ func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled
 		MakeTag("remote_symbols", "yes"),
 		MakeTag("profiler_name", profilerName),
 		MakeTag("profiler_version", version),
-		MakeTag("cpu_arch", runtime.GOARCH))
+		MakeTag("cpu_arch", runtime.GOARCH),
+		MakeTag(customContextTagKey, "env"),
+		MakeTag(customContextTagKey, "runtime_id"),
+	)
 
 	return tags
 }
@@ -454,6 +456,16 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 		service = getServiceName(pid)
 	}
 
+	var deploymentEnvironmentName string
+	var serviceInstanceID string
+	if tracerCtx, err2 := ReadProcessLevelContext(pid); err2 == nil {
+		if tracerCtx.ServiceName != "" {
+			service = tracerCtx.ServiceName
+		}
+		deploymentEnvironmentName = tracerCtx.DeploymentEnvironmentName
+		serviceInstanceID = tracerCtx.ServiceInstanceID
+	}
+
 	inferredService := false
 	switch {
 	case service != "":
@@ -494,12 +506,14 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	}
 
 	pMeta := rsamples.ProcessMetadata{
-		UpdatedAt:         time.Now(),
-		ExecutablePath:    execPath,
-		ProcessName:       processName,
-		ContainerMetadata: containerMetadata,
-		Service:           service,
-		InferredService:   inferredService,
+		UpdatedAt:                 time.Now(),
+		ExecutablePath:            execPath,
+		ProcessName:               processName,
+		ContainerMetadata:         containerMetadata,
+		Service:                   service,
+		InferredService:           inferredService,
+		DeploymentEnvironmentName: deploymentEnvironmentName,
+		ServiceInstanceID:         serviceInstanceID,
 	}
 	r.processes.Add(pid, pMeta)
 	return pMeta

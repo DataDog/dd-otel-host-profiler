@@ -35,12 +35,14 @@ type TraceAndMetaKey struct {
 }
 
 type ProcessMetadata struct {
-	UpdatedAt         time.Time
-	ExecutablePath    string
-	ProcessName       string
-	ContainerMetadata containermetadata.ContainerMetadata
-	Service           string
-	InferredService   bool
+	UpdatedAt                 time.Time
+	ExecutablePath            string
+	ProcessName               string
+	ContainerMetadata         containermetadata.ContainerMetadata
+	Service                   string
+	InferredService           bool
+	DeploymentEnvironmentName string
+	ServiceInstanceID         string
 }
 
 type ServiceEntity struct {
