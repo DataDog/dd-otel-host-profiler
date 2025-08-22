@@ -14,7 +14,6 @@ import (
 	pprofile "github.com/google/pprof/profile"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 
-	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	samples "github.com/DataDog/dd-otel-host-profiler/reporter/samples"
 )
 
@@ -137,7 +136,7 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 		}
 
 		labels := make(map[string][]string)
-		addTraceLabels(labels, traceKey, processMeta.ContainerMetadata, baseExec)
+		addTraceLabels(labels, traceKey, &processMeta, baseExec)
 		sample.Label = labels
 		sample.Value = append(sample.Value, count, count*b.samplingPeriod)
 
@@ -245,7 +244,7 @@ func (b *ProfileBuilder) createPprofMapping(fileName, buildID string) *pprofile.
 	return mapping
 }
 
-func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
+func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, processMeta *samples.ProcessMetadata,
 	processName string) {
 	// The naming has an impact on the backend side,
 	// this is why we use "thread id", "thread name" and "process name"
@@ -265,6 +264,7 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, conta
 		labels["process name"] = append(labels["process name"], processName)
 	}
 
+	containerMetadata := processMeta.ContainerMetadata
 	if containerMetadata.PodName != "" {
 		labels["pod_name"] = append(labels["pod_name"], containerMetadata.PodName)
 	}
@@ -276,5 +276,13 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, conta
 
 	if containerMetadata.ContainerName != "" {
 		labels["container_name"] = append(labels["container_name"], containerMetadata.ContainerName)
+	}
+
+	if processMeta.DeploymentEnvironmentName != "" {
+		labels["env"] = append(labels["env"], processMeta.DeploymentEnvironmentName)
+	}
+
+	if processMeta.ServiceInstanceID != "" {
+		labels["runtime_id"] = append(labels["runtime_id"], processMeta.ServiceInstanceID)
 	}
 }
