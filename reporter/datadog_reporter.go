@@ -495,10 +495,10 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 
 	pMeta := rsamples.ProcessMetadata{
 		UpdatedAt:         time.Now(),
-		ExecutablePath:    execPath,
-		ProcessName:       processName,
+		ExecutablePath:    strings.TrimSpace(execPath),
+		ProcessName:       strings.TrimSpace(processName),
 		ContainerMetadata: containerMetadata,
-		Service:           service,
+		Service:           strings.TrimSpace(service),
 		InferredService:   inferredService,
 	}
 	r.processes.Add(pid, pMeta)
