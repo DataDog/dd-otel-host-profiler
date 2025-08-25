@@ -19,7 +19,7 @@ jobs:
     name: Determine versions
     runs-on: ubuntu-24.04
     env:
-      RELEASE_VERSION: ${{ (github.ref_name == 'main' && 'dev') || (github.event_name != 'pull_request' && github.ref_name) || github.head_ref }}    
+      RELEASE_VERSION: ${{ (github.ref_name == 'main' && 'main') || (github.event_name != 'pull_request' && github.ref_name) || github.head_ref }}    
     outputs:
       go-version: ${{ steps.go-version.outputs.version }}
       profiler-version: ${{ steps.profiler-version.outputs.version }}
@@ -47,7 +47,7 @@ jobs:
 
   publish:
     env:
-      RELEASE_VERSION: ${{ github.event_name == 'pull_request' && 'dev-test' || 'dev' }}
+      RELEASE_VERSION: ${{ github.event_name == 'pull_request' && 'dev-test' || 'main' }}
     if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'publish-dev-test') )}}
     name: Publish pre-release
     needs: [build]
