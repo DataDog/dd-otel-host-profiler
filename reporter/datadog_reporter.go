@@ -468,6 +468,9 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 		inferredService = true
 	case rsamples.IsKernel(trace.Frames):
 		service = "system"
+	case processName != "":
+		service = processName
+		inferredService = true
 	case meta.Comm != "":
 		service = meta.Comm
 		inferredService = true
