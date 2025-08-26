@@ -42,7 +42,6 @@ const (
 	profilerName            = "dd-otel-host-profiler"
 	pidCacheUpdateInterval  = 1 * time.Minute // pid cache items will be updated at most once per this interval
 	pidCacheCleanupInterval = 5 * time.Minute // pid cache items for which metadata hasn't been updated in this interval will be removed
-	framesCacheLifetime     = 1 * time.Hour   // frames cache items will be removed if unused after this interval
 
 	profileUploadWorkerCount = 5
 	profileUploadQueueSize   = 128
