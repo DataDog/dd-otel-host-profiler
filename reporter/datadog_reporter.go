@@ -457,7 +457,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 
 	var deploymentEnvironmentName string
 	var serviceInstanceID string
-	if tracerCtx, err2 := ReadProcessLevelContext(pid); err2 == nil {
+	if tracerCtx, err2 := ReadProcessLevelContext(pid, r.config.KernelSupportsNamedAnonymousMappings); err2 == nil {
 		if tracerCtx.ServiceName != "" {
 			service = tracerCtx.ServiceName
 		}
