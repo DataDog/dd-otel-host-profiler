@@ -15,6 +15,19 @@ variables:
     value: "false"
     description: "Republish the latest container images"
 
+# Base job templates
+.base_trigger_images:
+  stage: deploy
+  trigger:
+    project: DataDog/images
+    branch: $IMAGES_DOWNSTREAM_BRANCH
+    strategy: depend
+  variables:
+    IMAGE_VERSION: parametrized
+    IMAGE_NAME: dd-otel-host-profiler
+    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
+    GBILITE_GITLAB_ACTION: "" # Hack to ensure that dynamic build is disabled in the triggered pipeline
+
 deploy_to_reliability_env:
   stage: deploy
   rules:
@@ -58,42 +71,28 @@ prepare_release_tag:
       dotenv: .env
 
 publish_internal_container_image:
-  stage: deploy
-  trigger:
-    project: DataDog/images
-    branch: $IMAGES_DOWNSTREAM_BRANCH
-    strategy: depend
+  extends: .base_trigger_images
   variables:
-    IMAGE_VERSION: parametrized
-    IMAGE_NAME: dd-otel-host-profiler
     RELEASE_TAG: $RELEASE_TAG
     REF_TAG_VERSION: $RELEASE_TAG
     RELEASE_PROD: $RELEASE_PROD
     RELEASE_STAGING: true
-    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
     X_DOCKER_ENV_PROFILER_VERSION: $PROFILER_VERSION
     X_DOCKER_ENV_PROFILER_REVISION: $CI_COMMIT_SHORT_SHA
   needs:
     - prepare_release_tag
 
 publish_internal_container_image_for_staging:
-  stage: deploy
+  extends: .base_trigger_images
   rules:
     # This job is only triggered when a release candidate tag is created
     - if: $CI_COMMIT_TAG =~ /^.*-rc\d+$/
       when: on_success
-  trigger:
-    project: DataDog/images
-    branch: $IMAGES_DOWNSTREAM_BRANCH
-    strategy: depend
   variables:
-    IMAGE_VERSION: parametrized
-    IMAGE_NAME: dd-otel-host-profiler
     RELEASE_TAG: 0.x.x-rc
     REF_TAG_VERSION: $RELEASE_TAG
     RELEASE_PROD: false
     RELEASE_STAGING: true
-    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
     X_DOCKER_ENV_PROFILER_VERSION: $PROFILER_VERSION
     X_DOCKER_ENV_PROFILER_REVISION: $CI_COMMIT_SHORT_SHA
   needs:
@@ -127,57 +126,36 @@ determine_latest_release_tags:
       dotenv: .env
 
 republish_latest_internal_container_image:
-  stage: deploy
-  trigger:
-    project: DataDog/images
-    branch: $IMAGES_DOWNSTREAM_BRANCH
-    strategy: depend
+  extends: .base_trigger_images
   variables:
-    IMAGE_VERSION: parametrized
-    IMAGE_NAME: dd-otel-host-profiler
     RELEASE_TAG: $LATEST_RELEASE_TAG
     REF_TAG_VERSION: $LATEST_RELEASE_TAG
     RELEASE_PROD: true
     RELEASE_STAGING: false
-    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
     X_DOCKER_ENV_PROFILER_VERSION: v$LATEST_RELEASE_TAG
     X_DOCKER_ENV_PROFILER_REVISION: $LATEST_RELEASE_SHORT_SHA
   needs:
     - determine_latest_release_tags
 
 republish_latest_candidate_internal_container_image:
-  stage: deploy
-  trigger:
-    project: DataDog/images
-    branch: $IMAGES_DOWNSTREAM_BRANCH
-    strategy: depend
+  extends: .base_trigger_images
   variables:
-    IMAGE_VERSION: parametrized
-    IMAGE_NAME: dd-otel-host-profiler
     RELEASE_TAG: $LATEST_RELEASE_CANDIDATE_TAG
     REF_TAG_VERSION: $LATEST_RELEASE_CANDIDATE_TAG
     RELEASE_PROD: false
     RELEASE_STAGING: true
-    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
     X_DOCKER_ENV_PROFILER_VERSION: v$LATEST_RELEASE_CANDIDATE_TAG
     X_DOCKER_ENV_PROFILER_REVISION: $LATEST_RELEASE_CANDIDATE_SHORT_SHA
   needs:
     - determine_latest_release_tags
 
 republish_latest_candidate_internal_container_image_for_staging:
-  stage: deploy
-  trigger:
-    project: DataDog/images
-    branch: $IMAGES_DOWNSTREAM_BRANCH
-    strategy: depend
+  extends: .base_trigger_images
   variables:
-    IMAGE_VERSION: parametrized
-    IMAGE_NAME: dd-otel-host-profiler
     RELEASE_TAG: 0.x.x-rc
     REF_TAG_VERSION: $LATEST_RELEASE_CANDIDATE_TAG
     RELEASE_PROD: false
     RELEASE_STAGING: true
-    DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
     X_DOCKER_ENV_PROFILER_VERSION: v$LATEST_RELEASE_CANDIDATE_TAG
     X_DOCKER_ENV_PROFILER_REVISION: $LATEST_RELEASE_CANDIDATE_SHORT_SHA
   needs:
