@@ -26,7 +26,6 @@ variables:
     IMAGE_VERSION: parametrized
     IMAGE_NAME: dd-otel-host-profiler
     DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
-    GBILITE_GITLAB_ACTION: "" # Hack to ensure that dynamic build is disabled in the triggered pipeline
 
 deploy_to_reliability_env:
   stage: deploy
