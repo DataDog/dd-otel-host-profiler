@@ -29,8 +29,8 @@ const (
 	maxPayloadSize         = 1024
 )
 
-// expect a one-page sized mapping
-var otelContextMappingSize = uint64(os.Getpagesize())
+// expect a two-page sized mapping
+var otelContextMappingSize = uint64(os.Getpagesize() * 2)
 
 var bufPool = sync.Pool{
 	New: func() any {
