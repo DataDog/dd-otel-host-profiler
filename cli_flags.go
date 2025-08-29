@@ -83,10 +83,9 @@ func (s *additionalSymbolEndpoints) Get() interface{} {
 	return s
 }
 
-type arguments struct {
+type FullHostProfilerSettings struct {
 	bpfVerifierLogLevel           uint64
 	agentURL                      string
-	copyright                     bool
 	mapScaleFactor                uint64
 	monitorInterval               time.Duration
 	clockSyncInterval             time.Duration
@@ -122,7 +121,12 @@ type arguments struct {
 	enableSplitByService          bool
 	splitServiceSuffix            string
 	collectContext                bool
-	cmd                           *cli.Command
+}
+
+type arguments struct {
+	FullHostProfilerSettings
+	copyright bool
+	cmd       *cli.Command
 }
 
 func parseArgs() (*arguments, error) {

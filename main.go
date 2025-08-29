@@ -120,27 +120,27 @@ func mainWithExitCode() exitCode {
 		unix.SIGINT, unix.SIGTERM, unix.SIGABRT)
 	defer mainCancel()
 
-	return runHostProfiler(args, mainCtx)
-}
-
-func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
-	versionInfo := version.GetVersionInfo()
-
 	if args.verboseMode {
 		log.SetLevel(log.DebugLevel)
 		// Dump the arguments in debug mode.
 		args.dump()
 	}
 
-	if code := sanityCheck(args); code != exitSuccess {
+	return runHostProfiler(&args.FullHostProfilerSettings, mainCtx)
+}
+
+func runHostProfiler(settings *FullHostProfilerSettings, mainCtx context.Context) exitCode {
+	versionInfo := version.GetVersionInfo()
+
+	if code := sanityCheck(settings); code != exitSuccess {
 		return code
 	}
 
-	if args.enableGoRuntimeProfiler {
-		addr, _ := strings.CutPrefix(args.agentURL, "http://")
+	if settings.enableGoRuntimeProfiler {
+		addr, _ := strings.CutPrefix(settings.agentURL, "http://")
 		opts := []profiler.Option{
 			profiler.WithService("dd-otel-host-self-profiler"),
-			profiler.WithEnv(args.environment),
+			profiler.WithEnv(settings.environment),
 			profiler.WithVersion(versionInfo.Version),
 			profiler.WithAgentAddr(addr),
 			profiler.MutexProfileFraction(100),
@@ -151,8 +151,8 @@ func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 				profiler.MutexProfile,
 			),
 		}
-		if args.goRuntimeProfilerPeriod > 0 {
-			opts = append(opts, profiler.WithPeriod(args.goRuntimeProfilerPeriod))
+		if settings.goRuntimeProfilerPeriod > 0 {
+			opts = append(opts, profiler.WithPeriod(settings.goRuntimeProfilerPeriod))
 		}
 		err := profiler.Start(opts...)
 		if err != nil {
@@ -161,14 +161,14 @@ func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 		defer profiler.Stop()
 	}
 
-	if args.goRuntimeMetricsStatsdAddress != "" {
-		addr, _ := strings.CutPrefix(args.agentURL, "http://")
+	if settings.goRuntimeMetricsStatsdAddress != "" {
+		addr, _ := strings.CutPrefix(settings.agentURL, "http://")
 		err := ddtracer.Start(
 			ddtracer.WithService("dd-otel-host-self-profiler"),
-			ddtracer.WithEnv(args.environment),
+			ddtracer.WithEnv(settings.environment),
 			ddtracer.WithServiceVersion(versionInfo.Version),
 			ddtracer.WithAgentAddr(addr),
-			ddtracer.WithDogstatsdAddr(args.goRuntimeMetricsStatsdAddress),
+			ddtracer.WithDogstatsdAddr(settings.goRuntimeMetricsStatsdAddress),
 			ddtracer.WithTraceEnabled(false),
 		)
 		if err != nil {
@@ -187,74 +187,74 @@ func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 	// disable trace handler cache because it consumes too much memory for almost no CPU benefit
 	traceHandlerCacheSize := uint32(0)
 
-	intervals := times.New(args.reporterInterval, args.monitorInterval,
-		args.probabilisticInterval)
+	intervals := times.New(settings.reporterInterval, settings.monitorInterval,
+		settings.probabilisticInterval)
 
 	// Start periodic synchronization with the realtime clock
-	times.StartRealtimeSync(mainCtx, args.clockSyncInterval)
+	times.StartRealtimeSync(mainCtx, settings.clockSyncInterval)
 
 	log.Debugf("Determining tracers to include")
-	includeTracers, err := tracertypes.Parse(args.tracers)
+	includeTracers, err := tracertypes.Parse(settings.tracers)
 	if err != nil {
 		return failure("Failed to parse the included tracers: %v", err)
 	}
 
 	// Disable Go interpreter because we are doing Go symbolization remotely.
 	includeTracers.Disable(tracertypes.GoTracer)
-	if args.collectContext {
+	if settings.collectContext {
 		includeTracers.Enable(tracertypes.Labels)
 	} else {
 		includeTracers.Disable(tracertypes.Labels)
 	}
 	log.Infof("Enabled tracers: %s", includeTracers.String())
 
-	validatedTags := ValidateTags(args.tags)
+	validatedTags := ValidateTags(settings.tags)
 	log.Debugf("Validated tags: %s", validatedTags)
 
 	// Add tags from the arguments
-	addTagsFromArgs(&validatedTags, args)
+	addTagsFromArgs(&validatedTags, settings)
 
 	var containerMetadataProvider containermetadata.Provider
-	if args.enableSplitByService {
+	if settings.enableSplitByService {
 		// If we're splitting by service, we only need the container ID because Datadog
 		// agent will add the rest of the metadata.
 		containerMetadataProvider = containermetadata.NewContainerIDProvider()
 	} else {
 		containerMetadataProvider, err =
-			containermetadata.NewContainerMetadataProvider(mainCtx, args.node)
+			containermetadata.NewContainerMetadataProvider(mainCtx, settings.node)
 		if err != nil {
 			return failure("Failed to create container metadata provider: %v", err)
 		}
 	}
 
-	var symbolEndpoints = args.additionalSymbolEndpoints
+	var symbolEndpoints = settings.additionalSymbolEndpoints
 
-	if args.site != "" && args.apiKey != "" && args.appKey != "" {
-		symbolEndpoints = appendEndpoint(symbolEndpoints, args.site, args.apiKey, args.appKey)
+	if settings.site != "" && settings.apiKey != "" && settings.appKey != "" {
+		symbolEndpoints = appendEndpoint(symbolEndpoints, settings.site, settings.apiKey, settings.appKey)
 	}
 
 	var intakeURL string
 	apiKey := ""
-	if args.agentless {
-		if args.apiKey == "" {
+	if settings.agentless {
+		if settings.apiKey == "" {
 			return failure("Datadog API key is required when running in agentless mode")
 		}
-		intakeURL, err = intakeURLForSite(args.site)
+		intakeURL, err = intakeURLForSite(settings.site)
 		if err != nil {
-			return failure("Failed to get agentless URL from site %v: %v", args.site, err)
+			return failure("Failed to get agentless URL from site %v: %v", settings.site, err)
 		}
-		apiKey = args.apiKey
+		apiKey = settings.apiKey
 	} else {
-		intakeURL, err = intakeURLForAgent(args.agentURL)
+		intakeURL, err = intakeURLForAgent(settings.agentURL)
 		if err != nil {
-			return failure("Failed to get intake URL from agent URL %v: %v", args.agentURL, err)
+			return failure("Failed to get intake URL from agent URL %v: %v", settings.agentURL, err)
 		}
 	}
 
-	if args.hostServiceName == "" && !args.enableSplitByService {
+	if settings.hostServiceName == "" && !settings.enableSplitByService {
 		return failure("Service name is required when running in non-split-by-service mode")
 	}
-	if args.hostServiceName != "" && args.enableSplitByService {
+	if settings.hostServiceName != "" && settings.enableSplitByService {
 		log.Warning("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
 	}
 
@@ -264,21 +264,21 @@ func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 		ReportInterval:           intervals.ReportInterval(),
 		ExecutablesCacheElements: defaultExecutablesCacheSize,
 		ProcessesCacheElements:   defaultProcessesCacheSize,
-		SamplesPerSecond:         int(args.samplesPerSecond),
-		PprofPrefix:              args.pprofPrefix,
+		SamplesPerSecond:         int(settings.samplesPerSecond),
+		PprofPrefix:              settings.pprofPrefix,
 		Tags:                     validatedTags,
-		Timeline:                 args.timeline,
+		Timeline:                 settings.timeline,
 		APIKey:                   apiKey,
-		EnableSplitByService:     args.enableSplitByService,
-		SplitServiceSuffix:       args.splitServiceSuffix,
-		HostServiceName:          args.hostServiceName,
+		EnableSplitByService:     settings.enableSplitByService,
+		SplitServiceSuffix:       settings.splitServiceSuffix,
+		HostServiceName:          settings.hostServiceName,
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
-			Enabled:              args.uploadSymbols,
-			UploadDynamicSymbols: args.uploadDynamicSymbols,
-			UploadGoPCLnTab:      args.uploadGoPCLnTab,
-			UseHTTP2:             args.uploadSymbolsHTTP2,
-			SymbolQueryInterval:  args.uploadSymbolQueryInterval,
-			DryRun:               args.uploadSymbolsDryRun,
+			Enabled:              settings.uploadSymbols,
+			UploadDynamicSymbols: settings.uploadDynamicSymbols,
+			UploadGoPCLnTab:      settings.uploadGoPCLnTab,
+			UseHTTP2:             settings.uploadSymbolsHTTP2,
+			SymbolQueryInterval:  settings.uploadSymbolQueryInterval,
+			DryRun:               settings.uploadSymbolsDryRun,
 			SymbolEndpoints:      symbolEndpoints,
 			Version:              versionInfo.Version,
 		},
@@ -293,7 +293,7 @@ func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 	}
 
 	includeEnvVars := libpf.Set[string]{}
-	if args.enableSplitByService {
+	if settings.enableSplitByService {
 		for _, envVar := range reporter.ServiceNameEnvVars {
 			includeEnvVars[envVar] = libpf.Void{}
 		}
@@ -304,14 +304,14 @@ func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 		Reporter:               rep,
 		Intervals:              intervals,
 		IncludeTracers:         includeTracers,
-		FilterErrorFrames:      !args.sendErrorFrames,
-		SamplesPerSecond:       int(args.samplesPerSecond),
-		MapScaleFactor:         int(args.mapScaleFactor),
-		KernelVersionCheck:     !args.noKernelVersionCheck,
-		VerboseMode:            args.verboseeBPF,
-		BPFVerifierLogLevel:    uint32(args.bpfVerifierLogLevel),
-		ProbabilisticInterval:  args.probabilisticInterval,
-		ProbabilisticThreshold: uint(args.probabilisticThreshold),
+		FilterErrorFrames:      !settings.sendErrorFrames,
+		SamplesPerSecond:       int(settings.samplesPerSecond),
+		MapScaleFactor:         int(settings.mapScaleFactor),
+		KernelVersionCheck:     !settings.noKernelVersionCheck,
+		VerboseMode:            settings.verboseeBPF,
+		BPFVerifierLogLevel:    uint32(settings.bpfVerifierLogLevel),
+		ProbabilisticInterval:  settings.probabilisticInterval,
+		ProbabilisticThreshold: uint(settings.probabilisticThreshold),
 		IncludeEnvVars:         includeEnvVars,
 	})
 	if err != nil {
@@ -332,7 +332,7 @@ func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 	}
 	log.Info("Attached tracer program")
 
-	if args.probabilisticThreshold < tracer.ProbabilisticThresholdMax {
+	if settings.probabilisticThreshold < tracer.ProbabilisticThresholdMax {
 		trc.StartProbabilisticProfiling(mainCtx)
 		log.Printf("Enabled probabilistic profiling")
 	} else {
@@ -348,12 +348,12 @@ func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 	// change this log line update also the system test.
 	log.Printf("Attached sched monitor")
 
-	traceHandlerIntervals := times.New(args.reporterInterval, 60*time.Second, args.probabilisticInterval)
+	traceHandlerIntervals := times.New(settings.reporterInterval, 60*time.Second, settings.probabilisticInterval)
 	if err := startTraceHandling(mainCtx, rep, traceHandlerIntervals, trc, traceHandlerCacheSize); err != nil {
 		return failure("Failed to start trace handling: %v", err)
 	}
 
-	if args.verboseeBPF {
+	if settings.verboseeBPF {
 		log.Info("Reading from trace_pipe...")
 		go readTracePipe(mainCtx)
 	}
@@ -368,32 +368,32 @@ func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 	return exitSuccess
 }
 
-func sanityCheck(args *arguments) exitCode {
-	if args.samplesPerSecond < 1 {
-		return parseError("Invalid sampling frequency: %d", args.samplesPerSecond)
+func sanityCheck(settings *FullHostProfilerSettings) exitCode {
+	if settings.samplesPerSecond < 1 {
+		return parseError("Invalid sampling frequency: %d", settings.samplesPerSecond)
 	}
 
-	if args.mapScaleFactor > 8 {
+	if settings.mapScaleFactor > 8 {
 		return parseError("eBPF map scaling factor %d exceeds limit (max: %d)",
-			args.mapScaleFactor, maxArgMapScaleFactor)
+			settings.mapScaleFactor, maxArgMapScaleFactor)
 	}
 
-	if args.bpfVerifierLogLevel > 2 {
-		return parseError("Invalid eBPF verifier log level: %d", args.bpfVerifierLogLevel)
+	if settings.bpfVerifierLogLevel > 2 {
+		return parseError("Invalid eBPF verifier log level: %d", settings.bpfVerifierLogLevel)
 	}
 
-	if args.probabilisticInterval < 1*time.Minute || args.probabilisticInterval > 5*time.Minute {
+	if settings.probabilisticInterval < 1*time.Minute || settings.probabilisticInterval > 5*time.Minute {
 		return parseError("Invalid argument for probabilistic-interval: use " +
 			"a duration between 1 and 5 minutes")
 	}
 
-	if args.probabilisticThreshold < 1 ||
-		args.probabilisticThreshold > tracer.ProbabilisticThresholdMax {
+	if settings.probabilisticThreshold < 1 ||
+		settings.probabilisticThreshold > tracer.ProbabilisticThresholdMax {
 		return parseError("Invalid argument for probabilistic-threshold. Value "+
 			"should be between 1 and %d", tracer.ProbabilisticThresholdMax)
 	}
 
-	if !args.noKernelVersionCheck {
+	if !settings.noKernelVersionCheck {
 		major, minor, patch, err := tracer.GetCurrentKernelVersion()
 		if err != nil {
 			return failure("Failed to get kernel version: %v", err)
