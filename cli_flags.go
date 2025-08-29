@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,7 +15,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 
-	"github.com/DataDog/dd-otel-host-profiler/reporter"
+	"github.com/DataDog/dd-otel-host-profiler/hostprofilerrunner"
 	"github.com/DataDog/dd-otel-host-profiler/version"
 )
 
@@ -38,95 +37,11 @@ const (
 	maxArgMapScaleFactor = 8
 )
 
-type additionalSymbolEndpoints []reporter.SymbolEndpoint
-
-// String allows us to implement the cli.Value interface
-// It is used to convert the value to a string when printing the help message
-func (s *additionalSymbolEndpoints) String() string {
-	if s == nil {
-		return ""
-	}
-	b, err := json.Marshal(s)
-	if err != nil {
-		return ""
-	}
-	return string(b)
-}
-
-// Set allows us to implement the cli.Value interface
-// It is used to set the value from the command line
-func (s *additionalSymbolEndpoints) Set(value string) error {
-	if value == "" {
-		return nil
-	}
-	err := json.Unmarshal([]byte(value), s)
-	if err != nil {
-		return errors.New("invalid JSON")
-	}
-	for _, e := range *s {
-		if e.Site == "" || e.APIKey == "" || e.AppKey == "" {
-			return errors.New("site, API key and application key should all be set and non-empty strings")
-		}
-		if !isAPIKeyValid(e.APIKey) {
-			return fmt.Errorf("API key for site %s is not valid", e.Site)
-		}
-		if !isAPPKeyValid(e.AppKey) {
-			return fmt.Errorf("application key for site %s is not valid", e.Site)
-		}
-	}
-	return nil
-}
-
-// Get allows us to implement the cli.Value interface
-// It is not used currently in our setup
-func (s *additionalSymbolEndpoints) Get() interface{} {
-	return s
-}
-
-type FullHostProfilerSettings struct {
-	bpfVerifierLogLevel           uint64
-	agentURL                      string
-	mapScaleFactor                uint64
-	monitorInterval               time.Duration
-	clockSyncInterval             time.Duration
-	noKernelVersionCheck          bool
-	node                          string
-	probabilisticInterval         time.Duration
-	probabilisticThreshold        uint64
-	reporterInterval              time.Duration
-	samplesPerSecond              uint64
-	pprofPrefix                   string
-	sendErrorFrames               bool
-	hostServiceName               string
-	environment                   string
-	uploadSymbolQueryInterval     time.Duration
-	uploadSymbols                 bool
-	uploadSymbolsHTTP2            bool
-	uploadDynamicSymbols          bool
-	uploadGoPCLnTab               bool
-	uploadSymbolsDryRun           bool
-	tags                          string
-	timeline                      bool
-	tracers                       string
-	verboseMode                   bool
-	verboseeBPF                   bool
-	apiKey                        string
-	appKey                        string
-	site                          string
-	additionalSymbolEndpoints     additionalSymbolEndpoints
-	agentless                     bool
-	enableGoRuntimeProfiler       bool
-	goRuntimeProfilerPeriod       time.Duration
-	goRuntimeMetricsStatsdAddress string
-	enableSplitByService          bool
-	splitServiceSuffix            string
-	collectContext                bool
-}
-
 type arguments struct {
-	FullHostProfilerSettings
-	copyright bool
-	cmd       *cli.Command
+	hostprofilerrunner.FullHostProfilerSettings
+	copyright   bool
+	verboseMode bool
+	cmd         *cli.Command
 }
 
 func parseArgs() (*arguments, error) {
@@ -153,7 +68,7 @@ func parseArgs() (*arguments, error) {
 				Name:        "bpf-log-level",
 				Value:       0,
 				Usage:       "Log level of the eBPF verifier output (0,1,2).",
-				Destination: &args.bpfVerifierLogLevel,
+				Destination: &args.BPFVerifierLogLevel,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_BPF_LOG_LEVEL"),
 			},
 			&cli.StringFlag{
@@ -161,26 +76,26 @@ func parseArgs() (*arguments, error) {
 				Aliases:     []string{"U"},
 				Value:       defaultArgAgentURL,
 				Usage:       "The Datadog trace agent URL in the format of http://host:port.",
-				Destination: &args.agentURL,
+				Destination: &args.AgentURL,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_TRACE_AGENT_URL", "DD_TRACE_AGENT_URL"),
 			},
 			&cli.StringFlag{
 				Name:        "host-service",
 				Usage:       "Host service name when split by service is disabled",
-				Destination: &args.hostServiceName,
+				Destination: &args.HostServiceName,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SERVICE"),
 			},
 			&cli.StringFlag{
 				Name:        "environment",
 				Aliases:     []string{"E"},
 				Usage:       "The name of the environment to use in the Datadog UI.",
-				Destination: &args.environment,
+				Destination: &args.Environment,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_ENV", "DD_ENV"),
 			},
 			&cli.StringFlag{
 				Name:        "tags",
 				Usage:       "User-specified tags separated by ',': key1:value1,key2:value2.",
-				Destination: &args.tags,
+				Destination: &args.Tags,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_TAGS", "DD_TAGS"),
 			},
 			&cli.UintFlag{
@@ -190,14 +105,14 @@ func parseArgs() (*arguments, error) {
 					"Every increase by 1 doubles the map size. Increase if you see eBPF map size errors. "+
 					"Default is %d corresponding to 4GB of executable address space, max is %d.",
 					defaultArgMapScaleFactor, maxArgMapScaleFactor),
-				Destination: &args.mapScaleFactor,
+				Destination: &args.MapScaleFactor,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_MAP_SCALE_FACTOR"),
 			},
 			&cli.DurationFlag{
 				Name:        "monitor-interval",
 				Value:       defaultArgMonitorInterval,
 				Usage:       "Set the monitor interval in seconds.",
-				Destination: &args.monitorInterval,
+				Destination: &args.MonitorInterval,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_MONITOR_INTERVAL"),
 			},
 			&cli.DurationFlag{
@@ -206,7 +121,7 @@ func parseArgs() (*arguments, error) {
 				Usage: "Set the sync interval with the realtime clock. " +
 					"If zero, monotonic-realtime clock sync will be performed once, " +
 					"on agent startup, but not periodically.",
-				Destination: &args.clockSyncInterval,
+				Destination: &args.ClockSyncInterval,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_CLOCK_SYNC_INTERVAL"),
 			},
 			&cli.BoolFlag{
@@ -214,14 +129,14 @@ func parseArgs() (*arguments, error) {
 				Value: false,
 				Usage: "Disable checking kernel version for eBPF support. " +
 					"Use at your own risk, to run the agent on older kernels with backported eBPF features.",
-				Destination: &args.noKernelVersionCheck,
+				Destination: &args.NoKernelVersionCheck,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_NO_KERNEL_VERSION_CHECK"),
 			},
 			&cli.DurationFlag{
 				Name:        "probabilistic-interval",
 				Value:       defaultProbabilisticInterval,
 				Usage:       "Time interval for which probabilistic profiling will be enabled or disabled.",
-				Destination: &args.probabilisticInterval,
+				Destination: &args.ProbabilisticInterval,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_PROBABILISTIC_INTERVAL"),
 			},
 			&cli.UintFlag{
@@ -232,35 +147,35 @@ func parseArgs() (*arguments, error) {
 					"If the given probabilistic-threshold is greater than this "+
 					"random number, the agent will collect profiles from this system for the duration of the interval.",
 					tracer.ProbabilisticThresholdMax-1, tracer.ProbabilisticThresholdMax-1),
-				Destination: &args.probabilisticThreshold,
+				Destination: &args.ProbabilisticThreshold,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_PROBABILISTIC_THRESHOLD"),
 			},
 			&cli.DurationFlag{
 				Name:        "upload-period",
 				Value:       defaultArgReporterInterval,
 				Usage:       "Set the reporter's interval in seconds.",
-				Destination: &args.reporterInterval,
+				Destination: &args.ReporterInterval,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_PERIOD"),
 			},
 			&cli.UintFlag{
 				Name:        "sampling-rate",
 				Value:       defaultArgSamplesPerSecond,
 				Usage:       "Set the frequency (in Hz) of stack trace sampling.",
-				Destination: &args.samplesPerSecond,
+				Destination: &args.SamplesPerSecond,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SAMPLING_RATE"),
 			},
 			&cli.BoolFlag{
 				Name:        "timeline",
 				Value:       false,
 				Usage:       "Enable timeline feature.",
-				Destination: &args.timeline,
+				Destination: &args.Timeline,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_TIMELINE_ENABLED"),
 			},
 			&cli.BoolFlag{
 				Name:        "send-error-frames",
 				Value:       defaultArgSendErrorFrames,
 				Usage:       "Send error frames",
-				Destination: &args.sendErrorFrames,
+				Destination: &args.SendErrorFrames,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SEND_ERROR_FRAMES"),
 			},
 			&cli.StringFlag{
@@ -268,7 +183,7 @@ func parseArgs() (*arguments, error) {
 				Aliases:     []string{"t"},
 				Value:       "all",
 				Usage:       "Comma-separated list of interpreter tracers to include.",
-				Destination: &args.tracers,
+				Destination: &args.Tracers,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_TRACERS"),
 			},
 			&cli.BoolFlag{
@@ -283,20 +198,20 @@ func parseArgs() (*arguments, error) {
 				Name:        "verbose-ebpf",
 				Value:       false,
 				Usage:       "Enable verbose logging and debugging capabilities for eBPF.",
-				Destination: &args.verboseeBPF,
+				Destination: &args.VerboseeBPF,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_VERBOSE_EBPF"),
 			},
 			&cli.StringFlag{
 				Name:        "pprof-prefix",
 				Usage:       "Dump pprof profile to `FILE`.",
-				Destination: &args.pprofPrefix,
+				Destination: &args.PprofPrefix,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_PPROF_PREFIX"),
 			},
 			&cli.StringFlag{
 				Name: "node",
 				Usage: "The name of the node that the profiler is running on. " +
 					"If on Kubernetes, this must match the Kubernetes node name.",
-				Destination: &args.node,
+				Destination: &args.Node,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_NODE"),
 			},
 			&cli.BoolFlag{
@@ -304,7 +219,7 @@ func parseArgs() (*arguments, error) {
 				Value:       true,
 				Usage:       "Enable local symbol upload.",
 				Hidden:      true,
-				Destination: &args.uploadSymbols,
+				Destination: &args.UploadSymbols,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_SYMBOLS"),
 			},
 			&cli.BoolFlag{
@@ -313,7 +228,7 @@ func parseArgs() (*arguments, error) {
 				Value:       false,
 				Hidden:      true,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_DYNAMIC_SYMBOLS"),
-				Destination: &args.uploadDynamicSymbols,
+				Destination: &args.UploadDynamicSymbols,
 			},
 			&cli.BoolFlag{
 				Name:        "upload-gopclntab",
@@ -321,24 +236,24 @@ func parseArgs() (*arguments, error) {
 				Value:       true,
 				Hidden:      true,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_GOPCLNTAB"),
-				Destination: &args.uploadGoPCLnTab,
+				Destination: &args.UploadGoPCLnTab,
 			},
 			&cli.BoolFlag{
 				Name:        "upload-symbols-dry-run",
 				Value:       false,
 				Usage:       "Local symbol upload dry-run.",
 				Hidden:      true,
-				Destination: &args.uploadSymbolsDryRun,
+				Destination: &args.UploadSymbolsDryRun,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_SYMBOLS_DRY_RUN"),
 			},
 			&cli.StringFlag{
 				Name:        "api-key",
 				Usage:       "Datadog API key.",
 				Hidden:      true,
-				Destination: &args.apiKey,
+				Destination: &args.APIKey,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_API_KEY", "DD_API_KEY"),
 				Validator: func(s string) error {
-					if s == "" || isAPIKeyValid(s) {
+					if s == "" || hostprofilerrunner.IsAPIKeyValid(s) {
 						return nil
 					}
 					return errors.New("API key is not valid")
@@ -348,10 +263,10 @@ func parseArgs() (*arguments, error) {
 				Name:        "app-key",
 				Usage:       "Datadog APP key.",
 				Hidden:      true,
-				Destination: &args.appKey,
+				Destination: &args.AppKey,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_APP_KEY", "DD_APP_KEY"),
 				Validator: func(s string) error {
-					if s == "" || isAPPKeyValid(s) {
+					if s == "" || hostprofilerrunner.IsAPPKeyValid(s) {
 						return nil
 					}
 					return errors.New("APP key is not valid")
@@ -362,7 +277,7 @@ func parseArgs() (*arguments, error) {
 				Value:       "datadoghq.com",
 				Usage:       "Datadog site.",
 				Hidden:      true,
-				Destination: &args.site,
+				Destination: &args.Site,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SITE", "DD_SITE"),
 			},
 			&cli.GenericFlag{
@@ -370,27 +285,27 @@ func parseArgs() (*arguments, error) {
 				Usage:   "Additional endpoints to upload symbols to.",
 				Hidden:  true,
 				Sources: cli.EnvVars("DD_HOST_PROFILING_ADDITIONAL_SYMBOL_ENDPOINTS"),
-				Value:   &args.additionalSymbolEndpoints,
+				Value:   &args.AdditionalSymbolEndpoints,
 			},
 			&cli.BoolFlag{
 				Name:        "profile",
 				Value:       false,
 				Usage:       "Enable self-profiling with the Go runtime profiler.",
-				Destination: &args.enableGoRuntimeProfiler,
+				Destination: &args.EnableGoRuntimeProfiler,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER"),
 			},
 			&cli.DurationFlag{
 				Name:        "runtime-profile-period",
 				Hidden:      true,
 				Usage:       "Set the period for self-profiling with the Go runtime profiler. Only used if --profile is enabled.",
-				Destination: &args.goRuntimeProfilerPeriod,
+				Destination: &args.GoRuntimeProfilerPeriod,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER_PERIOD"),
 			},
 			&cli.StringFlag{
 				Name:        "runtime-metrics-statsd-address",
 				Usage:       "If set, enables Go runtime metrics collection and sends them to the given StatsD address.",
 				Hidden:      true,
-				Destination: &args.goRuntimeMetricsStatsdAddress,
+				Destination: &args.GoRuntimeMetricsStatsdAddress,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_METRICS_STATSD_ADDRESS"),
 			},
 			&cli.DurationFlag{
@@ -398,21 +313,21 @@ func parseArgs() (*arguments, error) {
 				Value:       defaultSymbolQueryInterval,
 				Hidden:      true,
 				Usage:       "Symbol query interval (queries during a period are batched, 0 means no batching).",
-				Destination: &args.uploadSymbolQueryInterval,
+				Destination: &args.UploadSymbolQueryInterval,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SYMBOL_QUERY_INTERVAL"),
 			},
 			&cli.BoolFlag{
 				Name:        "split-by-service",
 				Value:       true,
 				Usage:       "Split profiles by service.",
-				Destination: &args.enableSplitByService,
+				Destination: &args.EnableSplitByService,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SPLIT_BY_SERVICE"),
 			},
 			&cli.StringFlag{
 				Name:        "split-by-service-suffix",
 				Value:       "",
 				Usage:       "Suffix to add to service name in profiles when split-by-service is enabled.",
-				Destination: &args.splitServiceSuffix,
+				Destination: &args.SplitServiceSuffix,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SPLIT_SERVICE_SUFFIX"),
 			},
 			&cli.BoolFlag{
@@ -420,7 +335,7 @@ func parseArgs() (*arguments, error) {
 				Value:       false, // HTTP/2 is disabled by default, since support in the backend is recent
 				Hidden:      true,
 				Usage:       "Use HTTP/2 when available for symbol upload. Only used if upload-symbols is enabled.",
-				Destination: &args.uploadSymbolsHTTP2,
+				Destination: &args.UploadSymbolsHTTP2,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_SYMBOLS_HTTP2"),
 			},
 			&cli.BoolFlag{
@@ -428,7 +343,7 @@ func parseArgs() (*arguments, error) {
 				Value:       false,
 				Hidden:      true,
 				Usage:       "Enable context collection.",
-				Destination: &args.collectContext,
+				Destination: &args.CollectContext,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_COLLECT_CONTEXT"),
 			},
 		},
