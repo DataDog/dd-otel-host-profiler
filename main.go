@@ -115,6 +115,15 @@ func mainWithExitCode() exitCode {
 		return exitSuccess
 	}
 
+	// Context to drive main goroutine and the Tracer monitors.
+	mainCtx, mainCancel := signal.NotifyContext(context.Background(),
+		unix.SIGINT, unix.SIGTERM, unix.SIGABRT)
+	defer mainCancel()
+
+	return runHostProfiler(args, mainCtx)
+}
+
+func runHostProfiler(args *arguments, mainCtx context.Context) exitCode {
 	versionInfo := version.GetVersionInfo()
 
 	if args.verboseMode {
@@ -145,7 +154,7 @@ func mainWithExitCode() exitCode {
 		if args.goRuntimeProfilerPeriod > 0 {
 			opts = append(opts, profiler.WithPeriod(args.goRuntimeProfilerPeriod))
 		}
-		err = profiler.Start(opts...)
+		err := profiler.Start(opts...)
 		if err != nil {
 			failure("failed to start the runtime profiler: %v", err)
 		}
@@ -154,7 +163,7 @@ func mainWithExitCode() exitCode {
 
 	if args.goRuntimeMetricsStatsdAddress != "" {
 		addr, _ := strings.CutPrefix(args.agentURL, "http://")
-		err = ddtracer.Start(
+		err := ddtracer.Start(
 			ddtracer.WithService("dd-otel-host-self-profiler"),
 			ddtracer.WithEnv(args.environment),
 			ddtracer.WithServiceVersion(versionInfo.Version),
@@ -168,15 +177,10 @@ func mainWithExitCode() exitCode {
 		defer ddtracer.Stop()
 	}
 
-	// Context to drive main goroutine and the Tracer monitors.
-	mainCtx, mainCancel := signal.NotifyContext(context.Background(),
-		unix.SIGINT, unix.SIGTERM, unix.SIGABRT)
-	defer mainCancel()
-
 	log.Infof("Starting Datadog OTEL host profiler v%s (revision: %s, date: %s), arch: %v",
 		versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 
-	if err = tracer.ProbeBPFSyscall(); err != nil {
+	if err := tracer.ProbeBPFSyscall(); err != nil {
 		return failure("Failed to probe eBPF syscall: %v", err)
 	}
 
