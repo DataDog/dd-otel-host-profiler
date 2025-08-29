@@ -48,9 +48,9 @@ func ValidateTags(tags string) reporter.Tags {
 	return validatedTags
 }
 
-func addTagsFromArgs(tags *reporter.Tags, args *arguments) {
-	if args.environment != "" {
-		*tags = append(*tags, reporter.MakeTag("env", args.environment))
+func addTagsFromArgs(tags *reporter.Tags, settings *FullHostProfilerSettings) {
+	if settings.environment != "" {
+		*tags = append(*tags, reporter.MakeTag("env", settings.environment))
 	}
 }
 
