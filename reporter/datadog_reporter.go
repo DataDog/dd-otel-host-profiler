@@ -455,14 +455,15 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 		service = getServiceName(pid)
 	}
 
-	var deploymentEnvironmentName string
-	var serviceInstanceID string
-	if tracerCtx, err2 := ReadProcessLevelContext(pid, r.config.KernelSupportsNamedAnonymousMappings); err2 == nil {
-		if tracerCtx.ServiceName != "" {
-			service = tracerCtx.ServiceName
+	var tracingCtx *rsamples.ProcessContext
+	if r.config.CollectContext {
+		tracingCtx, err = ReadProcessLevelContext(pid, r.config.KernelSupportsNamedAnonymousMappings)
+		if err == nil {
+			log.Debugf("read process context for pid %d: %+v", pid, tracingCtx)
+			if tracingCtx.ServiceName != "" {
+				service = tracingCtx.ServiceName
+			}
 		}
-		deploymentEnvironmentName = tracerCtx.DeploymentEnvironmentName
-		serviceInstanceID = tracerCtx.ServiceInstanceID
 	}
 
 	inferredService := false
@@ -508,14 +509,13 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	}
 
 	pMeta := rsamples.ProcessMetadata{
-		UpdatedAt:                 time.Now(),
-		ExecutablePath:            strings.TrimSpace(execPath),
-		ProcessName:               strings.TrimSpace(processName),
-		ContainerMetadata:         containerMetadata,
-		Service:                   strings.TrimSpace(service),
-		InferredService:           inferredService,
-		DeploymentEnvironmentName: deploymentEnvironmentName,
-		ServiceInstanceID:         serviceInstanceID,
+		UpdatedAt:         time.Now(),
+		ExecutablePath:    strings.TrimSpace(execPath),
+		ProcessName:       strings.TrimSpace(processName),
+		ContainerMetadata: containerMetadata,
+		Service:           strings.TrimSpace(service),
+		InferredService:   inferredService,
+		TracingContext:    tracingCtx,
 	}
 	r.processes.Add(pid, pMeta)
 	return pMeta

@@ -278,11 +278,38 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, proce
 		labels["container_name"] = append(labels["container_name"], containerMetadata.ContainerName)
 	}
 
-	if processMeta.DeploymentEnvironmentName != "" {
-		labels["env"] = append(labels["env"], processMeta.DeploymentEnvironmentName)
-	}
+	tracingCtx := processMeta.TracingContext
+	if tracingCtx != nil {
+		if tracingCtx.DeploymentEnvironmentName != "" {
+			labels["env"] = append(labels["env"], tracingCtx.DeploymentEnvironmentName)
+		}
 
-	if processMeta.ServiceInstanceID != "" {
-		labels["runtime_id"] = append(labels["runtime_id"], processMeta.ServiceInstanceID)
+		if tracingCtx.ServiceInstanceID != "" {
+			labels["runtime_id"] = append(labels["runtime_id"], tracingCtx.ServiceInstanceID)
+		}
+
+		if tracingCtx.ServiceName != "" {
+			labels["service_name"] = append(labels["service_name"], tracingCtx.ServiceName)
+		}
+
+		if tracingCtx.ServiceVersion != "" {
+			labels["service_version"] = append(labels["service_version"], tracingCtx.ServiceVersion)
+		}
+
+		if tracingCtx.HostName != "" {
+			labels["host_name"] = append(labels["host_name"], tracingCtx.HostName)
+		}
+
+		if tracingCtx.TelemetrySdkLanguage != "" {
+			labels["telemetry_sdk_language"] = append(labels["telemetry_sdk_language"], tracingCtx.TelemetrySdkLanguage)
+		}
+
+		if tracingCtx.TelemetrySdkName != "" {
+			labels["telemetry_sdk_name"] = append(labels["telemetry_sdk_name"], tracingCtx.TelemetrySdkName)
+		}
+
+		if tracingCtx.TelemetrySdkVersion != "" {
+			labels["telemetry_sdk_version"] = append(labels["telemetry_sdk_version"], tracingCtx.TelemetrySdkVersion)
+		}
 	}
 }

@@ -291,6 +291,7 @@ func mainWithExitCode() exitCode {
 		EnableSplitByService:                 args.enableSplitByService,
 		SplitServiceSuffix:                   args.splitServiceSuffix,
 		HostServiceName:                      args.hostServiceName,
+		CollectContext:                       args.collectContext,
 		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,

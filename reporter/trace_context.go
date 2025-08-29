@@ -20,6 +20,8 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/remotememory"
 	"go.opentelemetry.io/ebpf-profiler/stringutil"
+
+	samples "github.com/DataDog/dd-otel-host-profiler/reporter/samples"
 )
 
 const (
@@ -44,12 +46,6 @@ type processContextHeader struct {
 	Version     uint32
 	PayloadSize uint32
 	PayloadAddr uintptr
-}
-
-type ProcessContextData struct {
-	ServiceName               string `msgpack:"service.name"`
-	ServiceInstanceID         string `msgpack:"service.instance.id"`
-	DeploymentEnvironmentName string `msgpack:"deployment.environment.name"`
 }
 
 func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []byte {
@@ -79,7 +75,7 @@ func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []by
 		return nil
 	}
 
-	// Make CodeQL happy
+	// Make CodeQL happy, this will never happen since we build only for 64-bit architectures
 	if vaddr > uint64(^libpf.Address(0)) {
 		return nil
 	}
@@ -149,25 +145,25 @@ func getContextMapping(mapsFile io.Reader, rm remotememory.RemoteMemory, useMapp
 	return nil, errors.New("no context mapping found")
 }
 
-func readProcessContext(mapsFile io.Reader, rm remotememory.RemoteMemory, useMappingNames bool) (ProcessContextData, error) {
+func readProcessContext(mapsFile io.Reader, rm remotememory.RemoteMemory, useMappingNames bool) (*samples.ProcessContext, error) {
 	data, err := getContextMapping(mapsFile, rm, useMappingNames)
 	if err != nil {
-		return ProcessContextData{}, err
+		return nil, err
 	}
-	var ctx ProcessContextData
+	var ctx samples.ProcessContext
 	err = msgpack.Unmarshal(data, &ctx)
 	if err != nil {
 		log.Warnf("failed to unmarshal context mapping: %v", err)
-		return ProcessContextData{}, err
+		return nil, err
 	}
-	return ctx, nil
+	return &ctx, nil
 }
 
-func ReadProcessLevelContext(pid libpf.PID, useMappingNames bool) (ProcessContextData, error) {
+func ReadProcessLevelContext(pid libpf.PID, useMappingNames bool) (*samples.ProcessContext, error) {
 	mapsFile, err := os.Open(fmt.Sprintf("/proc/%d/maps", pid))
 	if err != nil {
 		log.Debugf("failed to open maps file: %v", err)
-		return ProcessContextData{}, err
+		return nil, err
 	}
 	defer mapsFile.Close()
 

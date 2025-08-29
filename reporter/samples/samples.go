@@ -34,15 +34,25 @@ type TraceAndMetaKey struct {
 	Tid  libpf.PID
 }
 
+type ProcessContext struct {
+	ServiceName               string `msgpack:"service.name"`
+	ServiceVersion            string `msgpack:"service.version"`
+	ServiceInstanceID         string `msgpack:"service.instance.id"`
+	DeploymentEnvironmentName string `msgpack:"deployment.environment.name"`
+	HostName                  string `msgpack:"host.name"`
+	TelemetrySdkLanguage      string `msgpack:"telemetry.sdk.language"`
+	TelemetrySdkName          string `msgpack:"telemetry.sdk.name"`
+	TelemetrySdkVersion       string `msgpack:"telemetry.sdk.version"`
+}
+
 type ProcessMetadata struct {
-	UpdatedAt                 time.Time
-	ExecutablePath            string
-	ProcessName               string
-	ContainerMetadata         containermetadata.ContainerMetadata
-	Service                   string
-	InferredService           bool
-	DeploymentEnvironmentName string
-	ServiceInstanceID         string
+	UpdatedAt         time.Time
+	ExecutablePath    string
+	ProcessName       string
+	ContainerMetadata containermetadata.ContainerMetadata
+	Service           string
+	InferredService   bool
+	TracingContext    *ProcessContext
 }
 
 type ServiceEntity struct {
