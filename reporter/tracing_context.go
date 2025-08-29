@@ -75,12 +75,8 @@ func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []by
 		return nil
 	}
 
-	// Make CodeQL happy, this will never happen since we build only for 64-bit architectures
-	if vaddr > uint64(^libpf.Address(0)) {
-		return nil
-	}
-
 	var header processContextHeader
+	// CodeQL complains about the conversion from uint64 to libpf.Address, but it's safe since we target only 64-bit architectures
 	err = rm.Read(libpf.Address(vaddr), libpf.SliceFrom(&header))
 	if err != nil {
 		log.Debugf("failed to read context mapping: %v", err)
