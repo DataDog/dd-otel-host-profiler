@@ -24,6 +24,7 @@ import (
 	ddtracer "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 	"github.com/DataDog/dd-trace-go/v2/profiler"
 	log "github.com/sirupsen/logrus"
+	"github.com/tklauser/numcpus"
 	"go.opentelemetry.io/ebpf-profiler/host"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/metrics"
@@ -32,6 +33,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/tracehandler"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
+	"go.opentelemetry.io/ebpf-profiler/util"
 	"golang.org/x/sys/unix"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
@@ -70,6 +72,24 @@ const (
 	defaultExecutablesCacheSize = 65536
 	defaultProcessesCacheSize   = 16384
 )
+
+func traceCacheSize(monitorInterval time.Duration, samplesPerSecond int,
+	presentCPUCores uint16) uint32 {
+	const (
+		traceCacheIntervals = 6
+		traceCacheMinSize   = 65536
+	)
+
+	maxElements := maxElementsPerInterval(monitorInterval, samplesPerSecond, presentCPUCores)
+
+	size := max(maxElements*uint32(traceCacheIntervals), traceCacheMinSize)
+	return util.NextPowerOfTwo(size)
+}
+
+func maxElementsPerInterval(monitorInterval time.Duration, samplesPerSecond int,
+	presentCPUCores uint16) uint32 {
+	return uint32(uint16(samplesPerSecond) * uint16(monitorInterval.Seconds()) * presentCPUCores)
+}
 
 func startTraceHandling(ctx context.Context, rep otelreporter.TraceReporter,
 	intervals *times.Times, trc *tracer.Tracer, cacheSize uint32) error {
@@ -180,8 +200,16 @@ func mainWithExitCode() exitCode {
 		return failure("Failed to probe eBPF syscall: %v", err)
 	}
 
+	presentCores, err := numcpus.GetPresent()
+	if err != nil {
+		return failure("failed to read CPU file: %v", err)
+	}
+	traceHandlerCacheSize :=
+		traceCacheSize(args.monitorInterval, int(args.samplesPerSecond), uint16(presentCores))
+
+	log.Infof("traceHandlerCacheSize: %d", traceHandlerCacheSize)
 	// disable trace handler cache because it consumes too much memory for almost no CPU benefit
-	traceHandlerCacheSize := uint32(0)
+	// traceHandlerCacheSize := uint32(0)
 
 	intervals := times.New(args.reporterInterval, args.monitorInterval,
 		args.probabilisticInterval)
