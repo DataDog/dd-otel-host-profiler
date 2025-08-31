@@ -14,6 +14,7 @@ require (
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.10.0
+	github.com/tklauser/numcpus v0.10.0
 	github.com/urfave/cli/v3 v3.1.1
 	github.com/zeebo/xxh3 v1.0.2
 	go.opentelemetry.io/ebpf-profiler v0.0.0-20241114112653-6d846a2023a0
@@ -126,7 +127,6 @@ require (
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tinylib/msgp v1.2.5 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect
-	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opencensus.io v0.24.0 // indirect
