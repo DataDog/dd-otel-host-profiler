@@ -12,11 +12,6 @@ import (
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
 )
 
-const (
-	// 1TB of executable address space
-	maxArgMapScaleFactor = 8
-)
-
 type additionalSymbolEndpoints []reporter.SymbolEndpoint
 
 // String allows us to implement the cli.Value interface

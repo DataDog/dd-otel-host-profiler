@@ -1,7 +1,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package main
+package hostprofilerrunner
 
 import (
 	"context"
@@ -15,9 +15,27 @@ import (
 	"github.com/urfave/cli/v3"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 
-	"github.com/DataDog/dd-otel-host-profiler/hostprofilerrunner"
 	"github.com/DataDog/dd-otel-host-profiler/version"
 )
+
+// Short Copyright / license text for eBPF code
+const Copyright = `Copyright 2024 Datadog, Inc.
+
+For the eBPF code loaded by Universal Profiling Agent into the kernel,
+the following license applies (GPLv2 only). You can obtain a copy of the GPLv2 code at:
+https://github.com/open-telemetry/opentelemetry-ebpf-profiler/tree/main/support/ebpf
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License version 2 only,
+as published by the Free Software Foundation;
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details:
+
+https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
+`
 
 const (
 	// Default values for CLI flags
@@ -37,15 +55,19 @@ const (
 	maxArgMapScaleFactor = 8
 )
 
-type arguments struct {
-	hostprofilerrunner.FullHostProfilerSettings
-	copyright   bool
-	verboseMode bool
+type Arguments struct {
+	FullHostProfilerSettings
+	Copyright   bool
+	VerboseMode bool
 	cmd         *cli.Command
 }
 
-func parseArgs() (*arguments, error) {
-	var args arguments
+func ParseArgs() (*Arguments, error) {
+	return parseCLIArgs(os.Args)
+}
+
+func parseCLIArgs(osArgs []string) (*Arguments, error) {
+	var args Arguments
 	versionInfo := version.GetVersionInfo()
 
 	cli.VersionPrinter = func(_ *cli.Command) {
@@ -61,7 +83,7 @@ func parseArgs() (*arguments, error) {
 	app := cli.Command{
 		Name:      "dd-otel-host-profiler",
 		Usage:     "Datadog OpenTelemetry host profiler",
-		Copyright: copyright,
+		Copyright: Copyright,
 		Version:   versionInfo.Version,
 		Flags: []cli.Flag{
 			&cli.UintFlag{
@@ -191,7 +213,7 @@ func parseArgs() (*arguments, error) {
 				Aliases:     []string{"v"},
 				Value:       false,
 				Usage:       "Enable verbose logging and debugging capabilities.",
-				Destination: &args.verboseMode,
+				Destination: &args.VerboseMode,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_VERBOSE"),
 			},
 			&cli.BoolFlag{
@@ -253,7 +275,7 @@ func parseArgs() (*arguments, error) {
 				Destination: &args.APIKey,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_API_KEY", "DD_API_KEY"),
 				Validator: func(s string) error {
-					if s == "" || hostprofilerrunner.IsAPIKeyValid(s) {
+					if s == "" || IsAPIKeyValid(s) {
 						return nil
 					}
 					return errors.New("API key is not valid")
@@ -266,7 +288,7 @@ func parseArgs() (*arguments, error) {
 				Destination: &args.AppKey,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_APP_KEY", "DD_APP_KEY"),
 				Validator: func(s string) error {
-					if s == "" || hostprofilerrunner.IsAPPKeyValid(s) {
+					if s == "" || IsAPPKeyValid(s) {
 						return nil
 					}
 					return errors.New("APP key is not valid")
@@ -353,7 +375,7 @@ func parseArgs() (*arguments, error) {
 		},
 	}
 
-	if err := app.Run(context.Background(), os.Args); err != nil {
+	if err := app.Run(context.Background(), osArgs); err != nil {
 		return nil, err
 	}
 
@@ -364,7 +386,7 @@ func parseArgs() (*arguments, error) {
 	return &args, nil
 }
 
-func (args *arguments) dump() {
+func (args *Arguments) Dump() {
 	log.Debug("Config:")
 	for _, f := range args.cmd.Flags {
 		setStr := "default"
@@ -373,4 +395,12 @@ func (args *arguments) dump() {
 		}
 		log.Debugf("%s: \"%v\" [%s]", f.Names()[0], args.cmd.Value(f.Names()[0]), setStr)
 	}
+}
+
+func CreateDefaultFullHostProfilerSettings() (*FullHostProfilerSettings, error) {
+	args, err := parseCLIArgs(nil)
+	if err != nil {
+		return nil, err
+	}
+	return &args.FullHostProfilerSettings, nil
 }
