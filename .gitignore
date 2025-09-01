@@ -2,3 +2,4 @@
 dd-otel-host-profiler
 .env
 *.pprof
+.vscode
