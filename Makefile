@@ -2,7 +2,14 @@
 
 VERSION ?= v0.0.0
 VERSION_LD_FLAGS := -X github.com/DataDog/dd-otel-host-profiler/version.version=$(VERSION)
+
+# If the DD_OTEL_HOST_PROFILER_DYNAMIC_BUILD environment variable is not set, we build a static binary.
+# Set DD_OTEL_HOST_PROFILER_DYNAMIC_BUILD=true when building on Ubuntu.
+ifeq ($(DD_OTEL_HOST_PROFILER_DYNAMIC_BUILD),)
 GO_FLAGS := -ldflags="${VERSION_LD_FLAGS} -extldflags=-static" -tags osusergo,netgo,debugtracer
+else
+GO_FLAGS := -ldflags="${VERSION_LD_FLAGS}" -tags osusergo,netgo,debugtracer
+endif
 
 all: build
 
