@@ -50,6 +50,10 @@ type Config struct {
 	SplitServiceSuffix string
 	// HostServiceName defines the service name to use in profiles (in non-split-by-service mode).
 	HostServiceName string
+	// KernelSupportsNamedAnonymousMappings defines whether the kernel supports named anonymous mappings (PR_SET_VMA_ANON_NAME).
+	KernelSupportsNamedAnonymousMappings bool
+	// CollectContext defines whether the agent should collect tracing context from processes.
+	CollectContext bool
 	// SymbolUploaderConfig defines the configuration for the symbol uploader.
 	SymbolUploaderConfig SymbolUploaderConfig
 }

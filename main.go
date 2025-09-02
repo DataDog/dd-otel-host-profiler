@@ -60,6 +60,12 @@ https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 
 type exitCode int
 
+type kernelVersion struct {
+	major uint32
+	minor uint32
+	patch uint32
+}
+
 const (
 	exitSuccess exitCode = 0
 	exitFailure exitCode = 1
@@ -96,6 +102,18 @@ func appendEndpoint(symbolEndpoints []reporter.SymbolEndpoint, site, apiKey, app
 	return append(symbolEndpoints, reporter.SymbolEndpoint{Site: site, APIKey: apiKey, AppKey: appKey})
 }
 
+func getKernelVersion() (kernelVersion, error) {
+	major, minor, patch, err := tracer.GetCurrentKernelVersion()
+	if err != nil {
+		return kernelVersion{}, err
+	}
+	return kernelVersion{major: major, minor: minor, patch: patch}, nil
+}
+
+func kernelSupportsNamedAnonymousMappings(ver kernelVersion) bool {
+	return ver.major > 5 || (ver.major == 5 && ver.minor >= 17)
+}
+
 func main() {
 	os.Exit(int(mainWithExitCode()))
 }
@@ -123,7 +141,12 @@ func mainWithExitCode() exitCode {
 		args.dump()
 	}
 
-	if code := sanityCheck(args); code != exitSuccess {
+	kernVersion, err := getKernelVersion()
+	if err != nil {
+		return failure("Failed to get kernel version: %v", err)
+	}
+
+	if code := sanityCheck(args, kernVersion); code != exitSuccess {
 		return code
 	}
 
@@ -255,19 +278,21 @@ func mainWithExitCode() exitCode {
 	}
 
 	rep, err := reporter.NewDatadog(&reporter.Config{
-		IntakeURL:                intakeURL,
-		Version:                  versionInfo.Version,
-		ReportInterval:           intervals.ReportInterval(),
-		ExecutablesCacheElements: defaultExecutablesCacheSize,
-		ProcessesCacheElements:   defaultProcessesCacheSize,
-		SamplesPerSecond:         int(args.samplesPerSecond),
-		PprofPrefix:              args.pprofPrefix,
-		Tags:                     validatedTags,
-		Timeline:                 args.timeline,
-		APIKey:                   apiKey,
-		EnableSplitByService:     args.enableSplitByService,
-		SplitServiceSuffix:       args.splitServiceSuffix,
-		HostServiceName:          args.hostServiceName,
+		IntakeURL:                            intakeURL,
+		Version:                              versionInfo.Version,
+		ReportInterval:                       intervals.ReportInterval(),
+		ExecutablesCacheElements:             defaultExecutablesCacheSize,
+		ProcessesCacheElements:               defaultProcessesCacheSize,
+		SamplesPerSecond:                     int(args.samplesPerSecond),
+		PprofPrefix:                          args.pprofPrefix,
+		Tags:                                 validatedTags,
+		Timeline:                             args.timeline,
+		APIKey:                               apiKey,
+		EnableSplitByService:                 args.enableSplitByService,
+		SplitServiceSuffix:                   args.splitServiceSuffix,
+		HostServiceName:                      args.hostServiceName,
+		CollectContext:                       args.collectContext,
+		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              args.uploadSymbols,
 			UploadDynamicSymbols: args.uploadDynamicSymbols,
@@ -364,7 +389,7 @@ func mainWithExitCode() exitCode {
 	return exitSuccess
 }
 
-func sanityCheck(args *arguments) exitCode {
+func sanityCheck(args *arguments, kernVersion kernelVersion) exitCode {
 	if args.samplesPerSecond < 1 {
 		return parseError("Invalid sampling frequency: %d", args.samplesPerSecond)
 	}
@@ -390,11 +415,6 @@ func sanityCheck(args *arguments) exitCode {
 	}
 
 	if !args.noKernelVersionCheck {
-		major, minor, patch, err := tracer.GetCurrentKernelVersion()
-		if err != nil {
-			return failure("Failed to get kernel version: %v", err)
-		}
-
 		var minMajor, minMinor uint32
 		switch runtime.GOARCH {
 		case "amd64":
@@ -407,9 +427,9 @@ func sanityCheck(args *arguments) exitCode {
 			return failure("Unsupported architecture: %s", runtime.GOARCH)
 		}
 
-		if major < minMajor || (major == minMajor && minor < minMinor) {
+		if kernVersion.major < minMajor || (kernVersion.major == minMajor && kernVersion.minor < minMinor) {
 			return failure("Host Agent requires kernel version "+
-				"%d.%d or newer but got %d.%d.%d", minMajor, minMinor, major, minor, patch)
+				"%d.%d or newer but got %d.%d.%d", minMajor, minMinor, kernVersion.major, kernVersion.minor, kernVersion.patch)
 		}
 	}
 
