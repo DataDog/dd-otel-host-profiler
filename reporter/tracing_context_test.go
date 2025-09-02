@@ -327,8 +327,8 @@ func TestReadProcessContext_MalformedMapsLine(t *testing.T) {
 func TestReadProcessContext_TooLargePayload(t *testing.T) {
 	// Test with payload size significantly exceeding maxPayloadSize
 
-	// Create a very large payload (10KB)
-	hugePayload := make([]byte, 10240)
+	// Create a very large payload (32KB)
+	hugePayload := make([]byte, 32768)
 	for i := range hugePayload {
 		hugePayload[i] = byte(i % 256)
 	}

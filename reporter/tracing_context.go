@@ -28,7 +28,7 @@ const (
 	mappingParseBufferSize = 256
 	otelContextMappingName = "[anon:OTEL_CTX]"
 	otelContextSignature   = "OTEL_CTX"
-	maxPayloadSize         = 1024
+	maxPayloadSize         = 16384
 )
 
 // expect a two-page sized mapping
