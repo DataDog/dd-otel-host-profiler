@@ -14,7 +14,6 @@ import (
 	pprofile "github.com/google/pprof/profile"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 
-	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	samples "github.com/DataDog/dd-otel-host-profiler/reporter/samples"
 )
 
@@ -137,7 +136,7 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 		}
 
 		labels := make(map[string][]string)
-		addTraceLabels(labels, traceKey, processMeta.ContainerMetadata, baseExec)
+		addTraceLabels(labels, traceKey, &processMeta, baseExec)
 		sample.Label = labels
 		sample.Value = append(sample.Value, count, count*b.samplingPeriod)
 
@@ -245,7 +244,7 @@ func (b *ProfileBuilder) createPprofMapping(fileName, buildID string) *pprofile.
 	return mapping
 }
 
-func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, containerMetadata containermetadata.ContainerMetadata,
+func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, processMeta *samples.ProcessMetadata,
 	processName string) {
 	// The naming has an impact on the backend side,
 	// this is why we use "thread id", "thread name" and "process name"
@@ -265,6 +264,7 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, conta
 		labels["process name"] = append(labels["process name"], processName)
 	}
 
+	containerMetadata := processMeta.ContainerMetadata
 	if containerMetadata.PodName != "" {
 		labels["pod_name"] = append(labels["pod_name"], containerMetadata.PodName)
 	}
@@ -276,5 +276,40 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, conta
 
 	if containerMetadata.ContainerName != "" {
 		labels["container_name"] = append(labels["container_name"], containerMetadata.ContainerName)
+	}
+
+	tracingCtx := processMeta.TracingContext
+	if tracingCtx != nil {
+		if tracingCtx.DeploymentEnvironmentName != "" {
+			labels["env"] = append(labels["env"], tracingCtx.DeploymentEnvironmentName)
+		}
+
+		if tracingCtx.ServiceInstanceID != "" {
+			labels["runtime_id"] = append(labels["runtime_id"], tracingCtx.ServiceInstanceID)
+		}
+
+		if tracingCtx.ServiceName != "" {
+			labels["service_name"] = append(labels["service_name"], tracingCtx.ServiceName)
+		}
+
+		if tracingCtx.ServiceVersion != "" {
+			labels["service_version"] = append(labels["service_version"], tracingCtx.ServiceVersion)
+		}
+
+		if tracingCtx.HostName != "" {
+			labels["host_name"] = append(labels["host_name"], tracingCtx.HostName)
+		}
+
+		if tracingCtx.TelemetrySdkLanguage != "" {
+			labels["telemetry_sdk_language"] = append(labels["telemetry_sdk_language"], tracingCtx.TelemetrySdkLanguage)
+		}
+
+		if tracingCtx.TelemetrySdkName != "" {
+			labels["telemetry_sdk_name"] = append(labels["telemetry_sdk_name"], tracingCtx.TelemetrySdkName)
+		}
+
+		if tracingCtx.TelemetrySdkVersion != "" {
+			labels["telemetry_sdk_version"] = append(labels["telemetry_sdk_version"], tracingCtx.TelemetrySdkVersion)
+		}
 	}
 }
