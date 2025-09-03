@@ -39,6 +39,12 @@ import (
 
 type ExitCode int
 
+type kernelVersion struct {
+	major uint32
+	minor uint32
+	patch uint32
+}
+
 const (
 	ExitSuccess ExitCode = 0
 	exitFailure ExitCode = 1
@@ -75,10 +81,27 @@ func appendEndpoint(symbolEndpoints []reporter.SymbolEndpoint, site, apiKey, app
 	return append(symbolEndpoints, reporter.SymbolEndpoint{Site: site, APIKey: apiKey, AppKey: appKey})
 }
 
+func getKernelVersion() (kernelVersion, error) {
+	major, minor, patch, err := tracer.GetCurrentKernelVersion()
+	if err != nil {
+		return kernelVersion{}, err
+	}
+	return kernelVersion{major: major, minor: minor, patch: patch}, nil
+}
+
+func kernelSupportsNamedAnonymousMappings(ver kernelVersion) bool {
+	return ver.major > 5 || (ver.major == 5 && ver.minor >= 17)
+}
+
 func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings) ExitCode {
 	versionInfo := version.GetVersionInfo()
 
-	if code := sanityCheck(settings); code != ExitSuccess {
+	kernVersion, err := getKernelVersion()
+	if err != nil {
+		return failure("Failed to get kernel version: %v", err)
+	}
+
+	if code := sanityCheck(settings, kernVersion); code != ExitSuccess {
 		return code
 	}
 
@@ -205,19 +228,20 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 	}
 
 	rep, err := reporter.NewDatadog(&reporter.Config{
-		IntakeURL:                intakeURL,
-		Version:                  versionInfo.Version,
-		ReportInterval:           intervals.ReportInterval(),
-		ExecutablesCacheElements: defaultExecutablesCacheSize,
-		ProcessesCacheElements:   defaultProcessesCacheSize,
-		SamplesPerSecond:         int(settings.SamplesPerSecond),
-		PprofPrefix:              settings.PprofPrefix,
-		Tags:                     validatedTags,
-		Timeline:                 settings.Timeline,
-		APIKey:                   apiKey,
-		EnableSplitByService:     settings.EnableSplitByService,
-		SplitServiceSuffix:       settings.SplitServiceSuffix,
-		HostServiceName:          settings.HostServiceName,
+		IntakeURL:                            intakeURL,
+		Version:                              versionInfo.Version,
+		ReportInterval:                       intervals.ReportInterval(),
+		ExecutablesCacheElements:             defaultExecutablesCacheSize,
+		ProcessesCacheElements:               defaultProcessesCacheSize,
+		SamplesPerSecond:                     int(settings.SamplesPerSecond),
+		PprofPrefix:                          settings.PprofPrefix,
+		Tags:                                 validatedTags,
+		Timeline:                             settings.Timeline,
+		APIKey:                               apiKey,
+		EnableSplitByService:                 settings.EnableSplitByService,
+		SplitServiceSuffix:                   settings.SplitServiceSuffix,
+		HostServiceName:                      settings.HostServiceName,
+		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              settings.UploadSymbols,
 			UploadDynamicSymbols: settings.UploadDynamicSymbols,
@@ -314,7 +338,7 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 	return ExitSuccess
 }
 
-func sanityCheck(settings *FullHostProfilerSettings) ExitCode {
+func sanityCheck(settings *FullHostProfilerSettings, kernVersion kernelVersion) ExitCode {
 	if settings.SamplesPerSecond < 1 {
 		return ParseError("Invalid sampling frequency: %d", settings.SamplesPerSecond)
 	}
@@ -340,11 +364,6 @@ func sanityCheck(settings *FullHostProfilerSettings) ExitCode {
 	}
 
 	if !settings.NoKernelVersionCheck {
-		major, minor, patch, err := tracer.GetCurrentKernelVersion()
-		if err != nil {
-			return failure("Failed to get kernel version: %v", err)
-		}
-
 		var minMajor, minMinor uint32
 		switch runtime.GOARCH {
 		case "amd64":
@@ -357,9 +376,9 @@ func sanityCheck(settings *FullHostProfilerSettings) ExitCode {
 			return failure("Unsupported architecture: %s", runtime.GOARCH)
 		}
 
-		if major < minMajor || (major == minMajor && minor < minMinor) {
+		if kernVersion.major < minMajor || (kernVersion.major == minMajor && kernVersion.minor < minMinor) {
 			return failure("Host Agent requires kernel version "+
-				"%d.%d or newer but got %d.%d.%d", minMajor, minMinor, major, minor, patch)
+				"%d.%d or newer but got %d.%d.%d", minMajor, minMinor, kernVersion.major, kernVersion.minor, kernVersion.patch)
 		}
 	}
 
