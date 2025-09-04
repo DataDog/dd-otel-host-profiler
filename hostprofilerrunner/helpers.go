@@ -7,7 +7,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package main
+package hostprofilerrunner
 
 import (
 	"fmt"
@@ -48,14 +48,14 @@ func ValidateTags(tags string) reporter.Tags {
 	return validatedTags
 }
 
-func addTagsFromArgs(tags *reporter.Tags, args *arguments) {
-	if args.environment != "" {
-		*tags = append(*tags, reporter.MakeTag("env", args.environment))
+func addTagsFromArgs(tags *reporter.Tags, settings *FullHostProfilerSettings) {
+	if settings.Environment != "" {
+		*tags = append(*tags, reporter.MakeTag("env", settings.Environment))
 	}
 }
 
-// isAPIKeyValid reports whether the given string is a structurally valid API key
-func isAPIKeyValid(key string) bool {
+// IsAPIKeyValid reports whether the given string is a structurally valid API key
+func IsAPIKeyValid(key string) bool {
 	if len(key) != 32 {
 		return false
 	}
@@ -67,8 +67,8 @@ func isAPIKeyValid(key string) bool {
 	return true
 }
 
-// isAPPKeyValid reports whether the given string is a structurally valid APP key
-func isAPPKeyValid(key string) bool {
+// IsAPPKeyValid reports whether the given string is a structurally valid APP key
+func IsAPPKeyValid(key string) bool {
 	if len(key) != 40 {
 		return false
 	}

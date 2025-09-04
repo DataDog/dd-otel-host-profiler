@@ -2,6 +2,7 @@
 
 VERSION ?= v0.0.0
 VERSION_LD_FLAGS := -X github.com/DataDog/dd-otel-host-profiler/version.version=$(VERSION)
+
 GO_FLAGS := -ldflags="${VERSION_LD_FLAGS} -extldflags=-static" -tags osusergo,netgo,debugtracer
 
 all: build
