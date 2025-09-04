@@ -52,5 +52,5 @@ func mainWithExitCode() runner.ExitCode {
 		args.Dump()
 	}
 
-	return runner.RunHostProfiler(mainCtx, &args.Config)
+	return runner.Run(mainCtx, &args.Config)
 }

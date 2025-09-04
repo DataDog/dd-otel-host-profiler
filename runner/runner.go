@@ -94,7 +94,7 @@ func kernelSupportsNamedAnonymousMappings(ver kernelVersion) bool {
 	return ver.major > 5 || (ver.major == 5 && ver.minor >= 17)
 }
 
-func RunHostProfiler(mainCtx context.Context, config *configpkg.Config) ExitCode {
+func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 	versionInfo := version.GetVersionInfo()
 
 	kernVersion, err := getKernelVersion()
