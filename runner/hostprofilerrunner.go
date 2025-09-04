@@ -32,6 +32,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 
+	configpkg "github.com/DataDog/dd-otel-host-profiler/config"
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
 	"github.com/DataDog/dd-otel-host-profiler/version"
@@ -93,7 +94,7 @@ func kernelSupportsNamedAnonymousMappings(ver kernelVersion) bool {
 	return ver.major > 5 || (ver.major == 5 && ver.minor >= 17)
 }
 
-func RunHostProfiler(mainCtx context.Context, config *Config) ExitCode {
+func RunHostProfiler(mainCtx context.Context, config *configpkg.Config) ExitCode {
 	versionInfo := version.GetVersionInfo()
 
 	kernVersion, err := getKernelVersion()
@@ -177,11 +178,11 @@ func RunHostProfiler(mainCtx context.Context, config *Config) ExitCode {
 	}
 	log.Infof("Enabled tracers: %s", includeTracers.String())
 
-	validatedTags := ValidateTags(config.Tags)
+	validatedTags := configpkg.ValidateTags(config.Tags)
 	log.Debugf("Validated tags: %s", validatedTags)
 
 	// Add tags from the arguments
-	addTagsFromArgs(&validatedTags, config)
+	configpkg.AddTagsFromArgs(&validatedTags, config)
 
 	var containerMetadataProvider containermetadata.Provider
 	if config.EnableSplitByService {
@@ -208,13 +209,13 @@ func RunHostProfiler(mainCtx context.Context, config *Config) ExitCode {
 		if config.APIKey == "" {
 			return failure("Datadog API key is required when running in agentless mode")
 		}
-		intakeURL, err = intakeURLForSite(config.Site)
+		intakeURL, err = configpkg.IntakeURLForSite(config.Site)
 		if err != nil {
 			return failure("Failed to get agentless URL from site %v: %v", config.Site, err)
 		}
 		apiKey = config.APIKey
 	} else {
-		intakeURL, err = intakeURLForAgent(config.AgentURL)
+		intakeURL, err = configpkg.IntakeURLForAgent(config.AgentURL)
 		if err != nil {
 			return failure("Failed to get intake URL from agent URL %v: %v", config.AgentURL, err)
 		}
@@ -338,14 +339,14 @@ func RunHostProfiler(mainCtx context.Context, config *Config) ExitCode {
 	return ExitSuccess
 }
 
-func sanityCheck(settings *Config, kernVersion kernelVersion) ExitCode {
+func sanityCheck(settings *configpkg.Config, kernVersion kernelVersion) ExitCode {
 	if settings.SamplesPerSecond < 1 {
 		return ParseError("Invalid sampling frequency: %d", settings.SamplesPerSecond)
 	}
 
 	if settings.MapScaleFactor > 8 {
 		return ParseError("eBPF map scaling factor %d exceeds limit (max: %d)",
-			settings.MapScaleFactor, maxArgMapScaleFactor)
+			settings.MapScaleFactor, configpkg.MaxArgMapScaleFactor)
 	}
 
 	if settings.BPFVerifierLogLevel > 2 {

@@ -18,6 +18,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 
+	"github.com/DataDog/dd-otel-host-profiler/config"
 	"github.com/DataDog/dd-otel-host-profiler/runner"
 )
 
@@ -26,7 +27,7 @@ func main() {
 }
 
 func mainWithExitCode() runner.ExitCode {
-	args, err := runner.ParseArgs()
+	args, err := config.ParseArgs()
 	if err != nil {
 		return runner.ParseError("Failure to parse arguments: %v", err)
 	}
@@ -36,7 +37,7 @@ func mainWithExitCode() runner.ExitCode {
 	}
 
 	if args.Copyright {
-		fmt.Print(runner.Copyright)
+		fmt.Print(config.Copyright)
 		return runner.ExitSuccess
 	}
 
