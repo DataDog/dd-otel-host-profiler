@@ -32,7 +32,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 
-	configpkg "github.com/DataDog/dd-otel-host-profiler/config"
+	"github.com/DataDog/dd-otel-host-profiler/config"
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
 	"github.com/DataDog/dd-otel-host-profiler/version"
@@ -94,7 +94,7 @@ func kernelSupportsNamedAnonymousMappings(ver kernelVersion) bool {
 	return ver.major > 5 || (ver.major == 5 && ver.minor >= 17)
 }
 
-func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
+func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	versionInfo := version.GetVersionInfo()
 
 	kernVersion, err := getKernelVersion()
@@ -102,15 +102,15 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 		return failure("Failed to get kernel version: %v", err)
 	}
 
-	if code := sanityCheck(config, kernVersion); code != ExitSuccess {
+	if code := sanityCheck(c, kernVersion); code != ExitSuccess {
 		return code
 	}
 
-	if config.EnableGoRuntimeProfiler {
-		addr, _ := strings.CutPrefix(config.AgentURL, "http://")
+	if c.EnableGoRuntimeProfiler {
+		addr, _ := strings.CutPrefix(c.AgentURL, "http://")
 		opts := []profiler.Option{
 			profiler.WithService("dd-otel-host-self-profiler"),
-			profiler.WithEnv(config.Environment),
+			profiler.WithEnv(c.Environment),
 			profiler.WithVersion(versionInfo.Version),
 			profiler.WithAgentAddr(addr),
 			profiler.MutexProfileFraction(100),
@@ -121,8 +121,8 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 				profiler.MutexProfile,
 			),
 		}
-		if config.GoRuntimeProfilerPeriod > 0 {
-			opts = append(opts, profiler.WithPeriod(config.GoRuntimeProfilerPeriod))
+		if c.GoRuntimeProfilerPeriod > 0 {
+			opts = append(opts, profiler.WithPeriod(c.GoRuntimeProfilerPeriod))
 		}
 		err = profiler.Start(opts...)
 		if err != nil {
@@ -131,14 +131,14 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 		defer profiler.Stop()
 	}
 
-	if config.GoRuntimeMetricsStatsdAddress != "" {
-		addr, _ := strings.CutPrefix(config.AgentURL, "http://")
+	if c.GoRuntimeMetricsStatsdAddress != "" {
+		addr, _ := strings.CutPrefix(c.AgentURL, "http://")
 		err = ddtracer.Start(
 			ddtracer.WithService("dd-otel-host-self-profiler"),
-			ddtracer.WithEnv(config.Environment),
+			ddtracer.WithEnv(c.Environment),
 			ddtracer.WithServiceVersion(versionInfo.Version),
 			ddtracer.WithAgentAddr(addr),
-			ddtracer.WithDogstatsdAddr(config.GoRuntimeMetricsStatsdAddress),
+			ddtracer.WithDogstatsdAddr(c.GoRuntimeMetricsStatsdAddress),
 			ddtracer.WithTraceEnabled(false),
 		)
 		if err != nil {
@@ -157,74 +157,74 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 	// disable trace handler cache because it consumes too much memory for almost no CPU benefit
 	traceHandlerCacheSize := uint32(0)
 
-	intervals := times.New(config.ReporterInterval, config.MonitorInterval,
-		config.ProbabilisticInterval)
+	intervals := times.New(c.ReporterInterval, c.MonitorInterval,
+		c.ProbabilisticInterval)
 
 	// Start periodic synchronization with the realtime clock
-	times.StartRealtimeSync(mainCtx, config.ClockSyncInterval)
+	times.StartRealtimeSync(mainCtx, c.ClockSyncInterval)
 
 	log.Debugf("Determining tracers to include")
-	includeTracers, err := tracertypes.Parse(config.Tracers)
+	includeTracers, err := tracertypes.Parse(c.Tracers)
 	if err != nil {
 		return failure("Failed to parse the included tracers: %v", err)
 	}
 
 	// Disable Go interpreter because we are doing Go symbolization remotely.
 	includeTracers.Disable(tracertypes.GoTracer)
-	if config.CollectContext {
+	if c.CollectContext {
 		includeTracers.Enable(tracertypes.Labels)
 	} else {
 		includeTracers.Disable(tracertypes.Labels)
 	}
 	log.Infof("Enabled tracers: %s", includeTracers.String())
 
-	validatedTags := configpkg.ValidateTags(config.Tags)
+	validatedTags := config.ValidateTags(c.Tags)
 	log.Debugf("Validated tags: %s", validatedTags)
 
 	// Add tags from the arguments
-	configpkg.AddTagsFromArgs(&validatedTags, config)
+	config.AddTagsFromArgs(&validatedTags, c)
 
 	var containerMetadataProvider containermetadata.Provider
-	if config.EnableSplitByService {
+	if c.EnableSplitByService {
 		// If we're splitting by service, we only need the container ID because Datadog
 		// agent will add the rest of the metadata.
 		containerMetadataProvider = containermetadata.NewContainerIDProvider()
 	} else {
 		containerMetadataProvider, err =
-			containermetadata.NewContainerMetadataProvider(mainCtx, config.Node)
+			containermetadata.NewContainerMetadataProvider(mainCtx, c.Node)
 		if err != nil {
 			return failure("Failed to create container metadata provider: %v", err)
 		}
 	}
 
-	var symbolEndpoints = config.AdditionalSymbolEndpoints
+	var symbolEndpoints = c.AdditionalSymbolEndpoints
 
-	if config.Site != "" && config.APIKey != "" && config.AppKey != "" {
-		symbolEndpoints = appendEndpoint(symbolEndpoints, config.Site, config.APIKey, config.AppKey)
+	if c.Site != "" && c.APIKey != "" && c.AppKey != "" {
+		symbolEndpoints = appendEndpoint(symbolEndpoints, c.Site, c.APIKey, c.AppKey)
 	}
 
 	var intakeURL string
 	apiKey := ""
-	if config.Agentless {
-		if config.APIKey == "" {
+	if c.Agentless {
+		if c.APIKey == "" {
 			return failure("Datadog API key is required when running in agentless mode")
 		}
-		intakeURL, err = configpkg.IntakeURLForSite(config.Site)
+		intakeURL, err = config.IntakeURLForSite(c.Site)
 		if err != nil {
-			return failure("Failed to get agentless URL from site %v: %v", config.Site, err)
+			return failure("Failed to get agentless URL from site %v: %v", c.Site, err)
 		}
-		apiKey = config.APIKey
+		apiKey = c.APIKey
 	} else {
-		intakeURL, err = configpkg.IntakeURLForAgent(config.AgentURL)
+		intakeURL, err = config.IntakeURLForAgent(c.AgentURL)
 		if err != nil {
-			return failure("Failed to get intake URL from agent URL %v: %v", config.AgentURL, err)
+			return failure("Failed to get intake URL from agent URL %v: %v", c.AgentURL, err)
 		}
 	}
 
-	if config.HostServiceName == "" && !config.EnableSplitByService {
+	if c.HostServiceName == "" && !c.EnableSplitByService {
 		return failure("Service name is required when running in non-split-by-service mode")
 	}
-	if config.HostServiceName != "" && config.EnableSplitByService {
+	if c.HostServiceName != "" && c.EnableSplitByService {
 		log.Warning("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
 	}
 
@@ -234,22 +234,22 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 		ReportInterval:                       intervals.ReportInterval(),
 		ExecutablesCacheElements:             defaultExecutablesCacheSize,
 		ProcessesCacheElements:               defaultProcessesCacheSize,
-		SamplesPerSecond:                     int(config.SamplesPerSecond),
-		PprofPrefix:                          config.PprofPrefix,
+		SamplesPerSecond:                     int(c.SamplesPerSecond),
+		PprofPrefix:                          c.PprofPrefix,
 		Tags:                                 validatedTags,
-		Timeline:                             config.Timeline,
+		Timeline:                             c.Timeline,
 		APIKey:                               apiKey,
-		EnableSplitByService:                 config.EnableSplitByService,
-		SplitServiceSuffix:                   config.SplitServiceSuffix,
-		HostServiceName:                      config.HostServiceName,
+		EnableSplitByService:                 c.EnableSplitByService,
+		SplitServiceSuffix:                   c.SplitServiceSuffix,
+		HostServiceName:                      c.HostServiceName,
 		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
-			Enabled:              config.UploadSymbols,
-			UploadDynamicSymbols: config.UploadDynamicSymbols,
-			UploadGoPCLnTab:      config.UploadGoPCLnTab,
-			UseHTTP2:             config.UploadSymbolsHTTP2,
-			SymbolQueryInterval:  config.UploadSymbolQueryInterval,
-			DryRun:               config.UploadSymbolsDryRun,
+			Enabled:              c.UploadSymbols,
+			UploadDynamicSymbols: c.UploadDynamicSymbols,
+			UploadGoPCLnTab:      c.UploadGoPCLnTab,
+			UseHTTP2:             c.UploadSymbolsHTTP2,
+			SymbolQueryInterval:  c.UploadSymbolQueryInterval,
+			DryRun:               c.UploadSymbolsDryRun,
 			SymbolEndpoints:      symbolEndpoints,
 			Version:              versionInfo.Version,
 		},
@@ -264,7 +264,7 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 	}
 
 	includeEnvVars := libpf.Set[string]{}
-	if config.EnableSplitByService {
+	if c.EnableSplitByService {
 		for _, envVar := range reporter.ServiceNameEnvVars {
 			includeEnvVars[envVar] = libpf.Void{}
 		}
@@ -275,14 +275,14 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 		Reporter:               rep,
 		Intervals:              intervals,
 		IncludeTracers:         includeTracers,
-		FilterErrorFrames:      !config.SendErrorFrames,
-		SamplesPerSecond:       int(config.SamplesPerSecond),
-		MapScaleFactor:         int(config.MapScaleFactor),
-		KernelVersionCheck:     !config.NoKernelVersionCheck,
-		VerboseMode:            config.VerboseeBPF,
-		BPFVerifierLogLevel:    uint32(config.BPFVerifierLogLevel),
-		ProbabilisticInterval:  config.ProbabilisticInterval,
-		ProbabilisticThreshold: uint(config.ProbabilisticThreshold),
+		FilterErrorFrames:      !c.SendErrorFrames,
+		SamplesPerSecond:       int(c.SamplesPerSecond),
+		MapScaleFactor:         int(c.MapScaleFactor),
+		KernelVersionCheck:     !c.NoKernelVersionCheck,
+		VerboseMode:            c.VerboseeBPF,
+		BPFVerifierLogLevel:    uint32(c.BPFVerifierLogLevel),
+		ProbabilisticInterval:  c.ProbabilisticInterval,
+		ProbabilisticThreshold: uint(c.ProbabilisticThreshold),
 		IncludeEnvVars:         includeEnvVars,
 	})
 	if err != nil {
@@ -303,7 +303,7 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 	}
 	log.Info("Attached tracer program")
 
-	if config.ProbabilisticThreshold < tracer.ProbabilisticThresholdMax {
+	if c.ProbabilisticThreshold < tracer.ProbabilisticThresholdMax {
 		trc.StartProbabilisticProfiling(mainCtx)
 		log.Printf("Enabled probabilistic profiling")
 	} else {
@@ -319,12 +319,12 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 	// change this log line update also the system test.
 	log.Printf("Attached sched monitor")
 
-	traceHandlerIntervals := times.New(config.ReporterInterval, 60*time.Second, config.ProbabilisticInterval)
+	traceHandlerIntervals := times.New(c.ReporterInterval, 60*time.Second, c.ProbabilisticInterval)
 	if err := startTraceHandling(mainCtx, rep, traceHandlerIntervals, trc, traceHandlerCacheSize); err != nil {
 		return failure("Failed to start trace handling: %v", err)
 	}
 
-	if config.VerboseeBPF {
+	if c.VerboseeBPF {
 		log.Info("Reading from trace_pipe...")
 		go readTracePipe(mainCtx)
 	}
@@ -339,32 +339,32 @@ func Run(mainCtx context.Context, config *configpkg.Config) ExitCode {
 	return ExitSuccess
 }
 
-func sanityCheck(config *configpkg.Config, kernVersion kernelVersion) ExitCode {
-	if config.SamplesPerSecond < 1 {
-		return ParseError("Invalid sampling frequency: %d", config.SamplesPerSecond)
+func sanityCheck(c *config.Config, kernVersion kernelVersion) ExitCode {
+	if c.SamplesPerSecond < 1 {
+		return ParseError("Invalid sampling frequency: %d", c.SamplesPerSecond)
 	}
 
-	if config.MapScaleFactor > 8 {
+	if c.MapScaleFactor > 8 {
 		return ParseError("eBPF map scaling factor %d exceeds limit (max: %d)",
-			config.MapScaleFactor, configpkg.MaxArgMapScaleFactor)
+			c.MapScaleFactor, config.MaxArgMapScaleFactor)
 	}
 
-	if config.BPFVerifierLogLevel > 2 {
-		return ParseError("Invalid eBPF verifier log level: %d", config.BPFVerifierLogLevel)
+	if c.BPFVerifierLogLevel > 2 {
+		return ParseError("Invalid eBPF verifier log level: %d", c.BPFVerifierLogLevel)
 	}
 
-	if config.ProbabilisticInterval < 1*time.Minute || config.ProbabilisticInterval > 5*time.Minute {
+	if c.ProbabilisticInterval < 1*time.Minute || c.ProbabilisticInterval > 5*time.Minute {
 		return ParseError("Invalid argument for probabilistic-interval: use " +
 			"a duration between 1 and 5 minutes")
 	}
 
-	if config.ProbabilisticThreshold < 1 ||
-		config.ProbabilisticThreshold > tracer.ProbabilisticThresholdMax {
+	if c.ProbabilisticThreshold < 1 ||
+		c.ProbabilisticThreshold > tracer.ProbabilisticThresholdMax {
 		return ParseError("Invalid argument for probabilistic-threshold. Value "+
 			"should be between 1 and %d", tracer.ProbabilisticThresholdMax)
 	}
 
-	if !config.NoKernelVersionCheck {
+	if !c.NoKernelVersionCheck {
 		var minMajor, minMinor uint32
 		switch runtime.GOARCH {
 		case "amd64":
