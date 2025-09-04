@@ -123,7 +123,7 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 		if settings.GoRuntimeProfilerPeriod > 0 {
 			opts = append(opts, profiler.WithPeriod(settings.GoRuntimeProfilerPeriod))
 		}
-		err := profiler.Start(opts...)
+		err = profiler.Start(opts...)
 		if err != nil {
 			failure("failed to start the runtime profiler: %v", err)
 		}
@@ -132,7 +132,7 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 
 	if settings.GoRuntimeMetricsStatsdAddress != "" {
 		addr, _ := strings.CutPrefix(settings.AgentURL, "http://")
-		err := ddtracer.Start(
+		err = ddtracer.Start(
 			ddtracer.WithService("dd-otel-host-self-profiler"),
 			ddtracer.WithEnv(settings.Environment),
 			ddtracer.WithServiceVersion(versionInfo.Version),
@@ -149,7 +149,7 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 	log.Infof("Starting Datadog OTEL host profiler v%s (revision: %s, date: %s), arch: %v",
 		versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
 
-	if err := tracer.ProbeBPFSyscall(); err != nil {
+	if err = tracer.ProbeBPFSyscall(); err != nil {
 		return failure("Failed to probe eBPF syscall: %v", err)
 	}
 
