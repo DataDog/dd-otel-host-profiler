@@ -56,7 +56,7 @@ const (
 )
 
 type Arguments struct {
-	FullHostProfilerSettings
+	Config
 	Copyright   bool
 	VerboseMode bool
 	cmd         *cli.Command
@@ -397,10 +397,10 @@ func (args *Arguments) Dump() {
 	}
 }
 
-func CreateDefaultFullHostProfilerSettings() (*FullHostProfilerSettings, error) {
+func CreateConfig() (*Config, error) {
 	args, err := parseCLIArgs(nil)
 	if err != nil {
 		return nil, err
 	}
-	return &args.FullHostProfilerSettings, nil
+	return &args.Config, nil
 }

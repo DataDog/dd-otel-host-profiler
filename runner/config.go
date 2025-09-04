@@ -57,7 +57,7 @@ func (s *additionalSymbolEndpoints) Get() interface{} {
 	return s
 }
 
-type FullHostProfilerSettings struct {
+type Config struct {
 	BPFVerifierLogLevel           uint64
 	AgentURL                      string
 	MapScaleFactor                uint64

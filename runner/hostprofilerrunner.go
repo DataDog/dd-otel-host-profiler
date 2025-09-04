@@ -93,7 +93,7 @@ func kernelSupportsNamedAnonymousMappings(ver kernelVersion) bool {
 	return ver.major > 5 || (ver.major == 5 && ver.minor >= 17)
 }
 
-func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings) ExitCode {
+func RunHostProfiler(mainCtx context.Context, config *Config) ExitCode {
 	versionInfo := version.GetVersionInfo()
 
 	kernVersion, err := getKernelVersion()
@@ -101,15 +101,15 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 		return failure("Failed to get kernel version: %v", err)
 	}
 
-	if code := sanityCheck(settings, kernVersion); code != ExitSuccess {
+	if code := sanityCheck(config, kernVersion); code != ExitSuccess {
 		return code
 	}
 
-	if settings.EnableGoRuntimeProfiler {
-		addr, _ := strings.CutPrefix(settings.AgentURL, "http://")
+	if config.EnableGoRuntimeProfiler {
+		addr, _ := strings.CutPrefix(config.AgentURL, "http://")
 		opts := []profiler.Option{
 			profiler.WithService("dd-otel-host-self-profiler"),
-			profiler.WithEnv(settings.Environment),
+			profiler.WithEnv(config.Environment),
 			profiler.WithVersion(versionInfo.Version),
 			profiler.WithAgentAddr(addr),
 			profiler.MutexProfileFraction(100),
@@ -120,8 +120,8 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 				profiler.MutexProfile,
 			),
 		}
-		if settings.GoRuntimeProfilerPeriod > 0 {
-			opts = append(opts, profiler.WithPeriod(settings.GoRuntimeProfilerPeriod))
+		if config.GoRuntimeProfilerPeriod > 0 {
+			opts = append(opts, profiler.WithPeriod(config.GoRuntimeProfilerPeriod))
 		}
 		err = profiler.Start(opts...)
 		if err != nil {
@@ -130,14 +130,14 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 		defer profiler.Stop()
 	}
 
-	if settings.GoRuntimeMetricsStatsdAddress != "" {
-		addr, _ := strings.CutPrefix(settings.AgentURL, "http://")
+	if config.GoRuntimeMetricsStatsdAddress != "" {
+		addr, _ := strings.CutPrefix(config.AgentURL, "http://")
 		err = ddtracer.Start(
 			ddtracer.WithService("dd-otel-host-self-profiler"),
-			ddtracer.WithEnv(settings.Environment),
+			ddtracer.WithEnv(config.Environment),
 			ddtracer.WithServiceVersion(versionInfo.Version),
 			ddtracer.WithAgentAddr(addr),
-			ddtracer.WithDogstatsdAddr(settings.GoRuntimeMetricsStatsdAddress),
+			ddtracer.WithDogstatsdAddr(config.GoRuntimeMetricsStatsdAddress),
 			ddtracer.WithTraceEnabled(false),
 		)
 		if err != nil {
@@ -156,74 +156,74 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 	// disable trace handler cache because it consumes too much memory for almost no CPU benefit
 	traceHandlerCacheSize := uint32(0)
 
-	intervals := times.New(settings.ReporterInterval, settings.MonitorInterval,
-		settings.ProbabilisticInterval)
+	intervals := times.New(config.ReporterInterval, config.MonitorInterval,
+		config.ProbabilisticInterval)
 
 	// Start periodic synchronization with the realtime clock
-	times.StartRealtimeSync(mainCtx, settings.ClockSyncInterval)
+	times.StartRealtimeSync(mainCtx, config.ClockSyncInterval)
 
 	log.Debugf("Determining tracers to include")
-	includeTracers, err := tracertypes.Parse(settings.Tracers)
+	includeTracers, err := tracertypes.Parse(config.Tracers)
 	if err != nil {
 		return failure("Failed to parse the included tracers: %v", err)
 	}
 
 	// Disable Go interpreter because we are doing Go symbolization remotely.
 	includeTracers.Disable(tracertypes.GoTracer)
-	if settings.CollectContext {
+	if config.CollectContext {
 		includeTracers.Enable(tracertypes.Labels)
 	} else {
 		includeTracers.Disable(tracertypes.Labels)
 	}
 	log.Infof("Enabled tracers: %s", includeTracers.String())
 
-	validatedTags := ValidateTags(settings.Tags)
+	validatedTags := ValidateTags(config.Tags)
 	log.Debugf("Validated tags: %s", validatedTags)
 
 	// Add tags from the arguments
-	addTagsFromArgs(&validatedTags, settings)
+	addTagsFromArgs(&validatedTags, config)
 
 	var containerMetadataProvider containermetadata.Provider
-	if settings.EnableSplitByService {
+	if config.EnableSplitByService {
 		// If we're splitting by service, we only need the container ID because Datadog
 		// agent will add the rest of the metadata.
 		containerMetadataProvider = containermetadata.NewContainerIDProvider()
 	} else {
 		containerMetadataProvider, err =
-			containermetadata.NewContainerMetadataProvider(mainCtx, settings.Node)
+			containermetadata.NewContainerMetadataProvider(mainCtx, config.Node)
 		if err != nil {
 			return failure("Failed to create container metadata provider: %v", err)
 		}
 	}
 
-	var symbolEndpoints = settings.AdditionalSymbolEndpoints
+	var symbolEndpoints = config.AdditionalSymbolEndpoints
 
-	if settings.Site != "" && settings.APIKey != "" && settings.AppKey != "" {
-		symbolEndpoints = appendEndpoint(symbolEndpoints, settings.Site, settings.APIKey, settings.AppKey)
+	if config.Site != "" && config.APIKey != "" && config.AppKey != "" {
+		symbolEndpoints = appendEndpoint(symbolEndpoints, config.Site, config.APIKey, config.AppKey)
 	}
 
 	var intakeURL string
 	apiKey := ""
-	if settings.Agentless {
-		if settings.APIKey == "" {
+	if config.Agentless {
+		if config.APIKey == "" {
 			return failure("Datadog API key is required when running in agentless mode")
 		}
-		intakeURL, err = intakeURLForSite(settings.Site)
+		intakeURL, err = intakeURLForSite(config.Site)
 		if err != nil {
-			return failure("Failed to get agentless URL from site %v: %v", settings.Site, err)
+			return failure("Failed to get agentless URL from site %v: %v", config.Site, err)
 		}
-		apiKey = settings.APIKey
+		apiKey = config.APIKey
 	} else {
-		intakeURL, err = intakeURLForAgent(settings.AgentURL)
+		intakeURL, err = intakeURLForAgent(config.AgentURL)
 		if err != nil {
-			return failure("Failed to get intake URL from agent URL %v: %v", settings.AgentURL, err)
+			return failure("Failed to get intake URL from agent URL %v: %v", config.AgentURL, err)
 		}
 	}
 
-	if settings.HostServiceName == "" && !settings.EnableSplitByService {
+	if config.HostServiceName == "" && !config.EnableSplitByService {
 		return failure("Service name is required when running in non-split-by-service mode")
 	}
-	if settings.HostServiceName != "" && settings.EnableSplitByService {
+	if config.HostServiceName != "" && config.EnableSplitByService {
 		log.Warning("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
 	}
 
@@ -233,22 +233,22 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 		ReportInterval:                       intervals.ReportInterval(),
 		ExecutablesCacheElements:             defaultExecutablesCacheSize,
 		ProcessesCacheElements:               defaultProcessesCacheSize,
-		SamplesPerSecond:                     int(settings.SamplesPerSecond),
-		PprofPrefix:                          settings.PprofPrefix,
+		SamplesPerSecond:                     int(config.SamplesPerSecond),
+		PprofPrefix:                          config.PprofPrefix,
 		Tags:                                 validatedTags,
-		Timeline:                             settings.Timeline,
+		Timeline:                             config.Timeline,
 		APIKey:                               apiKey,
-		EnableSplitByService:                 settings.EnableSplitByService,
-		SplitServiceSuffix:                   settings.SplitServiceSuffix,
-		HostServiceName:                      settings.HostServiceName,
+		EnableSplitByService:                 config.EnableSplitByService,
+		SplitServiceSuffix:                   config.SplitServiceSuffix,
+		HostServiceName:                      config.HostServiceName,
 		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
-			Enabled:              settings.UploadSymbols,
-			UploadDynamicSymbols: settings.UploadDynamicSymbols,
-			UploadGoPCLnTab:      settings.UploadGoPCLnTab,
-			UseHTTP2:             settings.UploadSymbolsHTTP2,
-			SymbolQueryInterval:  settings.UploadSymbolQueryInterval,
-			DryRun:               settings.UploadSymbolsDryRun,
+			Enabled:              config.UploadSymbols,
+			UploadDynamicSymbols: config.UploadDynamicSymbols,
+			UploadGoPCLnTab:      config.UploadGoPCLnTab,
+			UseHTTP2:             config.UploadSymbolsHTTP2,
+			SymbolQueryInterval:  config.UploadSymbolQueryInterval,
+			DryRun:               config.UploadSymbolsDryRun,
 			SymbolEndpoints:      symbolEndpoints,
 			Version:              versionInfo.Version,
 		},
@@ -263,7 +263,7 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 	}
 
 	includeEnvVars := libpf.Set[string]{}
-	if settings.EnableSplitByService {
+	if config.EnableSplitByService {
 		for _, envVar := range reporter.ServiceNameEnvVars {
 			includeEnvVars[envVar] = libpf.Void{}
 		}
@@ -274,14 +274,14 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 		Reporter:               rep,
 		Intervals:              intervals,
 		IncludeTracers:         includeTracers,
-		FilterErrorFrames:      !settings.SendErrorFrames,
-		SamplesPerSecond:       int(settings.SamplesPerSecond),
-		MapScaleFactor:         int(settings.MapScaleFactor),
-		KernelVersionCheck:     !settings.NoKernelVersionCheck,
-		VerboseMode:            settings.VerboseeBPF,
-		BPFVerifierLogLevel:    uint32(settings.BPFVerifierLogLevel),
-		ProbabilisticInterval:  settings.ProbabilisticInterval,
-		ProbabilisticThreshold: uint(settings.ProbabilisticThreshold),
+		FilterErrorFrames:      !config.SendErrorFrames,
+		SamplesPerSecond:       int(config.SamplesPerSecond),
+		MapScaleFactor:         int(config.MapScaleFactor),
+		KernelVersionCheck:     !config.NoKernelVersionCheck,
+		VerboseMode:            config.VerboseeBPF,
+		BPFVerifierLogLevel:    uint32(config.BPFVerifierLogLevel),
+		ProbabilisticInterval:  config.ProbabilisticInterval,
+		ProbabilisticThreshold: uint(config.ProbabilisticThreshold),
 		IncludeEnvVars:         includeEnvVars,
 	})
 	if err != nil {
@@ -302,7 +302,7 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 	}
 	log.Info("Attached tracer program")
 
-	if settings.ProbabilisticThreshold < tracer.ProbabilisticThresholdMax {
+	if config.ProbabilisticThreshold < tracer.ProbabilisticThresholdMax {
 		trc.StartProbabilisticProfiling(mainCtx)
 		log.Printf("Enabled probabilistic profiling")
 	} else {
@@ -318,12 +318,12 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 	// change this log line update also the system test.
 	log.Printf("Attached sched monitor")
 
-	traceHandlerIntervals := times.New(settings.ReporterInterval, 60*time.Second, settings.ProbabilisticInterval)
+	traceHandlerIntervals := times.New(config.ReporterInterval, 60*time.Second, config.ProbabilisticInterval)
 	if err := startTraceHandling(mainCtx, rep, traceHandlerIntervals, trc, traceHandlerCacheSize); err != nil {
 		return failure("Failed to start trace handling: %v", err)
 	}
 
-	if settings.VerboseeBPF {
+	if config.VerboseeBPF {
 		log.Info("Reading from trace_pipe...")
 		go readTracePipe(mainCtx)
 	}
@@ -338,7 +338,7 @@ func RunHostProfiler(mainCtx context.Context, settings *FullHostProfilerSettings
 	return ExitSuccess
 }
 
-func sanityCheck(settings *FullHostProfilerSettings, kernVersion kernelVersion) ExitCode {
+func sanityCheck(settings *Config, kernVersion kernelVersion) ExitCode {
 	if settings.SamplesPerSecond < 1 {
 		return ParseError("Invalid sampling frequency: %d", settings.SamplesPerSecond)
 	}

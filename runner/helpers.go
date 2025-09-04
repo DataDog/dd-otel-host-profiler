@@ -48,9 +48,9 @@ func ValidateTags(tags string) reporter.Tags {
 	return validatedTags
 }
 
-func addTagsFromArgs(tags *reporter.Tags, settings *FullHostProfilerSettings) {
-	if settings.Environment != "" {
-		*tags = append(*tags, reporter.MakeTag("env", settings.Environment))
+func addTagsFromArgs(tags *reporter.Tags, config *Config) {
+	if config.Environment != "" {
+		*tags = append(*tags, reporter.MakeTag("env", config.Environment))
 	}
 }
 
