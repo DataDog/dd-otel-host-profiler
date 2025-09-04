@@ -339,32 +339,32 @@ func RunHostProfiler(mainCtx context.Context, config *configpkg.Config) ExitCode
 	return ExitSuccess
 }
 
-func sanityCheck(settings *configpkg.Config, kernVersion kernelVersion) ExitCode {
-	if settings.SamplesPerSecond < 1 {
-		return ParseError("Invalid sampling frequency: %d", settings.SamplesPerSecond)
+func sanityCheck(config *configpkg.Config, kernVersion kernelVersion) ExitCode {
+	if config.SamplesPerSecond < 1 {
+		return ParseError("Invalid sampling frequency: %d", config.SamplesPerSecond)
 	}
 
-	if settings.MapScaleFactor > 8 {
+	if config.MapScaleFactor > 8 {
 		return ParseError("eBPF map scaling factor %d exceeds limit (max: %d)",
-			settings.MapScaleFactor, configpkg.MaxArgMapScaleFactor)
+			config.MapScaleFactor, configpkg.MaxArgMapScaleFactor)
 	}
 
-	if settings.BPFVerifierLogLevel > 2 {
-		return ParseError("Invalid eBPF verifier log level: %d", settings.BPFVerifierLogLevel)
+	if config.BPFVerifierLogLevel > 2 {
+		return ParseError("Invalid eBPF verifier log level: %d", config.BPFVerifierLogLevel)
 	}
 
-	if settings.ProbabilisticInterval < 1*time.Minute || settings.ProbabilisticInterval > 5*time.Minute {
+	if config.ProbabilisticInterval < 1*time.Minute || config.ProbabilisticInterval > 5*time.Minute {
 		return ParseError("Invalid argument for probabilistic-interval: use " +
 			"a duration between 1 and 5 minutes")
 	}
 
-	if settings.ProbabilisticThreshold < 1 ||
-		settings.ProbabilisticThreshold > tracer.ProbabilisticThresholdMax {
+	if config.ProbabilisticThreshold < 1 ||
+		config.ProbabilisticThreshold > tracer.ProbabilisticThresholdMax {
 		return ParseError("Invalid argument for probabilistic-threshold. Value "+
 			"should be between 1 and %d", tracer.ProbabilisticThresholdMax)
 	}
 
-	if !settings.NoKernelVersionCheck {
+	if !config.NoKernelVersionCheck {
 		var minMajor, minMinor uint32
 		switch runtime.GOARCH {
 		case "amd64":
