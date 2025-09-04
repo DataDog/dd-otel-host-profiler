@@ -18,26 +18,27 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 
-	"github.com/DataDog/dd-otel-host-profiler/hostprofilerrunner"
+	"github.com/DataDog/dd-otel-host-profiler/config"
+	"github.com/DataDog/dd-otel-host-profiler/runner"
 )
 
 func main() {
 	os.Exit(int(mainWithExitCode()))
 }
 
-func mainWithExitCode() hostprofilerrunner.ExitCode {
-	args, err := hostprofilerrunner.ParseArgs()
+func mainWithExitCode() runner.ExitCode {
+	args, err := config.ParseArgs()
 	if err != nil {
-		return hostprofilerrunner.ParseError("Failure to parse arguments: %v", err)
+		return runner.ParseError("Failure to parse arguments: %v", err)
 	}
 
 	if args == nil {
-		return hostprofilerrunner.ExitSuccess
+		return runner.ExitSuccess
 	}
 
 	if args.Copyright {
-		fmt.Print(hostprofilerrunner.Copyright)
-		return hostprofilerrunner.ExitSuccess
+		fmt.Print(config.Copyright)
+		return runner.ExitSuccess
 	}
 
 	// Context to drive main goroutine and the Tracer monitors.
@@ -51,5 +52,5 @@ func mainWithExitCode() hostprofilerrunner.ExitCode {
 		args.Dump()
 	}
 
-	return hostprofilerrunner.RunHostProfiler(mainCtx, &args.FullHostProfilerSettings)
+	return runner.Run(mainCtx, &args.Config)
 }

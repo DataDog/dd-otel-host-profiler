@@ -1,7 +1,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package hostprofilerrunner
+package config
 
 import (
 	"context"
@@ -52,11 +52,11 @@ const (
 	// This is the X in 2^(n + x) where n is the default hardcoded map size value
 	defaultArgMapScaleFactor = 0
 	// 1TB of executable address space
-	maxArgMapScaleFactor = 8
+	MaxArgMapScaleFactor = 8
 )
 
 type Arguments struct {
-	FullHostProfilerSettings
+	Config
 	Copyright   bool
 	VerboseMode bool
 	cmd         *cli.Command
@@ -126,7 +126,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 				Usage: fmt.Sprintf("Scaling factor for eBPF map sizes. "+
 					"Every increase by 1 doubles the map size. Increase if you see eBPF map size errors. "+
 					"Default is %d corresponding to 4GB of executable address space, max is %d.",
-					defaultArgMapScaleFactor, maxArgMapScaleFactor),
+					defaultArgMapScaleFactor, MaxArgMapScaleFactor),
 				Destination: &args.MapScaleFactor,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_MAP_SCALE_FACTOR"),
 			},
@@ -397,10 +397,10 @@ func (args *Arguments) Dump() {
 	}
 }
 
-func CreateDefaultFullHostProfilerSettings() (*FullHostProfilerSettings, error) {
+func CreateConfig() (*Config, error) {
 	args, err := parseCLIArgs(nil)
 	if err != nil {
 		return nil, err
 	}
-	return &args.FullHostProfilerSettings, nil
+	return &args.Config, nil
 }

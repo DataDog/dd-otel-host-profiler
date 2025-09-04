@@ -1,7 +1,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package hostprofilerrunner
+package config
 
 import (
 	"encoding/json"
@@ -57,7 +57,7 @@ func (s *additionalSymbolEndpoints) Get() interface{} {
 	return s
 }
 
-type FullHostProfilerSettings struct {
+type Config struct {
 	BPFVerifierLogLevel           uint64
 	AgentURL                      string
 	MapScaleFactor                uint64

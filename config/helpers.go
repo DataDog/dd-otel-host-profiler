@@ -7,7 +7,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package hostprofilerrunner
+package config
 
 import (
 	"fmt"
@@ -48,9 +48,9 @@ func ValidateTags(tags string) reporter.Tags {
 	return validatedTags
 }
 
-func addTagsFromArgs(tags *reporter.Tags, settings *FullHostProfilerSettings) {
-	if settings.Environment != "" {
-		*tags = append(*tags, reporter.MakeTag("env", settings.Environment))
+func AddTagsFromArgs(tags *reporter.Tags, config *Config) {
+	if config.Environment != "" {
+		*tags = append(*tags, reporter.MakeTag("env", config.Environment))
 	}
 }
 
@@ -80,13 +80,13 @@ func IsAPPKeyValid(key string) bool {
 	return true
 }
 
-func intakeURLForSite(site string) (string, error) {
+func IntakeURLForSite(site string) (string, error) {
 	u := fmt.Sprintf("https://intake.profile.%s/api/v2/profile", site)
 	_, err := url.Parse(u)
 	return u, err
 }
 
-func intakeURLForAgent(agentURL string) (string, error) {
+func IntakeURLForAgent(agentURL string) (string, error) {
 	const profilingEndPoint = "/profiling/v1/input"
 	return url.JoinPath(agentURL, profilingEndPoint)
 }
