@@ -82,7 +82,6 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 				// As native frames are resolved in the backend, we use Mapping to
 				// report these frames.
 				loc.Mapping = b.createPprofMappingForFileID(frame.FileID)
-				loc.Line = append(loc.Line, pprofile.Line{Function: b.createPprofFunctionEntry("", loc.Mapping.File)})
 			case libpf.AbortFrame:
 				// Next step: Figure out how the OTLP protocol
 				// could handle artificial frames, like AbortFrame,
