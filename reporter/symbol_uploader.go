@@ -118,11 +118,22 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig) (*DatadogSymbolUploader
 	compressDebugSections := !cfg.DisableDebugSectionCompression && CheckObjcopyZstdSupport()
 
 	httpClient := &http.Client{Timeout: uploadTimeout}
-	httpTransport, ok := http.DefaultTransport.(*http.Transport)
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
 	if ok && !cfg.UseHTTP2 {
-		transport := httpTransport.Clone()
-		transport.TLSNextProto = make(map[string]func(authority string, c *tls.Conn) http.RoundTripper)
-		httpClient.Transport = transport
+		// This is a copy of http.DefaultTransport, but with the TLSNextProto map removed
+		// to disable HTTP/2 as documented in https://pkg.go.dev/net/http#hdr-HTTP_2.
+		// We cannot clone http.DefaultTransport because of https://github.com/golang/go/issues/39302
+		httpClient.Transport = &http.Transport{
+			Proxy:                 defaultTransport.Proxy,
+			DialContext:           defaultTransport.DialContext,
+			MaxIdleConns:          defaultTransport.MaxIdleConns,
+			IdleConnTimeout:       defaultTransport.IdleConnTimeout,
+			TLSHandshakeTimeout:   defaultTransport.TLSHandshakeTimeout,
+			ExpectContinueTimeout: defaultTransport.ExpectContinueTimeout,
+			// Different from http.DefaultTransport
+			TLSNextProto:      make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+			ForceAttemptHTTP2: false,
+		}
 	}
 
 	return &DatadogSymbolUploader{
