@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -477,4 +478,61 @@ func TestSymbolUpload(t *testing.T) {
 
 		checkUploadsWithEncoding(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false}, "zstd")
 	})
+}
+
+// Verify that the symbol uploader transport has the same exported fields as http.DefaultTransport
+// when HTTP/2 is disabled
+func TestTransport(t *testing.T) {
+	cfg := &SymbolUploaderConfig{
+		Enabled:         true,
+		UseHTTP2:        false, // This forces creation of custom transport
+		SymbolEndpoints: []SymbolEndpoint{{Site: "test.com", APIKey: "key", AppKey: "app"}},
+		Version:         "test",
+	}
+
+	uploader, err := NewDatadogSymbolUploader(cfg)
+	require.NoError(t, err)
+
+	customTransport, ok := uploader.client.Transport.(*http.Transport)
+	require.True(t, ok, "Expected custom transport to be *http.Transport")
+
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	require.True(t, ok, "Expected http.DefaultTransport to be *http.Transport")
+
+	// Use reflection to compare all exported fields
+	customValue := reflect.ValueOf(customTransport).Elem()
+	defaultValue := reflect.ValueOf(defaultTransport).Elem()
+	customType := customValue.Type()
+
+	for i := range customType.NumField() {
+		field := customType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		customFieldValue := customValue.Field(i)
+		defaultFieldValue := defaultValue.Field(i)
+
+		// Special handling for intentionally different fields
+		switch field.Name {
+		case "TLSNextProto":
+			// TLSNextProto should be an empty map in custom transport to disable HTTP/2
+			assert.NotNil(t, customFieldValue.Interface(), "TLSNextProto should not be nil")
+			assert.Equal(t, 0, customFieldValue.Len(), "TLSNextProto should be empty map")
+		case "ForceAttemptHTTP2":
+			// ForceAttemptHTTP2 should be false in custom transport to disable HTTP/2
+			assert.False(t, customFieldValue.Bool(), "ForceAttemptHTTP2 should be false to disable HTTP/2")
+		default:
+			if customFieldValue.Kind() == reflect.Func {
+				assert.Equal(t, defaultFieldValue.Pointer(), customFieldValue.Pointer(), "Function field %s should match", field.Name)
+				continue
+			}
+			if !customFieldValue.CanInterface() || !defaultFieldValue.CanInterface() {
+				assert.Fail(t, "Cannot compare field %s", field.Name)
+				continue
+			}
+			assert.Equal(t, defaultFieldValue.Interface(), customFieldValue.Interface(),
+				"Field %s should match default transport", field.Name)
+		}
+	}
 }
