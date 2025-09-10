@@ -528,7 +528,7 @@ func TestTransport(t *testing.T) {
 				continue
 			}
 			if !customFieldValue.CanInterface() || !defaultFieldValue.CanInterface() {
-				assert.Fail(t, "Cannot compare field %s", field.Name)
+				assert.Failf(t, "Cannot compare field %s", field.Name)
 				continue
 			}
 			assert.Equal(t, defaultFieldValue.Interface(), customFieldValue.Interface(),
