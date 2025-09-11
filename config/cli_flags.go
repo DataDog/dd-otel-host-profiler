@@ -361,7 +361,8 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_SYMBOLS_HTTP2"),
 			},
 			&cli.BoolFlag{
-				Name:        "collect-context",
+				Name: "collect-context",
+				// TODO: switch info log to debug log in reporter code once context collection is enabled by default
 				Value:       false,
 				Hidden:      true,
 				Usage:       "Enable context collection.",
