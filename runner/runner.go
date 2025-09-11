@@ -242,6 +242,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		EnableSplitByService:                 c.EnableSplitByService,
 		SplitServiceSuffix:                   c.SplitServiceSuffix,
 		HostServiceName:                      c.HostServiceName,
+		CollectContext:                       c.CollectContext,
 		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              c.UploadSymbols,

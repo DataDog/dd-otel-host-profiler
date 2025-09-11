@@ -459,7 +459,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	if r.config.CollectContext {
 		tracingCtx, err = ReadProcessLevelContext(pid, r.config.KernelSupportsNamedAnonymousMappings)
 		if err == nil {
-			log.Debugf("read process context for pid %d: %+v", pid, tracingCtx)
+			log.Infof("read process context for pid %d: %+v", pid, tracingCtx)
 			if tracingCtx.ServiceName != "" {
 				service = tracingCtx.ServiceName
 			}
