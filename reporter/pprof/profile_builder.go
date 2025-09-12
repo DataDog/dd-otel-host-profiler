@@ -130,7 +130,7 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 		}
 
 		var count int64 = 1
-		if b.timeline {
+		if !b.timeline {
 			count = int64(len(traceInfo.Timestamps))
 		}
 
