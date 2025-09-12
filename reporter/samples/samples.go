@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"go.opentelemetry.io/ebpf-profiler/libpf"
-	"go.opentelemetry.io/ebpf-profiler/reporter/samples"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 )
@@ -32,6 +31,14 @@ type TraceAndMetaKey struct {
 	Comm string
 	Pid  libpf.PID
 	Tid  libpf.PID
+}
+
+type TraceEvents struct {
+	Frames       libpf.Frames
+	Timestamps   []uint64 // in nanoseconds
+	OffTimes     []int64  // in nanoseconds
+	CustomLabels []map[string]string
+	EnvVars      map[string]string
 }
 
 type ProcessContext struct {
@@ -63,7 +70,7 @@ type ServiceEntity struct {
 
 type TraceEventsTree map[ServiceEntity]map[libpf.Origin]KeyToEventMapping
 
-type KeyToEventMapping map[TraceAndMetaKey]*samples.TraceEvents
+type KeyToEventMapping map[TraceAndMetaKey]*TraceEvents
 
 func fileHash(fileID libpf.FileID) string {
 	if fileID == (libpf.FileID{}) {
