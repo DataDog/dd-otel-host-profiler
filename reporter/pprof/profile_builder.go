@@ -118,7 +118,8 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 		}
 
 		var count int64 = 1
-		if !b.timeline {
+		splitSample := hasCustomLabels(traceInfo) || b.timeline
+		if !splitSample {
 			count = int64(len(traceInfo.Timestamps))
 		}
 
@@ -127,15 +128,21 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 		sample.Label = labels
 		sample.Value = append(sample.Value, count, count*b.samplingPeriod)
 
-		if !b.timeline {
+		if !splitSample {
 			b.profile.Sample = append(b.profile.Sample, sample)
 		} else {
-			for _, ts := range traceInfo.Timestamps {
-				sampleWithTimestamp := &pprofile.Sample{}
-				*sampleWithTimestamp = *sample
-				sampleWithTimestamp.NumLabel = make(map[string][]int64)
-				sampleWithTimestamp.NumLabel["timestamp_ns"] = append(sampleWithTimestamp.NumLabel["timestamp_ns"], int64(ts))
-				b.profile.Sample = append(b.profile.Sample, sampleWithTimestamp)
+			for ix, ts := range traceInfo.Timestamps {
+				sampleCopy := &pprofile.Sample{}
+				*sampleCopy = *sample
+
+				if b.timeline {
+					sampleCopy.NumLabel = make(map[string][]int64)
+					sampleCopy.NumLabel["timestamp_ns"] = append(sampleCopy.NumLabel["timestamp_ns"], int64(ts))
+				}
+				if len(traceInfo.CustomLabels) > 0 && len(traceInfo.CustomLabels[ix]) > 0 {
+					sampleCopy.Label = addCustomLabels(sampleCopy.Label, traceInfo.CustomLabels[ix])
+				}
+				b.profile.Sample = append(b.profile.Sample, sampleCopy)
 			}
 		}
 		b.totalSampleCount += len(traceInfo.Timestamps)
@@ -290,4 +297,27 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, proce
 			labels["telemetry_sdk_version"] = append(labels["telemetry_sdk_version"], tracingCtx.TelemetrySdkVersion)
 		}
 	}
+}
+
+func hasCustomLabels(traceInfo *samples.TraceEvents) bool {
+	if len(traceInfo.CustomLabels) == 0 {
+		return false
+	}
+	for _, customLabels := range traceInfo.CustomLabels {
+		if len(customLabels) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func addCustomLabels(labels map[string][]string, customLabels map[string]string) map[string][]string {
+	labelsCopy := make(map[string][]string)
+	for key, value := range labels {
+		labelsCopy[key] = append(labelsCopy[key], value...)
+	}
+	for key, value := range customLabels {
+		labelsCopy[key] = append(labelsCopy[key], value)
+	}
+	return labelsCopy
 }

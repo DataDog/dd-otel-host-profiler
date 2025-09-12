@@ -133,7 +133,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		traceEvents:               xsync.NewRWMutex(make(rsamples.TraceEventsTree)),
 		processes:                 processes,
 		symbolUploader:            symbolUploader,
-		tags:                      createTags(cfg.Tags, runtimeTag, cfg.Version, cfg.EnableSplitByService),
+		tags:                      createTags(cfg.Tags, runtimeTag, cfg.Version, cfg.EnableSplitByService, cfg.CollectContext),
 		family:                    family,
 		profileSeq:                0,
 		profiles:                  make(chan *uploadProfileData, profileUploadQueueSize),
@@ -184,15 +184,24 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 	if events, exists := perOriginEvents[key]; exists {
 		events.Timestamps = append(events.Timestamps, uint64(meta.Timestamp))
 		events.OffTimes = append(events.OffTimes, meta.OffTime)
+		if r.config.CollectContext {
+			events.CustomLabels = append(events.CustomLabels, trace.CustomLabels)
+		}
 		perOriginEvents[key] = events
 		return nil
 	}
 
-	perOriginEvents[key] = &samples.TraceEvents{
-		Frames:     trace.Frames,
-		Timestamps: []uint64{uint64(meta.Timestamp)},
-		OffTimes:   []int64{meta.OffTime},
-		EnvVars:    meta.EnvVars,
+	var customLabels []map[string]string
+	if r.config.CollectContext {
+		customLabels = []map[string]string{trace.CustomLabels}
+	}
+
+	perOriginEvents[key] = &rsamples.TraceEvents{
+		Frames:       trace.Frames,
+		Timestamps:   []uint64{uint64(meta.Timestamp)},
+		OffTimes:     []int64{meta.OffTime},
+		CustomLabels: customLabels,
+		EnvVars:      meta.EnvVars,
 	}
 
 	return nil
@@ -432,7 +441,7 @@ func (r *DatadogReporter) getPprofProfile() {
 		len(reportedEvents), profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), totalSampleCount, processAlreadyExitedCount)
 }
 
-func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled bool) Tags {
+func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled, collectContext bool) Tags {
 	tags := append(Tags{}, userTags...)
 
 	customContextTagKey := "ddprof.custom_ctx"
@@ -450,9 +459,19 @@ func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled
 		MakeTag("profiler_name", profilerName),
 		MakeTag("profiler_version", version),
 		MakeTag("cpu_arch", runtime.GOARCH),
-		MakeTag(customContextTagKey, "env"),
-		MakeTag(customContextTagKey, "runtime_id"),
 	)
+
+	if collectContext {
+		tags = append(tags,
+			MakeTag(customContextTagKey, "env"),
+			MakeTag(customContextTagKey, "runtime_id"),
+			MakeTag(customContextTagKey, "service_name"),
+			MakeTag(customContextTagKey, "service_version"),
+			MakeTag(customContextTagKey, "telemetry_sdk_language"),
+			MakeTag(customContextTagKey, "telemetry_sdk_name"),
+			MakeTag(customContextTagKey, "telemetry_sdk_version"),
+		)
+	}
 
 	return tags
 }
