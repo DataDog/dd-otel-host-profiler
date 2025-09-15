@@ -48,6 +48,8 @@ type Config struct {
 	EnableSplitByService bool
 	// SplitServiceSuffix defines the suffix to add to service name in profiles when split-by-service is enabled.
 	SplitServiceSuffix string
+	// UseRuntimeIDInServiceEntityKey defines whether to use runtimeID in service entity key.
+	UseRuntimeIDInServiceEntityKey bool
 	// HostServiceName defines the service name to use in profiles (in non-split-by-service mode).
 	HostServiceName string
 	// KernelSupportsNamedAnonymousMappings defines whether the kernel supports named anonymous mappings (PR_SET_VMA_ANON_NAME).

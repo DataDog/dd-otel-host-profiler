@@ -19,15 +19,26 @@ import (
 
 const unknownStr = "UNKNOWN"
 
+type Config struct {
+	Start                       time.Time
+	End                         time.Time
+	SamplesPerSecond            int
+	NumSamples                  int
+	Timeline                    bool
+	ProcessLevelContextAsLabels bool
+	Processes                   *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]
+}
+
 type ProfileBuilder struct {
-	profile            *pprofile.Profile
-	funcMap            map[funcInfo]*pprofile.Function
-	mappings           map[uniqueMapping]*pprofile.Mapping
-	processes          *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]
-	timeline           bool
-	totalSampleCount   int
-	pidsWithNoMetadata libpf.Set[libpf.PID]
-	samplingPeriod     int64
+	profile                     *pprofile.Profile
+	funcMap                     map[funcInfo]*pprofile.Function
+	mappings                    map[uniqueMapping]*pprofile.Mapping
+	processes                   *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]
+	timeline                    bool
+	processLevelContextAsLabels bool
+	totalSampleCount            int
+	pidsWithNoMetadata          libpf.Set[libpf.PID]
+	samplingPeriod              int64
 }
 
 type ProfileStats struct {
@@ -42,33 +53,33 @@ type uniqueMapping struct {
 	File libpf.FrameMappingFile
 }
 
-func NewProfileBuilder(start, end time.Time, samplesPerSecond int, numSamples int, timeline bool,
-	processes *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]) *ProfileBuilder {
+func NewProfileBuilder(cfg *Config) *ProfileBuilder {
 	// funcMap is a temporary helper that will build the Function array
 	// in profile and make sure information is deduplicated.
 	funcMap := make(map[funcInfo]*pprofile.Function)
 	mappings := make(map[uniqueMapping]*pprofile.Mapping)
 
-	samplingPeriod := 1000000000 / int64(samplesPerSecond)
+	samplingPeriod := 1000000000 / int64(cfg.SamplesPerSecond)
 	profile := &pprofile.Profile{
 		SampleType: []*pprofile.ValueType{{Type: "cpu-samples", Unit: "count"},
 			{Type: "cpu-time", Unit: "nanoseconds"}},
-		Sample:            make([]*pprofile.Sample, 0, numSamples),
+		Sample:            make([]*pprofile.Sample, 0, cfg.NumSamples),
 		PeriodType:        &pprofile.ValueType{Type: "cpu-time", Unit: "nanoseconds"},
 		Period:            samplingPeriod,
 		DefaultSampleType: "cpu-time",
 	}
-	profile.DurationNanos = end.Sub(start).Nanoseconds()
-	profile.TimeNanos = start.UnixNano()
+	profile.DurationNanos = cfg.End.Sub(cfg.Start).Nanoseconds()
+	profile.TimeNanos = cfg.Start.UnixNano()
 
 	return &ProfileBuilder{
-		profile:            profile,
-		funcMap:            funcMap,
-		mappings:           mappings,
-		processes:          processes,
-		pidsWithNoMetadata: libpf.Set[libpf.PID]{},
-		timeline:           timeline,
-		samplingPeriod:     samplingPeriod,
+		profile:                     profile,
+		funcMap:                     funcMap,
+		mappings:                    mappings,
+		processes:                   cfg.Processes,
+		pidsWithNoMetadata:          libpf.Set[libpf.PID]{},
+		timeline:                    cfg.Timeline,
+		processLevelContextAsLabels: cfg.ProcessLevelContextAsLabels,
+		samplingPeriod:              samplingPeriod,
 	}
 }
 
@@ -125,6 +136,9 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 
 		labels := make(map[string][]string)
 		addTraceLabels(labels, traceKey, &processMeta, baseExec)
+		if processMeta.TracingContext != nil && b.processLevelContextAsLabels {
+			addProcessLevelContextAsLabels(labels, processMeta.TracingContext)
+		}
 		sample.Label = labels
 		sample.Value = append(sample.Value, count, count*b.samplingPeriod)
 
@@ -262,40 +276,39 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, proce
 	if containerMetadata.ContainerName != "" {
 		labels["container_name"] = append(labels["container_name"], containerMetadata.ContainerName)
 	}
+}
 
-	tracingCtx := processMeta.TracingContext
-	if tracingCtx != nil {
-		if tracingCtx.DeploymentEnvironmentName != "" {
-			labels["env"] = append(labels["env"], tracingCtx.DeploymentEnvironmentName)
-		}
+func addProcessLevelContextAsLabels(labels map[string][]string, tracingCtx *samples.ProcessContext) {
+	if tracingCtx.DeploymentEnvironmentName != "" {
+		labels["env"] = append(labels["env"], tracingCtx.DeploymentEnvironmentName)
+	}
 
-		if tracingCtx.ServiceInstanceID != "" {
-			labels["runtime_id"] = append(labels["runtime_id"], tracingCtx.ServiceInstanceID)
-		}
+	if tracingCtx.ServiceInstanceID != "" {
+		labels["runtime_id"] = append(labels["runtime_id"], tracingCtx.ServiceInstanceID)
+	}
 
-		if tracingCtx.ServiceName != "" {
-			labels["service_name"] = append(labels["service_name"], tracingCtx.ServiceName)
-		}
+	if tracingCtx.ServiceName != "" {
+		labels["service_name"] = append(labels["service_name"], tracingCtx.ServiceName)
+	}
 
-		if tracingCtx.ServiceVersion != "" {
-			labels["service_version"] = append(labels["service_version"], tracingCtx.ServiceVersion)
-		}
+	if tracingCtx.ServiceVersion != "" {
+		labels["service_version"] = append(labels["service_version"], tracingCtx.ServiceVersion)
+	}
 
-		if tracingCtx.HostName != "" {
-			labels["host_name"] = append(labels["host_name"], tracingCtx.HostName)
-		}
+	if tracingCtx.HostName != "" {
+		labels["host_name"] = append(labels["host_name"], tracingCtx.HostName)
+	}
 
-		if tracingCtx.TelemetrySdkLanguage != "" {
-			labels["telemetry_sdk_language"] = append(labels["telemetry_sdk_language"], tracingCtx.TelemetrySdkLanguage)
-		}
+	if tracingCtx.TelemetrySdkLanguage != "" {
+		labels["telemetry_sdk_language"] = append(labels["telemetry_sdk_language"], tracingCtx.TelemetrySdkLanguage)
+	}
 
-		if tracingCtx.TelemetrySdkName != "" {
-			labels["telemetry_sdk_name"] = append(labels["telemetry_sdk_name"], tracingCtx.TelemetrySdkName)
-		}
+	if tracingCtx.TelemetrySdkName != "" {
+		labels["telemetry_sdk_name"] = append(labels["telemetry_sdk_name"], tracingCtx.TelemetrySdkName)
+	}
 
-		if tracingCtx.TelemetrySdkVersion != "" {
-			labels["telemetry_sdk_version"] = append(labels["telemetry_sdk_version"], tracingCtx.TelemetrySdkVersion)
-		}
+	if tracingCtx.TelemetrySdkVersion != "" {
+		labels["telemetry_sdk_version"] = append(labels["telemetry_sdk_version"], tracingCtx.TelemetrySdkVersion)
 	}
 }
 
