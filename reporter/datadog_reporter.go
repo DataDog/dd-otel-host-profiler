@@ -133,7 +133,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 		traceEvents:               xsync.NewRWMutex(make(rsamples.TraceEventsTree)),
 		processes:                 processes,
 		symbolUploader:            symbolUploader,
-		tags:                      createTags(cfg.Tags, runtimeTag, cfg.Version, cfg.EnableSplitByService, cfg.CollectContext),
+		tags:                      createTags(cfg.Tags, runtimeTag, cfg.Version, cfg.EnableSplitByService, cfg.CollectContext && !cfg.UseRuntimeIDInServiceEntityKey),
 		family:                    family,
 		profileSeq:                0,
 		profiles:                  make(chan *uploadProfileData, profileUploadQueueSize),
@@ -167,6 +167,9 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		Service:         pMeta.Service,
 		EntityID:        pMeta.ContainerMetadata.EntityID,
 		InferredService: pMeta.InferredService,
+	}
+	if r.config.UseRuntimeIDInServiceEntityKey && pMeta.TracingContext != nil {
+		serviceEntityKey.RuntimeID = pMeta.TracingContext.ServiceInstanceID
 	}
 
 	perServiceEvents, exists := (*eventsTree)[serviceEntityKey]
@@ -381,6 +384,23 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 		data.entityID, r.family)
 }
 
+func (r *DatadogReporter) getProcessLevelContext(events rsamples.KeyToEventMapping) *rsamples.ProcessContext {
+	// Service entity key only contains the runtime ID
+	// To get the full process context we need to look up the process metadata.
+	// We make the assumption that if several processes share the same runtime ID, they have the same process context.
+	// To lookup the process metadata we use the first process in the events.
+
+	// This loop is expected to run only once since all keys in the events map have the same runtime ID
+	// and therefore should have a PID with a process context.
+	for key := range events {
+		pMeta, ok := r.processes.Get(key.Pid)
+		if ok {
+			return pMeta.TracingContext
+		}
+	}
+	return nil
+}
+
 // getPprofProfile returns a pprof profile containing all collected samples up to this moment.
 func (r *DatadogReporter) getPprofProfile() {
 	intervalEnd := time.Now()
@@ -400,14 +420,25 @@ func (r *DatadogReporter) getPprofProfile() {
 	r.traceEvents.WUnlock(&events)
 
 	if !r.config.EnableSplitByService {
-		profileBuilder := pprof.NewProfileBuilder(intervalStart, intervalEnd, r.config.SamplesPerSecond, len(reportedEvents), r.config.Timeline, r.processes)
+		profileBuilder := pprof.NewProfileBuilder(&pprof.Config{
+			Start:                       intervalStart,
+			End:                         intervalEnd,
+			SamplesPerSecond:            r.config.SamplesPerSecond,
+			NumSamples:                  len(reportedEvents),
+			Timeline:                    r.config.Timeline,
+			ProcessLevelContextAsLabels: !r.config.UseRuntimeIDInServiceEntityKey,
+			Processes:                   r.processes,
+		})
 
 		for _, events := range reportedEvents {
 			profileBuilder.AddEvents(events[support.TraceOriginSampling])
 		}
 		profile, stats := profileBuilder.Build()
 
-		tags := createTagsForProfile(r.tags, profileSeq, r.config.HostServiceName, false)
+		serviceEntity := rsamples.ServiceEntity{
+			Service: r.config.HostServiceName,
+		}
+		tags := createTagsForProfile(r.tags, profileSeq, serviceEntity)
 		r.profiles <- &uploadProfileData{
 			profile: profile,
 			start:   intervalStart,
@@ -422,12 +453,29 @@ func (r *DatadogReporter) getPprofProfile() {
 
 	totalSampleCount := 0
 	for s, perServiceEvents := range reportedEvents {
-		profileBuilder := pprof.NewProfileBuilder(intervalStart, intervalEnd, r.config.SamplesPerSecond, len(reportedEvents), r.config.Timeline, r.processes)
+		profileBuilder := pprof.NewProfileBuilder(&pprof.Config{
+			Start:                       intervalStart,
+			End:                         intervalEnd,
+			SamplesPerSecond:            r.config.SamplesPerSecond,
+			NumSamples:                  len(reportedEvents),
+			Timeline:                    r.config.Timeline,
+			ProcessLevelContextAsLabels: !r.config.UseRuntimeIDInServiceEntityKey,
+			Processes:                   r.processes,
+		})
 
-		profileBuilder.AddEvents(perServiceEvents[support.TraceOriginSampling])
+		events := perServiceEvents[support.TraceOriginSampling]
+		profileBuilder.AddEvents(events)
 		profile, stats := profileBuilder.Build()
 		totalSampleCount += stats.TotalSampleCount
-		tags := createTagsForProfile(r.tags, profileSeq, s.Service, s.InferredService)
+
+		tags := createTagsForProfile(r.tags, profileSeq, s)
+		if s.RuntimeID != "" {
+			processContext := r.getProcessLevelContext(events)
+			if processContext != nil {
+				tags = addProcessLevelContextTags(tags, processContext)
+			}
+		}
+
 		r.profiles <- &uploadProfileData{
 			profile:  profile,
 			start:    intervalStart,
@@ -441,7 +489,7 @@ func (r *DatadogReporter) getPprofProfile() {
 		len(reportedEvents), profileSeq, intervalStart.Format(time.RFC3339), intervalEnd.Format(time.RFC3339), totalSampleCount, processAlreadyExitedCount)
 }
 
-func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled, collectContext bool) Tags {
+func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled, processLevelContextAsLabels bool) Tags {
 	tags := append(Tags{}, userTags...)
 
 	customContextTagKey := "ddprof.custom_ctx"
@@ -461,7 +509,7 @@ func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled
 		MakeTag("cpu_arch", runtime.GOARCH),
 	)
 
-	if collectContext {
+	if processLevelContextAsLabels {
 		tags = append(tags,
 			MakeTag(customContextTagKey, "env"),
 			MakeTag(customContextTagKey, "runtime_id"),
@@ -476,17 +524,31 @@ func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled
 	return tags
 }
 
-func createTagsForProfile(tags Tags, profileSeq uint64, service string, inferredService bool) Tags {
+func createTagsForProfile(tags Tags, profileSeq uint64, serviceEntity rsamples.ServiceEntity) Tags {
 	newTags := append(Tags{}, tags...)
 	newTags = append(newTags,
 		MakeTag("profile_seq", strconv.FormatUint(profileSeq, 10)),
-		MakeTag("service", service))
+		MakeTag("service", serviceEntity.Service))
 	inferredServiceTag := "no"
-	if inferredService {
+	if serviceEntity.InferredService {
 		inferredServiceTag = "yes"
 	}
 	newTags = append(newTags, MakeTag("service_inferred", inferredServiceTag))
 	return newTags
+}
+
+func addProcessLevelContextTags(tags Tags, processContext *rsamples.ProcessContext) Tags {
+	tags = append(tags,
+		MakeTag("env", processContext.DeploymentEnvironmentName),
+		MakeTag("runtime_id", processContext.ServiceInstanceID),
+		MakeTag("service_name", processContext.ServiceName),
+		MakeTag("service_version", processContext.ServiceVersion),
+		MakeTag("host_name", processContext.HostName),
+		MakeTag("telemetry_sdk_language", processContext.TelemetrySdkLanguage),
+		MakeTag("telemetry_sdk_name", processContext.TelemetrySdkName),
+		MakeTag("telemetry_sdk_version", processContext.TelemetrySdkVersion),
+	)
+	return tags
 }
 
 func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.TraceEventMeta) rsamples.ProcessMetadata {

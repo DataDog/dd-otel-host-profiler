@@ -65,6 +65,7 @@ type ProcessMetadata struct {
 type ServiceEntity struct {
 	Service         string
 	EntityID        string
+	RuntimeID       string
 	InferredService bool
 }
 
