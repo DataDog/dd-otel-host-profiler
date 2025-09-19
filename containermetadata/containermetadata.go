@@ -47,7 +47,6 @@ import (
 )
 
 const (
-	dockerHost            = "DOCKER_HOST"
 	kubernetesServiceHost = "KUBERNETES_SERVICE_HOST"
 	kubernetesNodeName    = "KUBERNETES_NODE_NAME"
 	genericNodeName       = "NODE_NAME"
@@ -344,28 +343,11 @@ func getContainerdClient() *containerd.Client {
 }
 
 func getDockerClient() *client.Client {
-	// /var/run/docker.sock is the default socket used by client.NewEnvClient().
-	knownDockerSockets := []string{"/var/run/docker.sock"}
-
-	// If the default socket is not available check if DOCKER_HOST is set to a different socket.
-	envDockerSocket := os.Getenv(dockerHost)
-	if envDockerSocket != "" {
-		knownDockerSockets = append(knownDockerSockets, envDockerSocket)
+	c, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		log.Infof("Can't connect Docker client: %v", err)
 	}
-
-	for _, socket := range knownDockerSockets {
-		if _, err := os.Stat(socket); err != nil {
-			continue
-		}
-		if c, err := client.NewClientWithOpts(
-			client.FromEnv,
-			client.WithAPIVersionNegotiation(),
-		); err == nil {
-			return c
-		}
-	}
-	log.Infof("Can't connect Docker client to %v", knownDockerSockets)
-	return nil
+	return c
 }
 
 // GetContainerMetadata implements the Handler interface.
