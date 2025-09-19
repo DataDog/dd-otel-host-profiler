@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/tracehandler"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/DataDog/dd-otel-host-profiler/config"
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
@@ -159,6 +160,8 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	intervals := times.New(c.ReporterInterval, c.MonitorInterval,
 		c.ProbabilisticInterval)
+
+	metrics.Start(noop.Meter{})
 
 	// Start periodic synchronization with the realtime clock
 	times.StartRealtimeSync(mainCtx, c.ClockSyncInterval)
