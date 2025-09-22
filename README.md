@@ -31,7 +31,7 @@ If you're not using a container runtime, please check this section to run the pr
 
 ### Local symbol upload
 
-For compiled languages (C/C++/Rust/Go/...), the profiler will upload local symbols (when available) to Datadog for symbolication (ensuring that function names are available in profiles). For Rust, C and C++, symbols need to be available locally (unstripped binaries).
+For compiled languages (C/C++/Rust/Go/...), the profiler will upload local symbols (when available) to Datadog for symbolication (ensuring that function names are available in profiles). For Rust, C, and C++, symbols need to be available locally (unstripped binaries).
 
 This requires to configure:
 1. The `DD_SITE` environment variable to [your Datadog site](https://docs.datadoghq.com/getting_started/site/#access-the-datadog-site) (e.g. `datadoghq.com`, `datadoghq.eu`, `us5.datadoghq.com`, ...).
