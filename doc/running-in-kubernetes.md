@@ -15,13 +15,12 @@ See https://github.com/DataDog/dd-otel-host-profiler/pkgs/container/dd-otel-host
 To run the profiler in a Kubernetes cluster, you should ensure the following requirements are met (see example below):
 1. The container has host PID enabled.
 2. The container is running in privileged mode.
-3. The `procMount` security context field is set to `Unmasked`.
-4. The container has the `SYS_ADMIN` capability.
-5. The `DD_TRACE_AGENT_URL` environment variable is set to the address of the Datadog agent: `http://<agent_address>:8126`.
-
-Additionally, to be able to resolve pod names in Kubernetes, the profiler needs:
-* The `KUBERNETES_NODE_NAME` environment variable set to the name of the node where the profiler is running.
-* A ClusterRole and ClusterRoleBinding configured (see below).
+3. The container has the `SYS_ADMIN` capability.
+4. The `DD_TRACE_AGENT_URL` environment variable is set to the address of the Datadog agent: `http://<agent_address>:8126`.
+5. To enable the profiler to upload debug symbols when they're available locally (required to have function names for compiled languages like C/C++/Rust/Go/...), you must configure:
+    - The `DD_SITE` environment variable to [your Datadog site](https://docs.datadoghq.com/getting_started/site/#access-the-datadog-site) (e.g. `datadoghq.com`, `datadoghq.eu`, `us5.datadoghq.com`, ...).
+    - The `DD_API_KEY` environment variable to your Datadog API key.
+    - The `DD_APP_KEY` environment variable to your Datadog APP key. The APP key needs the `continuous_profiler_read` permission, which is available by default for the Datadog Read Only role (see [here](https://docs.datadoghq.com/account_management/rbac/permissions/#apm) for more information).
 
 ### Example spec
 
@@ -35,75 +34,33 @@ spec:
   # ...
     spec:
       # ...
-      serviceAccountName: <my-service-account> # The service account used
       hostPID: true # Setting hostPID to true (1.)
       containers:
       - name: dd-otel-host-profiler
         securityContext:
           runAsUser: 0
           privileged: true # Running in privileged mode (2.)
-          procMount: Unmasked # Setting procMount to Unmasked (3.)
           capabilities:
             add:
-            - SYS_ADMIN # Adding SYS_ADMIN capability (4.)
+            - SYS_ADMIN # Adding SYS_ADMIN capability (3.)
         env:
-        - name: DD_TRACE_AGENT_URL # The address of the Datadog agent (5.)
+        - name: DD_TRACE_AGENT_URL # The address of the Datadog agent (4.)
           value: "http://<agent_address>:8126"
-        - name: KUBERNETES_NODE_NAME # this is needed to resolve pod names in Kubernetes
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
         - name: DD_SERVICE
           value: "dd-otel-host-profiler"
+        - name: DD_SITE
+          value: "YOUR_DATADOG_SITE" # The Datadog site (5.)
+        - name: DD_API_KEY # The Datadog API Key (5.)
+          valueFrom:
+            # The example below uses a Kubernetes secret to store the API key.
+            secretKeyRef:
+              name: some-user
+              key: dd-api-key
+        - name: DD_APP_KEY # The Datadog APP Key (5.)
+          valueFrom:
+            # The example below uses a Kubernetes secret to store the APP key.
+            secretKeyRef:
+              name: some-user
+              key: dd-app-key
         # ...
-        volumeMounts:
-        - name: containerd # Or alternatively, docker if using docker. This is required to be able to resolve container names.
-          mountPath: /run/containerd/containerd.sock # Or alternatively, /var/run/docker.sock
-        # ...
-      volumes:
-      - name: containerd # Or alternatively, docker if using docker
-        hostPath:
-          path: /run/containerd/containerd.sock # Or alternatively, /var/run/docker.sock
-          type: Socket
-      # ...
-```
-
-You will also need to create a ServiceAccount, ClusterRole, and ClusterRoleBinding for the profiler to be able to list pods in the cluster. Here is an example:
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: <my-service-account>
-  namespace: <my-service-account-namespace>
-  # ...
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: <my-cluster-role>
-  # ...
-rules:
-  - apiGroups:
-    - ""
-    resources:
-    - nodes
-    - pods
-    verbs:
-    - get
-    - list
-    - watch
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: <my-cluster-role-binding>
-  # ...
-subjects:
-  - kind: ServiceAccount
-    name: <my-service-account>
-    namespace: <my-service-account-namespace>
-roleRef:
-  kind: ClusterRole
-  name: <my-cluster-role>
-  apiGroup: rbac.authorization.k8s.io
 ```

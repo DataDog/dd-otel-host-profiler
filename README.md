@@ -14,7 +14,7 @@ This profiler has support for sending profiling data to the Datadog backend via 
 ## Requirements
 
 dd-otel-host-profiler only runs on Linux, and requires the following Linux kernel versions:
-* Kernel version 4.19 or newer for amd64/x86_64
+* Kernel version 5.4 or newer for amd64/x86_64
 * Kernel version 5.5 or newer for arm64/aarch64
 
 ## Running the profiler
@@ -31,13 +31,16 @@ If you're not using a container runtime, please check this section to run the pr
 
 ### Local symbol upload
 
-For compiled languages (C/C++/Rust/Go/...), the profiler can upload local symbols (when available) to Datadog for symbolication. Symbols need to be available locally (unstripped binaries).
+For compiled languages (such as Rust, C, C++, Go, etc.), the profiler uploads local symbols to Datadog for symbolication, ensuring that function names are available in profiles. For Rust, C, and C++, symbols need to be available locally (unstripped binaries).
 
-To enable local symbol upload:
-1. Set the `DD_HOST_PROFILING_UPLOAD_SYMBOLS` environment variable to `true`.
-2. Provide a Datadog API key through the `DD_API_KEY` environment variable.
-3. Provide a Datadog APP key through the `DD_APP_KEY` environment variable.
-4. Set the `DD_SITE` environment variable to [your Datadog site](https://docs.datadoghq.com/getting_started/site/#access-the-datadog-site) (e.g. `datadoghq.com`, `datadoghq.eu`, `us5.datadoghq.com`, ...).
+This requires to configure:
+1. The `DD_SITE` environment variable to [your Datadog site](https://docs.datadoghq.com/getting_started/site/#access-the-datadog-site) (e.g. `datadoghq.com`, `datadoghq.eu`, `us5.datadoghq.com`, ...).
+2. The `DD_API_KEY` environment variable to your Datadog API key.
+3. The `DD_APP_KEY` environment variable to your Datadog APP key. The APP key needs the `continuous_profiler_read` permission, which is available by default for the Datadog Read Only role (see [here](https://docs.datadoghq.com/account_management/rbac/permissions/#apm) for more information).
+
+To disable local symbol upload, set the `DD_HOST_PROFILING_UPLOAD_SYMBOLS` environment variable to `false`.
+
+See [here](https://docs.datadoghq.com/profiler/enabling/full_host/#symbol-upload-using-datadog-ci) for more information about symbol upload, including how to upload them manually using Datadog CI.
 
 ## Build 
 
@@ -68,7 +71,7 @@ Then, you can run the profiler with the following command:
 docker-compose up
 ```
 
-The profiler will submit profiling data to the Datadog Agent using the value of DD_SERVICE as the service name.
+Profiles matching your workspace tag (`workspace:YOUR_WORKSPACE_NAME`) will be available in the Datadog UI.
 
 # Legal
 
