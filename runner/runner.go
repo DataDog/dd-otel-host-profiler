@@ -204,8 +204,8 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		symbolEndpoints := appendEndpoint(c.AdditionalSymbolEndpoints, c.Site, c.APIKey, c.AppKey)
 
 		for _, e := range symbolEndpoints {
-			err := validateSymbolEndpoint(e.Site, e.APIKey, e.AppKey)
-			if err != nil {
+			validationErr := validateSymbolEndpoint(e.Site, e.APIKey, e.AppKey)
+			if validationErr != nil {
 				log.Warnf("Error to validate symbol endpoint: %v", err)
 			} else {
 				validSymbolEndpoints = append(validSymbolEndpoints, e)
