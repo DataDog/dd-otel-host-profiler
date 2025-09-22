@@ -41,3 +41,8 @@ sudo DD_SERVICE="dd-otel-host-profiler" dd-otel-host-profiler --agent-url "http:
 ```
 
 If your Datadog agent is reachable under a different address, you can modify the `--agent-url` parameter accordingly.
+
+To enable the profiler to upload debug symbols when they're available locally (required to have function names for compiled languages like C/C++/Rust/Go/...), you must configure:
+- The `DD_SITE` environment variable to [your Datadog site](https://docs.datadoghq.com/getting_started/site/#access-the-datadog-site) (e.g. `datadoghq.com`, `datadoghq.eu`, `us5.datadoghq.com`, ...).
+- The `DD_API_KEY` environment variable to your Datadog API key.
+- The `DD_APP_KEY` environment variable to your Datadog APP key. The APP key needs the `continuous_profiler_read` permission, which is available by default for the Datadog Read Only role (see [here](https://docs.datadoghq.com/account_management/rbac/permissions/#apm) for more information).
