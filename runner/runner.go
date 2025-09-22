@@ -197,10 +197,27 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		}
 	}
 
-	var symbolEndpoints = c.AdditionalSymbolEndpoints
+	var validSymbolEndpoints []reporter.SymbolEndpoint
 
-	if c.Site != "" && c.APIKey != "" && c.AppKey != "" {
-		symbolEndpoints = appendEndpoint(symbolEndpoints, c.Site, c.APIKey, c.AppKey)
+	if c.UploadSymbols {
+		validSites := make([]string, 0)
+		symbolEndpoints := appendEndpoint(c.AdditionalSymbolEndpoints, c.Site, c.APIKey, c.AppKey)
+
+		for _, e := range symbolEndpoints {
+			err := validateSymbolEndpoint(e.Site, e.APIKey, e.AppKey)
+			if err != nil {
+				log.Warnf("Error to validate symbol endpoint: %v", err)
+			} else {
+				validSymbolEndpoints = append(validSymbolEndpoints, e)
+				validSites = append(validSites, e.Site)
+			}
+		}
+
+		if len(validSymbolEndpoints) == 0 {
+			log.Warning("No valid symbol endpoint is configured. Will not upload symbols.")
+		} else {
+			log.Infof("Enabling Datadog local symbol upload to the following sites: %s", strings.Join(validSites, ", "))
+		}
 	}
 
 	var intakeURL string
@@ -251,7 +268,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 			UseHTTP2:             c.UploadSymbolsHTTP2,
 			SymbolQueryInterval:  c.UploadSymbolQueryInterval,
 			DryRun:               c.UploadSymbolsDryRun,
-			SymbolEndpoints:      symbolEndpoints,
+			SymbolEndpoints:      validSymbolEndpoints,
 			Version:              versionInfo.Version,
 		},
 	}, containerMetadataProvider)
@@ -438,4 +455,17 @@ func ParseError(msg string, args ...interface{}) ExitCode {
 func failure(msg string, args ...interface{}) ExitCode {
 	log.Errorf(msg, args...)
 	return exitFailure
+}
+
+func validateSymbolEndpoint(site, apiKey, appKey string) error {
+	if site == "" || apiKey == "" || appKey == "" {
+		return fmt.Errorf("site, API key and application key should all be set and non-empty strings for site %s", site)
+	}
+	if !config.IsAPIKeyValid(apiKey) {
+		return fmt.Errorf("API key for site %s is not valid", site)
+	}
+	if !config.IsAPPKeyValid(appKey) {
+		return fmt.Errorf("application key for site %s is not valid", site)
+	}
+	return nil
 }

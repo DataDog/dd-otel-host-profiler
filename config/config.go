@@ -6,7 +6,6 @@ package config
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
@@ -36,17 +35,6 @@ func (s *additionalSymbolEndpoints) Set(value string) error {
 	err := json.Unmarshal([]byte(value), s)
 	if err != nil {
 		return errors.New("invalid JSON")
-	}
-	for _, e := range *s {
-		if e.Site == "" || e.APIKey == "" || e.AppKey == "" {
-			return errors.New("site, API key and application key should all be set and non-empty strings")
-		}
-		if !IsAPIKeyValid(e.APIKey) {
-			return fmt.Errorf("API key for site %s is not valid", e.Site)
-		}
-		if !IsAPPKeyValid(e.AppKey) {
-			return fmt.Errorf("application key for site %s is not valid", e.Site)
-		}
 	}
 	return nil
 }
