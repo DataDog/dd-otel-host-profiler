@@ -65,13 +65,20 @@ type TraceEventsTree map[ServiceEntity]map[libpf.Origin]KeyToEventMapping
 
 type KeyToEventMapping map[TraceAndMetaKey]*samples.TraceEvents
 
-func GetBuildID(gnuBuildID, goBuildID, fileHash string) string {
+func fileHash(fileID libpf.FileID) string {
+	if fileID == (libpf.FileID{}) {
+		return ""
+	}
+	return fileID.StringNoQuotes()
+}
+
+func GetBuildID(gnuBuildID, goBuildID string, fileID libpf.FileID) string {
 	// When building Go binaries, Bazel will set the Go build ID to "redacted" to
 	// achieve deterministic builds. Since Go 1.24, the Gnu Build ID is inherited
 	// from the Go build ID - if the Go build ID is "redacted", the Gnu Build ID will
 	// be a hash of "redacted". In this case, we should use the file hash instead of build IDs.
 	if goBuildID == "redacted" {
-		return fileHash
+		return fileHash(fileID)
 	}
 	if gnuBuildID != "" {
 		return gnuBuildID
@@ -79,7 +86,8 @@ func GetBuildID(gnuBuildID, goBuildID, fileHash string) string {
 	if goBuildID != "" {
 		return goBuildID
 	}
-	return fileHash
+
+	return fileHash(fileID)
 }
 
 func IsKernel(frames libpf.Frames) bool {

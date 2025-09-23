@@ -113,6 +113,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 			symbol.NewElfForTest("arch1", "non_existing_buildid", "", fileID),
 			symbol.NewElfForTest("arch1", "buildid1", "buildid2", fileID), // multiple buildIDs, gnu_build_id should be used
 			symbol.NewElfForTest("arch2", "buildid1", "", fileID),         // arch mismatch
+			symbol.NewElfForTest("arch1", "", "", fileID),                 // empty buildID
 			symbol.NewElfForTest("arch1", "buildid2", "", fileID),         // multiple matching buildIDs, first one should be used
 		}
 		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
@@ -152,6 +153,17 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 			},
 			{
 				Elf: elfs[3],
+				BackendSymbolSources: []SymbolQueryResult{
+					{
+						Err: errors.New("empty buildID"),
+					},
+					{
+						Err: errors.New("empty buildID"),
+					},
+				},
+			},
+			{
+				Elf: elfs[4],
 				BackendSymbolSources: []SymbolQueryResult{
 					{ // multiple matching buildIDs, first one should be used
 						SymbolSource: symbol.SourceSymbolTable,
