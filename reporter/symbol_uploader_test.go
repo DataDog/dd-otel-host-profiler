@@ -91,14 +91,14 @@ func (d *dummyProcess) Close() error {
 	return nil
 }
 
-func newExecutableMetadata(t *testing.T, filePath string) *reporter.ExecutableMetadata {
+func newExecutableMetadata(t *testing.T, filePath, goBuildID string) *reporter.ExecutableMetadata {
 	fileID, err := libpf.FileIDFromExecutableFile(filePath)
 	require.NoError(t, err)
 	mf := libpf.NewFrameMappingFile(libpf.FrameMappingFileData{
 		FileID:     fileID,
 		FileName:   libpf.Intern(path.Base(filePath)),
 		GnuBuildID: "",
-		GoBuildID:  "",
+		GoBuildID:  goBuildID,
 	})
 	pr := &dummyProcess{pid: libpf.PID(os.Getpid())}
 	m := &process.Mapping{
@@ -315,7 +315,6 @@ type buildOptions struct {
 	corruptGoPCLnTab bool
 }
 
-//nolint:unparam
 func buildGo(t *testing.T, tmpDir, buildID string, opts buildOptions) string {
 	f, err := os.CreateTemp(tmpDir, "helloworld")
 	require.NoError(t, err)
@@ -404,7 +403,7 @@ func TestSymbolUpload(t *testing.T) {
 	defer httpmock.DeactivateAndReset()
 
 	log.SetLevel(log.DebugLevel)
-	buildID := "build_id"
+	buildID := "some_go_build_id"
 	channels := registerResponders(t, buildID)
 
 	checkUploadsWithEncoding := func(t *testing.T, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool, expectedUploads []bool, expectedEncoding string) {
@@ -442,7 +441,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeNoSymbols))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeNoSymbols, buildID))
 		uploader.Stop()
 
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
@@ -454,7 +453,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeSymtab))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeSymtab, buildID))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceSymbolTable, false, []bool{true, true, false, false, false})
@@ -466,7 +465,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeDebugInfos))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeDebugInfos, buildID))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false})
@@ -478,7 +477,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsym))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsym, buildID))
 		uploader.Stop()
 
 		assert.Equal(t, 0, httpmock.GetTotalCallCount())
@@ -490,7 +489,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsym))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsym, buildID))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceDynamicSymbolTable, false, []bool{true, false, false, false, false})
@@ -502,7 +501,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeNoSymbols))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeNoSymbols, buildID))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceGoPCLnTab, true, []bool{true, true, true, false, false})
@@ -514,7 +513,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeDebugInfosCorruptGoPCLnTab))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeDebugInfosCorruptGoPCLnTab, buildID))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false})
@@ -526,7 +525,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsymCorruptGoPCLnTab))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsymCorruptGoPCLnTab, buildID))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceDynamicSymbolTable, false, []bool{true, false, false, false, false})
@@ -538,7 +537,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsymCorruptGoPCLnTab))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeyDynsymCorruptGoPCLnTab, buildID))
 		uploader.Stop()
 
 		checkUploads(t, symbol.SourceNone, false, []bool{false, false, false, false, false})
@@ -550,7 +549,7 @@ func TestSymbolUpload(t *testing.T) {
 		require.NoError(t, err)
 		uploader.Start(t.Context())
 
-		uploader.UploadSymbols(newExecutableMetadata(t, goExeDebugInfos))
+		uploader.UploadSymbols(newExecutableMetadata(t, goExeDebugInfos, buildID))
 		uploader.Stop()
 
 		checkUploadsWithEncoding(t, symbol.SourceDebugInfo, false, []bool{true, true, true, true, false}, "zstd")

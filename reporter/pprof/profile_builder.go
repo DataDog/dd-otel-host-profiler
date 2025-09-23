@@ -202,7 +202,7 @@ func (b *ProfileBuilder) createPprofMappingForFrame(frame *libpf.Frame) *pprofil
 	if mf.FileName != libpf.NullString {
 		fileName = mf.FileName.String()
 	}
-	buildID := samples.GetBuildID(mf.GnuBuildID, "", mf.FileID.StringNoQuotes())
+	buildID := samples.GetBuildID(mf.GnuBuildID, mf.GoBuildID, mf.FileID.StringNoQuotes())
 
 	mapping := b.createPprofMapping(fileName, buildID, frame.MappingStart, frame.MappingFileOffset)
 	b.mappings[uniqueMapping{Start: frame.MappingStart, File: frame.MappingFile}] = mapping

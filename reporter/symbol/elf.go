@@ -221,24 +221,6 @@ func newElf(wrapper *elfWrapper, fileID libpf.FileID, gnuBuildID, goBuildID stri
 		goBuildID:  goBuildID,
 	}
 
-	buildID, err := wrapper.elfFile.GetBuildID()
-	if err != nil {
-		log.Debugf(
-			"Unable to get GNU build ID for executable %s: %s", wrapper.filePath, err)
-	} else {
-		elf.gnuBuildID = buildID
-	}
-
-	if elf.isGolang {
-		goBuildID, err := wrapper.elfFile.GetGoBuildID()
-		if err != nil {
-			log.Debugf(
-				"Unable to get Go build ID for executable %s: %s", wrapper.filePath, err)
-		} else {
-			elf.goBuildID = goBuildID
-		}
-	}
-
 	if elf.symbolSource < SourceDebugInfo {
 		separateSymbols := wrapper.findSeparateSymbolsWithDebugInfo()
 		if separateSymbols != nil {
