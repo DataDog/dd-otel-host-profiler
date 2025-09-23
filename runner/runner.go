@@ -299,8 +299,8 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	// Load the eBPF code and map definitions
 	trc, err := tracer.NewTracer(mainCtx, &tracer.Config{
-		ExecutableReporter:     rep,
 		TraceReporter:          rep,
+		ExecutableReporter:     rep,
 		Intervals:              intervals,
 		IncludeTracers:         includeTracers,
 		FilterErrorFrames:      !c.SendErrorFrames,
@@ -313,6 +313,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		ProbabilisticInterval:  c.ProbabilisticInterval,
 		ProbabilisticThreshold: uint(c.ProbabilisticThreshold),
 		IncludeEnvVars:         includeEnvVars,
+		FrameCacheSize:         int(c.FrameCacheSize),
 	})
 	if err != nil {
 		return failure("Failed to load eBPF tracer: %v", err)

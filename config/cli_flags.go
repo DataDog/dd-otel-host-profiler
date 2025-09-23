@@ -395,6 +395,14 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 				Destination: &args.CollectContext,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_COLLECT_CONTEXT"),
 			},
+			&cli.IntFlag{
+				Name:        "frame-cache-size",
+				Value:       -1,
+				Hidden:      true,
+				Usage:       "Size of the frame cache.",
+				Destination: &args.FrameCacheSize,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_FRAME_CACHE_SIZE"),
+			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			args.cmd = cmd
