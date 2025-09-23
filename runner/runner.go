@@ -337,8 +337,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	// change this log line update also the system test.
 	log.Printf("Attached sched monitor")
 
-	traceHandlerIntervals := times.New(c.ReporterInterval, 60*time.Second, c.ProbabilisticInterval)
-	if err := startTraceHandling(mainCtx, rep, traceHandlerIntervals, trc, traceHandlerCacheSize); err != nil {
+	if err := startTraceHandling(mainCtx, rep, intervals, trc, traceHandlerCacheSize); err != nil {
 		return failure("Failed to start trace handling: %v", err)
 	}
 
