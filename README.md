@@ -40,7 +40,7 @@ This requires to configure:
 
 To disable local symbol upload, set the `DD_HOST_PROFILING_UPLOAD_SYMBOLS` environment variable to `false`.
 
-See [here](https://docs.datadoghq.com/profiler/enabling/full_host/#symbol-upload-using-datadog-ci) for more information about symbol upload, including how to upload them manually using Datadog CI.
+See [here](https://docs.datadoghq.com/profiler/enabling/full_host/#debug-symbols) for more information about symbol upload, including how to upload them manually using Datadog CI.
 
 ## Build 
 
