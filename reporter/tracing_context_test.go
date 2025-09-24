@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
 
-	"go.opentelemetry.io/ebpf-profiler/libpf"
+	"go.opentelemetry.io/ebpf-profiler/libpf/pfunsafe"
 	"go.opentelemetry.io/ebpf-profiler/remotememory"
 
 	samples "github.com/DataDog/dd-otel-host-profiler/reporter/samples"
@@ -76,7 +76,7 @@ func createOTELContextHeader(payloadSize uint32, payloadAddr uint64) []byte {
 		PayloadAddr: uintptr(payloadAddr),
 	}
 	copy(header.Signature[:], otelContextSignature)
-	return libpf.SliceFrom(&header)
+	return pfunsafe.FromPointer(&header)
 }
 
 // Helper function to create msgpack encoded ProcessContextData
@@ -198,7 +198,7 @@ func TestReadProcessContext_InvalidSignature(t *testing.T) {
 	}
 	copy(invalidHeader.Signature[:], "INVALID_") // Wrong signature
 
-	rm := newMockRemoteMemory(headerAddr, libpf.SliceFrom(&invalidHeader), 0, nil)
+	rm := newMockRemoteMemory(headerAddr, pfunsafe.FromPointer(&invalidHeader), 0, nil)
 
 	mapsContent := "1000-3000 r--p 00000000 00:00 0\n"
 	mapsReader := strings.NewReader(mapsContent)
@@ -220,7 +220,7 @@ func TestReadProcessContext_InvalidVersion(t *testing.T) {
 	}
 	copy(invalidHeader.Signature[:], otelContextSignature)
 
-	rm := newMockRemoteMemory(headerAddr, libpf.SliceFrom(&invalidHeader), 0, nil)
+	rm := newMockRemoteMemory(headerAddr, pfunsafe.FromPointer(&invalidHeader), 0, nil)
 
 	mapsContent := "1000-3000 r--p 00000000 00:00 0\n"
 	mapsReader := strings.NewReader(mapsContent)

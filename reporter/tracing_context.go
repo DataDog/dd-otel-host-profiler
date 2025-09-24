@@ -18,6 +18,7 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 
 	"go.opentelemetry.io/ebpf-profiler/libpf"
+	"go.opentelemetry.io/ebpf-profiler/libpf/pfunsafe"
 	"go.opentelemetry.io/ebpf-profiler/remotememory"
 	"go.opentelemetry.io/ebpf-profiler/stringutil"
 
@@ -77,12 +78,12 @@ func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []by
 
 	var header processContextHeader
 	// CodeQL complains about the conversion from uint64 to libpf.Address, but it's safe since we target only 64-bit architectures
-	err = rm.Read(libpf.Address(vaddr), libpf.SliceFrom(&header))
+	err = rm.Read(libpf.Address(vaddr), pfunsafe.FromPointer(&header))
 	if err != nil {
 		log.Debugf("failed to read context mapping: %v", err)
 		return nil
 	}
-	if stringutil.ByteSlice2String(header.Signature[:]) != otelContextSignature {
+	if pfunsafe.ToString(header.Signature[:]) != otelContextSignature {
 		return nil
 	}
 	if header.Version != 1 {
@@ -119,7 +120,7 @@ func getContextMapping(mapsFile io.Reader, rm remotememory.RemoteMemory, useMapp
 	for scanner.Scan() {
 		var fields [6]string
 
-		line := stringutil.ByteSlice2String(scanner.Bytes())
+		line := pfunsafe.ToString(scanner.Bytes())
 		if stringutil.FieldsN(line, fields[:]) < 5 {
 			continue
 		}

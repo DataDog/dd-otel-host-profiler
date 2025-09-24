@@ -93,7 +93,7 @@ func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, querie
 			continue
 		}
 
-		buildID := samples.GetBuildID(e.GnuBuildID(), e.GoBuildID(), e.FileHash())
+		buildID := samples.GetBuildID(e.GnuBuildID(), e.GoBuildID(), e.FileID())
 		if buildID == "" {
 			result.fillWithError(errors.New("empty buildID"))
 			continue
