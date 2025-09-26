@@ -598,6 +598,11 @@ func TestTransport(t *testing.T) {
 		case "ForceAttemptHTTP2":
 			// ForceAttemptHTTP2 should be false in custom transport to disable HTTP/2
 			assert.False(t, customFieldValue.Bool(), "ForceAttemptHTTP2 should be false to disable HTTP/2")
+		case "TLSClientConfig":
+			// TLSClientConfig should be nil in custom transport
+			// The default transport might have a non-nil value if the default transport
+			// was used in another test (for example through the default http client)
+			assert.Nil(t, customFieldValue.Interface(), "TLSClientConfig should be nil")
 		default:
 			if customFieldValue.Kind() == reflect.Func {
 				assert.Equal(t, defaultFieldValue.Pointer(), customFieldValue.Pointer(), "Function field %s should match", field.Name)
