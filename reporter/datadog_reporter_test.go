@@ -14,6 +14,7 @@ import (
 	"time"
 
 	pprofile "github.com/google/pprof/profile"
+	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -183,6 +184,9 @@ func TestSanitizeFilename(t *testing.T) {
 }
 
 func TestReportProfile_FilenameGeneration(t *testing.T) {
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
 	// Create temporary directory for test files
 	tmpDir := t.TempDir()
 
