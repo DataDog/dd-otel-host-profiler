@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -220,12 +219,12 @@ func TestReportProfile_FilenameGeneration(t *testing.T) {
 
 	for _, service := range services {
 		data := &uploadProfileData{
-			profile: profile,
-			start:   now.Add(-time.Minute),
-			end:     now,
+			profile:  profile,
+			start:    now.Add(-time.Minute),
+			end:      now,
+			entityID: "ci-abc123456789defghijklmnop",
 			tags: Tags{
 				MakeTag("service", service),
-				MakeTag("container_id", "abc123456789defghijklmnop"),
 			},
 		}
 
@@ -233,33 +232,15 @@ func TestReportProfile_FilenameGeneration(t *testing.T) {
 		_ = reporter.reportProfile(t.Context(), data)
 	}
 
-	// Check that multiple files were created with unique names
+	// Check that exactly two files were created
 	files, err := filepath.Glob(filepath.Join(tmpDir, "*.pprof"))
 	require.NoError(t, err)
 	require.Len(t, files, 2, "Expected exactly two pprof files to be created")
 
-	// Verify all filenames are unique and contain expected components
-	filenames := make(map[string]bool)
+	// Verify expected filename pattern: temp-service-entityID-timestamp-counter.pprof
+	expectedPattern := `temp-service-[ab]-abc123456789-\d{8}T\d{6}Z-[12]\.pprof`
 	for _, file := range files {
 		filename := filepath.Base(file)
-		assert.False(t, filenames[filename], "Duplicate filename found: %s", filename)
-		filenames[filename] = true
-
-		// Verify basic structure
-		assert.Contains(t, filename, "temp")
-		assert.Contains(t, filename, "abc123456789") // container ID (truncated)
-		assert.True(t, strings.HasSuffix(filename, ".pprof"))
-		assert.Regexp(t, `\d{8}T\d{6}Z`, filename) // timestamp
-	}
-
-	// Verify each service name appears in exactly one filename
-	for _, service := range services {
-		count := 0
-		for filename := range filenames {
-			if strings.Contains(filename, service) {
-				count++
-			}
-		}
-		assert.Equal(t, 1, count, "Service %s should appear in exactly one filename", service)
+		assert.Regexp(t, expectedPattern, filename, "Filename should match expected pattern")
 	}
 }

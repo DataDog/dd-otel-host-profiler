@@ -264,9 +264,9 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 }
 
 // Filename format examples:
-// With service and container: ./temp-my-service-abc123456789-20060102T150405Z-1.pprof
+// With service and entity: ./temp-my-service-abc123456789-20060102T150405Z-1.pprof
 // With service only: ./temp-my-service-20060102T150405Z-1.pprof
-// With container only: ./temp-abc123456789-20060102T150405Z-1.pprof
+// With entity only: ./temp-abc123456789-20060102T150405Z-1.pprof
 // Fallback: ./temp-20060102T150405Z-1.pprof
 
 // getServiceNameFromTags extracts the service name from the tags.
@@ -279,50 +279,61 @@ func getServiceNameFromTags(tags Tags) string {
 	return ""
 }
 
-// getContainerIDFromTags extracts the container ID from the tags.
-func getContainerIDFromTags(tags Tags) string {
-	for _, tag := range tags {
-		if tag.Key == "ddprof.custom_ctx" && tag.Value == "container_id" {
-			// This means that container_id is within the samples (not the tags).
-			return ""
-		}
-		if tag.Key == "container_id" {
-			return tag.Value
-		}
+// getEntityIDFromUploadData extracts a short entity ID for filename use.
+func getEntityIDFromUploadData(entityID string) string {
+	if entityID == "" {
+		return ""
 	}
-	return ""
+	// Remove common prefixes and use first 12 characters for readability
+	entityID = strings.TrimPrefix(entityID, "ci-")
+	if len(entityID) > 12 {
+		return entityID[:12]
+	}
+	return entityID
 }
 
 // sanitizeFilename removes or replaces characters that are not safe for filenames.
 func sanitizeFilename(name string) string {
-	// Replace common problematic characters with safe alternatives
-	replacements := map[string]string{
-		"/":  "_",
-		"\\": "_",
-		":":  "_",
-		"*":  "_",
-		"?":  "_",
-		"\"": "_",
-		"<":  "_",
-		">":  "_",
-		"|":  "_",
-		" ":  "_",
-	}
-
-	sanitized := name
-	for old, new := range replacements {
-		sanitized = strings.ReplaceAll(sanitized, old, new)
-	}
-
-	// Remove any remaining non-alphanumeric characters except dash, underscore, and dot
-	result := ""
-	for _, r := range sanitized {
+	return strings.Map(func(r rune) rune {
+		// Keep alphanumeric characters, dashes, underscores, and dots
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
-			result += string(r)
+			return r
 		}
+		// in theory we only need to replace / and '\0', but this makes it slightly easier to read
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ':
+			return '_'
+		default:
+			// Remove any other non-safe characters (e.g., unicode)
+			return -1
+		}
+	}, name)
+}
+
+// generateProfileFilename creates a unique filename for a profile.
+func (r *DatadogReporter) generateProfileFilename(data *uploadProfileData) string {
+	serviceName := getServiceNameFromTags(data.tags)
+	entityID := getEntityIDFromUploadData(data.entityID)
+
+	// Increment counter for uniqueness
+	r.fileCounter++
+
+	// Build filename components
+	var components []string
+	components = append(components, r.config.PprofPrefix)
+
+	if serviceName != "" {
+		components = append(components, sanitizeFilename(serviceName))
 	}
 
-	return result
+	if entityID != "" {
+		components = append(components, sanitizeFilename(entityID))
+	}
+
+	// Add timestamp and counter for uniqueness
+	components = append(components, data.end.Format("20060102T150405Z"), strconv.FormatUint(r.fileCounter, 10))
+
+	return strings.Join(components, "-") + ".pprof"
 }
 
 // reportProfile creates and sends out a profile.
@@ -346,34 +357,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 
 	if r.config.PprofPrefix != "" {
 		// write profile to disk
-		serviceName := getServiceNameFromTags(data.tags)
-		containerID := getContainerIDFromTags(data.tags)
-
-		// Increment counter for uniqueness
-		r.fileCounter++
-
-		// Build filename components
-		var components []string
-		components = append(components, r.config.PprofPrefix)
-
-		if serviceName != "" {
-			components = append(components, sanitizeFilename(serviceName))
-		}
-
-		if containerID != "" {
-			// Use first 12 characters of container ID for readability (like Docker does)
-			shortContainerID := containerID
-			if len(containerID) > 12 {
-				shortContainerID = containerID[:12]
-			}
-			components = append(components, sanitizeFilename(shortContainerID))
-		}
-
-		// Add timestamp and counter for uniqueness
-		components = append(components, data.end.Format("20060102T150405Z"), strconv.FormatUint(r.fileCounter, 10))
-
-		profileName := strings.Join(components, "-") + ".pprof"
-
+		profileName := r.generateProfileFilename(data)
 		f, err := os.Create(profileName)
 		if err != nil {
 			return err
@@ -397,6 +381,7 @@ func (r *DatadogReporter) getPprofProfile() {
 	r.intervalStart = intervalEnd
 	profileSeq := r.profileSeq
 	r.profileSeq++
+	r.fileCounter = 0 // reset file counter for each export cycle
 
 	processAlreadyExitedCount := r.processAlreadyExitedCount
 	r.processAlreadyExitedCount = 0
