@@ -248,6 +248,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		log.Warning("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
 	}
 
+	useRuntimeIDInServiceEntityKey := c.EnableSplitByService && c.CollectContext
 	rep, err := reporter.NewDatadog(&reporter.Config{
 		IntakeURL:                            intakeURL,
 		Version:                              versionInfo.Version,
@@ -263,6 +264,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		SplitServiceSuffix:                   c.SplitServiceSuffix,
 		HostServiceName:                      c.HostServiceName,
 		CollectContext:                       c.CollectContext,
+		UseRuntimeIDInServiceEntityKey:       useRuntimeIDInServiceEntityKey,
 		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			Enabled:              c.UploadSymbols,
