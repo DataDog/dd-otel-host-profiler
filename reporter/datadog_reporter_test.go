@@ -238,7 +238,7 @@ func TestReportProfile_FilenameGeneration(t *testing.T) {
 	require.Len(t, files, 2, "Expected exactly two pprof files to be created")
 
 	// Verify expected filename pattern: temp-service-entityID-timestamp-counter.pprof
-	expectedPattern := `temp-service-[ab]-abc123456789-\d{8}T\d{6}Z-[12]\.pprof`
+	expectedPattern := `^temp-service-[ab]-ci-abc123456789-\d{8}T\d{6}Z-[12]\.pprof$`
 	for _, file := range files {
 		filename := filepath.Base(file)
 		assert.Regexp(t, expectedPattern, filename, "Filename should match expected pattern")

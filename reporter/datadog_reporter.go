@@ -284,10 +284,8 @@ func getEntityIDFromUploadData(entityID string) string {
 	if entityID == "" {
 		return ""
 	}
-	// Remove common prefixes and use first 12 characters for readability
-	entityID = strings.TrimPrefix(entityID, "ci-")
-	if len(entityID) > 12 {
-		return entityID[:12]
+	if len(entityID) > 15 { // Allow for "ci-" prefix (3 chars) + 12 chars = 15
+		return entityID[:15]
 	}
 	return entityID
 }
