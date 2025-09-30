@@ -93,6 +93,9 @@ type DatadogReporter struct {
 	// intervalStart is the timestamp of the start of the current interval.
 	intervalStart time.Time
 
+	// fileCounter is used to ensure unique local profile filenames
+	fileCounter uint64
+
 	profiles chan *uploadProfileData
 }
 
@@ -260,6 +263,77 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 	return nil
 }
 
+// Filename format examples:
+// With service and entity: ./temp-my-service-abc123456789-20060102T150405Z-1.pprof
+// With service only: ./temp-my-service-20060102T150405Z-1.pprof
+// With entity only: ./temp-abc123456789-20060102T150405Z-1.pprof
+// Fallback: ./temp-20060102T150405Z-1.pprof
+
+// getServiceNameFromTags extracts the service name from the tags.
+func getServiceNameFromTags(tags Tags) string {
+	for _, tag := range tags {
+		if tag.Key == "service" {
+			return tag.Value
+		}
+	}
+	return ""
+}
+
+// getEntityIDFromUploadData extracts a short entity ID for filename use.
+func getEntityIDFromUploadData(entityID string) string {
+	if entityID == "" {
+		return ""
+	}
+	if len(entityID) > 15 { // Allow for "ci-" prefix (3 chars) + 12 chars = 15
+		return entityID[:15]
+	}
+	return entityID
+}
+
+// sanitizeFilename removes or replaces characters that are not safe for filenames.
+func sanitizeFilename(name string) string {
+	return strings.Map(func(r rune) rune {
+		// Keep alphanumeric characters, dashes, underscores, and dots
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		// in theory we only need to replace / and '\0', but this makes it slightly easier to read
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ':
+			return '_'
+		default:
+			// Remove any other non-safe characters (e.g., unicode)
+			return -1
+		}
+	}, name)
+}
+
+// generateProfileFilename creates a unique filename for a profile.
+func (r *DatadogReporter) generateProfileFilename(data *uploadProfileData) string {
+	serviceName := getServiceNameFromTags(data.tags)
+	entityID := getEntityIDFromUploadData(data.entityID)
+
+	// Increment counter for uniqueness
+	r.fileCounter++
+
+	// Build filename components
+	var components []string
+	components = append(components, r.config.PprofPrefix)
+
+	if serviceName != "" {
+		components = append(components, sanitizeFilename(serviceName))
+	}
+
+	if entityID != "" {
+		components = append(components, sanitizeFilename(entityID))
+	}
+
+	// Add timestamp and counter for uniqueness
+	components = append(components, data.end.Format("20060102T150405Z"), strconv.FormatUint(r.fileCounter, 10))
+
+	return strings.Join(components, "-") + ".pprof"
+}
+
 // reportProfile creates and sends out a profile.
 func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfileData) error {
 	profile := data.profile
@@ -281,7 +355,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 
 	if r.config.PprofPrefix != "" {
 		// write profile to disk
-		profileName := fmt.Sprintf("%s%s.pprof", r.config.PprofPrefix, data.end.Format("20060102T150405Z"))
+		profileName := r.generateProfileFilename(data)
 		f, err := os.Create(profileName)
 		if err != nil {
 			return err
@@ -305,6 +379,7 @@ func (r *DatadogReporter) getPprofProfile() {
 	r.intervalStart = intervalEnd
 	profileSeq := r.profileSeq
 	r.profileSeq++
+	r.fileCounter = 0 // reset file counter for each export cycle
 
 	processAlreadyExitedCount := r.processAlreadyExitedCount
 	r.processAlreadyExitedCount = 0

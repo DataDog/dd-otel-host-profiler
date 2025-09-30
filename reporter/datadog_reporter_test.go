@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	pprofile "github.com/google/pprof/profile"
+	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -146,4 +149,98 @@ func TestGetServiceName_FileReadError(t *testing.T) {
 
 	result := getServiceNameFromProcPath(testPID, tmpDir)
 	assert.Empty(t, result, "Should return empty string when file cannot be read")
+}
+
+func TestSanitizeFilename(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "valid characters preserved",
+			input:    "my-service_v1.2",
+			expected: "my-service_v1.2",
+		},
+		{
+			name:     "invalid characters replaced",
+			input:    "service:name*with?chars",
+			expected: "service_name_with_chars",
+		},
+		{
+			name:     "unicode characters removed",
+			input:    "service-\u540D\u524D-\U0001F680", // Unicode: 名前🚀
+			expected: "service--",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeFilename(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestReportProfile_FilenameGeneration(t *testing.T) {
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
+	// Create temporary directory for test files
+	tmpDir := t.TempDir()
+
+	// Create a minimal config for testing
+	cfg := &Config{
+		PprofPrefix: filepath.Join(tmpDir, "temp"),
+		IntakeURL:   "http://localhost:8126",
+		Version:     "test",
+	}
+
+	// Create a minimal DatadogReporter instance
+	reporter := &DatadogReporter{
+		config:      cfg,
+		fileCounter: 0,
+	}
+
+	// Create a minimal profile
+	profile := &pprofile.Profile{
+		SampleType: []*pprofile.ValueType{
+			{Type: "samples", Unit: "count"},
+		},
+		Sample: []*pprofile.Sample{
+			{Value: []int64{1}},
+		},
+	}
+
+	now := time.Now()
+
+	// Test multiple profiles to ensure uniqueness
+	services := []string{"service-a", "service-b"}
+
+	for _, service := range services {
+		data := &uploadProfileData{
+			profile:  profile,
+			start:    now.Add(-time.Minute),
+			end:      now,
+			entityID: "ci-abc123456789defghijklmnop",
+			tags: Tags{
+				MakeTag("service", service),
+			},
+		}
+
+		// Report each profile (ignore upload errors)
+		_ = reporter.reportProfile(t.Context(), data)
+	}
+
+	// Check that exactly two files were created
+	files, err := filepath.Glob(filepath.Join(tmpDir, "*.pprof"))
+	require.NoError(t, err)
+	require.Len(t, files, 2, "Expected exactly two pprof files to be created")
+
+	// Verify expected filename pattern: temp-service-entityID-timestamp-counter.pprof
+	expectedPattern := `^temp-service-[ab]-ci-abc123456789-\d{8}T\d{6}Z-[12]\.pprof$`
+	for _, file := range files {
+		filename := filepath.Base(file)
+		assert.Regexp(t, expectedPattern, filename, "Filename should match expected pattern")
+	}
 }
