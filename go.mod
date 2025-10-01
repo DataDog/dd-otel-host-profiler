@@ -21,9 +21,9 @@ require (
 	go.opentelemetry.io/otel/metric v1.38.0
 	golang.org/x/sync v0.17.0
 	golang.org/x/sys v0.36.0
-	k8s.io/api v0.32.3
+	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
-	k8s.io/client-go v0.32.3
+	k8s.io/client-go v0.34.1
 )
 
 require (
@@ -70,7 +70,7 @@ require (
 	github.com/eapache/queue/v2 v2.0.0-20230407133247-75960ed334e4 // indirect
 	github.com/ebitengine/purego v0.8.3 // indirect
 	github.com/elastic/go-perf v0.0.0-20241029065020-30bec95324b8 // indirect
-	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
+	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
