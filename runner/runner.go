@@ -28,7 +28,6 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/metrics"
 	otelreporter "go.opentelemetry.io/ebpf-profiler/reporter"
 	"go.opentelemetry.io/ebpf-profiler/times"
-	"go.opentelemetry.io/ebpf-profiler/tracehandler"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -66,11 +65,12 @@ func startTraceHandling(ctx context.Context, rep otelreporter.TraceReporter,
 	if err := trc.StartMapMonitors(ctx, traceCh); err != nil {
 		return fmt.Errorf("failed to start map monitors: %w", err)
 	}
+	panic("This code was disabled")
+	return nil
+	// _, err := tracehandler.Start(ctx, rep, trc.TraceProcessor(),
+	// 	traceCh, intervals, cacheSize)
 
-	_, err := tracehandler.Start(ctx, rep, trc.TraceProcessor(),
-		traceCh, intervals, cacheSize)
-
-	return err
+	// return err
 }
 
 func appendEndpoint(symbolEndpoints []reporter.SymbolEndpoint, site, apiKey, appKey string) []reporter.SymbolEndpoint {
@@ -156,7 +156,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	}
 
 	// disable trace handler cache because it consumes too much memory for almost no CPU benefit
-	traceHandlerCacheSize := uint32(0)
+	//traceHandlerCacheSize := uint32(0)
 
 	intervals := times.New(c.ReporterInterval, c.MonitorInterval,
 		c.ProbabilisticInterval)
@@ -340,9 +340,9 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	// change this log line update also the system test.
 	log.Printf("Attached sched monitor")
 
-	if err := startTraceHandling(mainCtx, rep, intervals, trc, traceHandlerCacheSize); err != nil {
-		return failure("Failed to start trace handling: %v", err)
-	}
+	// if err := startTraceHandling(mainCtx, rep, intervals, trc, traceHandlerCacheSize); err != nil {
+	// 	return failure("Failed to start trace handling: %v", err)
+	// }
 
 	if c.VerboseeBPF {
 		log.Info("Reading from trace_pipe...")
