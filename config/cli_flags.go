@@ -45,9 +45,15 @@ const (
 	defaultClockSyncInterval      = 3 * time.Minute
 	defaultProbabilisticThreshold = tracer.ProbabilisticThresholdMax
 	defaultProbabilisticInterval  = 1 * time.Minute
-	defaultSymbolQueryInterval    = 5 * time.Second
 	defaultArgSendErrorFrames     = false
 	defaultArgAgentURL            = "http://localhost:8126"
+
+	DefaultSymbolQueryInterval  = 5 * time.Second
+	DefaultUploadSymbolsDryRun  = false
+	DefaultUploadSymbolsHTTP2   = false
+	DefaultUploadSymbols        = true
+	DefaultUploadDynamicSymbols = false
+	DefaultUploadGoPCLnTab      = true
 
 	// This is the X in 2^(n + x) where n is the default hardcoded map size value
 	defaultArgMapScaleFactor = 0
@@ -238,7 +244,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.BoolFlag{
 				Name:        "upload-symbols",
-				Value:       true,
+				Value:       DefaultUploadSymbols,
 				Usage:       "Enable local symbol upload.",
 				Hidden:      true,
 				Destination: &args.UploadSymbols,
@@ -247,7 +253,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			&cli.BoolFlag{
 				Name:        "upload-dynamic-symbols",
 				Usage:       "Enable dynamic symbols upload.",
-				Value:       false,
+				Value:       DefaultUploadDynamicSymbols,
 				Hidden:      true,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_DYNAMIC_SYMBOLS"),
 				Destination: &args.UploadDynamicSymbols,
@@ -255,14 +261,14 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			&cli.BoolFlag{
 				Name:        "upload-gopclntab",
 				Usage:       "Enable gopcnltab upload.",
-				Value:       true,
+				Value:       DefaultUploadGoPCLnTab,
 				Hidden:      true,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_GOPCLNTAB"),
 				Destination: &args.UploadGoPCLnTab,
 			},
 			&cli.BoolFlag{
 				Name:        "upload-symbols-dry-run",
-				Value:       false,
+				Value:       DefaultUploadSymbolsDryRun,
 				Usage:       "Local symbol upload dry-run.",
 				Hidden:      true,
 				Destination: &args.UploadSymbolsDryRun,
@@ -332,7 +338,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.DurationFlag{
 				Name:        "symbol-query-interval",
-				Value:       defaultSymbolQueryInterval,
+				Value:       DefaultSymbolQueryInterval,
 				Hidden:      true,
 				Usage:       "Symbol query interval (queries during a period are batched, 0 means no batching).",
 				Destination: &args.UploadSymbolQueryInterval,
@@ -354,7 +360,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.BoolFlag{
 				Name:        "upload-symbols-http2",
-				Value:       false, // HTTP/2 is disabled by default, since support in the backend is recent
+				Value:       DefaultUploadSymbolsHTTP2, // HTTP/2 is disabled by default, since support in the backend is recent
 				Hidden:      true,
 				Usage:       "Use HTTP/2 when available for symbol upload. Only used if upload-symbols is enabled.",
 				Destination: &args.UploadSymbolsHTTP2,
