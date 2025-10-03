@@ -252,14 +252,16 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		CollectContext:                       c.CollectContext,
 		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
-			Enabled:              c.UploadSymbols,
-			UploadDynamicSymbols: c.UploadDynamicSymbols,
-			UploadGoPCLnTab:      c.UploadGoPCLnTab,
-			UseHTTP2:             c.UploadSymbolsHTTP2,
-			SymbolQueryInterval:  c.UploadSymbolQueryInterval,
-			DryRun:               c.UploadSymbolsDryRun,
-			SymbolEndpoints:      validSymbolEndpoints,
-			Version:              versionInfo.Version,
+			SymbolUploaderOptions: reporter.SymbolUploaderOptions{
+				Enabled:              c.UploadSymbols,
+				UploadDynamicSymbols: c.UploadDynamicSymbols,
+				UploadGoPCLnTab:      c.UploadGoPCLnTab,
+				UseHTTP2:             c.UploadSymbolsHTTP2,
+				SymbolQueryInterval:  c.UploadSymbolQueryInterval,
+				DryRun:               c.UploadSymbolsDryRun,
+				SymbolEndpoints:      validSymbolEndpoints,
+			},
+			Version: versionInfo.Version,
 		},
 	}, containerMetadataProvider)
 	if err != nil {
