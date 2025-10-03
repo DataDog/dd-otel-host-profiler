@@ -58,23 +58,32 @@ type Config struct {
 	SymbolUploaderConfig SymbolUploaderConfig
 }
 
-type SymbolUploaderConfig struct {
+type SymbolUploaderOptions struct {
 	// Enabled defines whether the agent should upload debug symbols to the backend.
-	Enabled bool
+	Enabled bool `mapstructure:"enabled"`
 	// UploadDynamicSymbols defines whether the agent should upload dynamic symbols to the backend.
-	UploadDynamicSymbols bool
+	UploadDynamicSymbols bool `mapstructure:"upload_dynamic_symbols"`
 	// UploadGoPCLnTab defines whether the agent should upload GoPCLnTab section for Go binaries to the backend.
-	UploadGoPCLnTab bool
+	UploadGoPCLnTab bool `mapstructure:"upload_go_pcln_tab"`
 	// UseHTTP2 defines whether the agent should use HTTP/2 when uploading symbols.
-	UseHTTP2 bool
+	UseHTTP2 bool `mapstructure:"use_http2"`
 	// SymbolQueryInterval defines the interval at which the agent should query the backend for symbols. A value of 0 disables batching.
-	SymbolQueryInterval time.Duration
-	// DisableDebugSectionCompression defines whether the uploader should disable debug section compression whatever objcopy supports.
-	DisableDebugSectionCompression bool
+	SymbolQueryInterval time.Duration `mapstructure:"symbol_query_interval"`
 	// DryRun defines whether the agent should upload debug symbols to the backend in dry-run mode.
-	DryRun bool
+	DryRun bool `mapstructure:"dry_run"`
 	// Sites to upload symbols to.
-	SymbolEndpoints []SymbolEndpoint
+	SymbolEndpoints []SymbolEndpoint `mapstructure:"symbol_endpoints"`
+
+	// IMPORTANT NOTE: If you add a new option, you must update the code in datadog-agent repository as well to use the same default value.
+	// See https://github.com/DataDog/datadog-agent/pull/41475/files#diff-609e6520a7c28e0fce4caeea5197a3dc3e54fde00e3f2b43cdd6bceaa664098b
+}
+
+type SymbolUploaderConfig struct {
+	// Options defines the options for the symbol uploader.
+	SymbolUploaderOptions
+	// DisableDebugSectionCompression defines whether the uploader should disable debug section compression whatever objcopy supports.
+	// This is only used for testing purposes.
+	DisableDebugSectionCompression bool
 	// Version is the version of the profiler.
 	Version string
 }

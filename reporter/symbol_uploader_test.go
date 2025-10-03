@@ -298,11 +298,13 @@ func newTestUploader(opts uploaderOpts) (*DatadogSymbolUploader, error) {
 	}
 
 	cfg := &SymbolUploaderConfig{
-		Enabled:                        true,
-		UploadDynamicSymbols:           opts.uploadDynamicSymbols,
-		UploadGoPCLnTab:                opts.uploadGoPCLnTab,
-		SymbolQueryInterval:            0,
-		SymbolEndpoints:                endpoints,
+		SymbolUploaderOptions: SymbolUploaderOptions{
+			Enabled:              true,
+			UploadDynamicSymbols: opts.uploadDynamicSymbols,
+			UploadGoPCLnTab:      opts.uploadGoPCLnTab,
+			SymbolQueryInterval:  0,
+			SymbolEndpoints:      endpoints,
+		},
 		DisableDebugSectionCompression: opts.disableDebugSectionCompression,
 	}
 	return NewDatadogSymbolUploader(cfg)
@@ -560,10 +562,12 @@ func TestSymbolUpload(t *testing.T) {
 // when HTTP/2 is disabled
 func TestTransport(t *testing.T) {
 	cfg := &SymbolUploaderConfig{
-		Enabled:         true,
-		UseHTTP2:        false, // This forces creation of custom transport
-		SymbolEndpoints: []SymbolEndpoint{{Site: "test.com", APIKey: "key", AppKey: "app"}},
-		Version:         "test",
+		SymbolUploaderOptions: SymbolUploaderOptions{
+			Enabled:         true,
+			UseHTTP2:        false, // This forces creation of custom transport
+			SymbolEndpoints: []SymbolEndpoint{{Site: "test.com", APIKey: "key", AppKey: "app"}},
+		},
+		Version: "test",
 	}
 
 	uploader, err := NewDatadogSymbolUploader(cfg)
