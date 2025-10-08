@@ -80,10 +80,10 @@ type SymbolUploaderOptions struct {
 
 type SymbolUploaderConfig struct {
 	// Options defines the options for the symbol uploader.
-	SymbolUploaderOptions
+	SymbolUploaderOptions `mapstructure:",squash"`
 	// DisableDebugSectionCompression defines whether the uploader should disable debug section compression whatever objcopy supports.
 	// This is only used for testing purposes.
-	DisableDebugSectionCompression bool
+	DisableDebugSectionCompression bool `mapstructure:"disable_debug_section_compression"`
 	// Version is the version of the profiler.
 	Version string
 }
