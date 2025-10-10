@@ -75,7 +75,7 @@ type SymbolUploaderOptions struct {
 	SymbolEndpoints []SymbolEndpoint `mapstructure:"symbol_endpoints"`
 
 	// IMPORTANT NOTE: If you add a new option, you must update the code in datadog-agent repository as well to use the same default value.
-	// See https://github.com/DataDog/datadog-agent/pull/41475/files#diff-609e6520a7c28e0fce4caeea5197a3dc3e54fde00e3f2b43cdd6bceaa664098b
+	// See https://github.com/DataDog/datadog-agent/pull/41709/files#diff-c0739e376456cf23d49566fb4c959182e3fa29a8670a55658306a4a9e189fc13R67-R72
 }
 
 type SymbolUploaderConfig struct {
