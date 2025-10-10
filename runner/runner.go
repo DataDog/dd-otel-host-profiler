@@ -351,10 +351,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 // GetValidSymbolEndpoints returns a list of valid symbol endpoints
 // Note: This function is used in datadog-agent repository.
 func GetValidSymbolEndpoints(
-	symbolEndpoints []reporter.SymbolEndpoint,
 	site string,
 	apiKey string,
 	appKey string,
+	additionalSymbolEndpoints []reporter.SymbolEndpoint,
 	info func(string),
 	warn func(string)) []reporter.SymbolEndpoint {
 	validSites := make([]string, 0)
