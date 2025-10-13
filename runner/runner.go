@@ -203,7 +203,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	var validSymbolEndpoints []reporter.SymbolEndpoint
 
 	if c.UploadSymbols {
-		validSymbolEndpoints = GetValidSymbolEndpoints(c.AdditionalSymbolEndpoints, c.Site, c.APIKey, c.AppKey, func(msg string) {
+		validSymbolEndpoints = GetValidSymbolEndpoints(c.Site, c.APIKey, c.AppKey, c.AdditionalSymbolEndpoints, func(msg string) {
 			log.Info(msg)
 		}, func(msg string) {
 			log.Warn(msg)
@@ -360,6 +360,8 @@ func GetValidSymbolEndpoints(
 	validSites := make([]string, 0)
 	var validSymbolEndpoints []reporter.SymbolEndpoint
 
+	var symbolEndpoints []reporter.SymbolEndpoint
+	symbolEndpoints = append(symbolEndpoints, additionalSymbolEndpoints...)
 	symbolEndpoints = appendEndpoint(symbolEndpoints, site, apiKey, appKey)
 
 	for _, e := range symbolEndpoints {
