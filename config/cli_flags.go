@@ -54,6 +54,8 @@ const (
 	DefaultUploadSymbols        = true
 	DefaultUploadDynamicSymbols = false
 	DefaultUploadGoPCLnTab      = true
+	DefaultSplitByService       = true
+	DefaultCollectContext       = false
 
 	// This is the X in 2^(n + x) where n is the default hardcoded map size value
 	defaultArgMapScaleFactor = 0
@@ -346,7 +348,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.BoolFlag{
 				Name:        "split-by-service",
-				Value:       true,
+				Value:       DefaultSplitByService,
 				Usage:       "Split profiles by service.",
 				Destination: &args.EnableSplitByService,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SPLIT_BY_SERVICE"),
@@ -369,7 +371,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			&cli.BoolFlag{
 				Name: "collect-context",
 				// TODO: switch info log to debug log in reporter code once context collection is enabled by default
-				Value:       false,
+				Value:       DefaultCollectContext,
 				Hidden:      true,
 				Usage:       "Enable context collection.",
 				Destination: &args.CollectContext,
