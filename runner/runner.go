@@ -28,7 +28,8 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/metrics"
 	otelreporter "go.opentelemetry.io/ebpf-profiler/reporter"
 	"go.opentelemetry.io/ebpf-profiler/times"
-	"go.opentelemetry.io/ebpf-profiler/tracehandler"
+
+	//"go.opentelemetry.io/ebpf-profiler/tracehandler"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -66,11 +67,11 @@ func startTraceHandling(ctx context.Context, rep otelreporter.TraceReporter,
 	if err := trc.StartMapMonitors(ctx, traceCh); err != nil {
 		return fmt.Errorf("failed to start map monitors: %w", err)
 	}
+	panic("not implemented. Temporary disable trace handling")
+	// _, err := tracehandler.Start(ctx, rep, trc.TraceProcessor(),
+	// 	traceCh, intervals, cacheSize)
 
-	_, err := tracehandler.Start(ctx, rep, trc.TraceProcessor(),
-		traceCh, intervals, cacheSize)
-
-	return err
+	return nil
 }
 
 func appendEndpoint(symbolEndpoints []reporter.SymbolEndpoint, site, apiKey, appKey string) []reporter.SymbolEndpoint {
