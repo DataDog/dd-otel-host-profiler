@@ -39,14 +39,14 @@ https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 
 const (
 	// Default values for CLI flags
-	defaultArgSamplesPerSecond    = 20
-	defaultArgReporterInterval    = 60 * time.Second
-	defaultArgMonitorInterval     = 5.0 * time.Second
-	defaultClockSyncInterval      = 3 * time.Minute
-	defaultProbabilisticThreshold = tracer.ProbabilisticThresholdMax
-	defaultProbabilisticInterval  = 1 * time.Minute
-	defaultArgSendErrorFrames     = false
-	defaultArgAgentURL            = "http://localhost:8126"
+	DefaultArgSamplesPerSecond    = 20
+	DefaultArgReporterInterval    = 60 * time.Second
+	DefaultArgMonitorInterval     = 5.0 * time.Second
+	DefaultClockSyncInterval      = 3 * time.Minute
+	DefaultProbabilisticThreshold = tracer.ProbabilisticThresholdMax
+	DefaultProbabilisticInterval  = 1 * time.Minute
+	DefaultArgSendErrorFrames     = false
+	DefaultArgAgentURL            = "http://localhost:8126"
 
 	DefaultSymbolQueryInterval  = 5 * time.Second
 	DefaultUploadSymbolsDryRun  = false
@@ -56,6 +56,14 @@ const (
 	DefaultUploadGoPCLnTab      = true
 	DefaultSplitByService       = true
 	DefaultCollectContext       = false
+
+	DefaultEnableGoRuntimeProfiler = false
+	DefaultNoKernelVersionCheck    = false
+	DefaultBPFVerifierLogLevel     = 0
+	DefaultTimeline                = false
+	DefaultVerboseMode             = false
+	DefaultVerboseeBPF             = false
+	DefaultSite                    = "datadoghq.com"
 
 	// This is the X in 2^(n + x) where n is the default hardcoded map size value
 	defaultArgMapScaleFactor = 0
@@ -96,7 +104,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 		Flags: []cli.Flag{
 			&cli.UintFlag{
 				Name:        "bpf-log-level",
-				Value:       0,
+				Value:       DefaultBPFVerifierLogLevel,
 				Usage:       "Log level of the eBPF verifier output (0,1,2).",
 				Destination: &args.BPFVerifierLogLevel,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_BPF_LOG_LEVEL"),
@@ -104,7 +112,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			&cli.StringFlag{
 				Name:        "agent-url",
 				Aliases:     []string{"U"},
-				Value:       defaultArgAgentURL,
+				Value:       DefaultArgAgentURL,
 				Usage:       "The Datadog trace agent URL in the format of http://host:port.",
 				Destination: &args.AgentURL,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_TRACE_AGENT_URL", "DD_TRACE_AGENT_URL"),
@@ -140,14 +148,14 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.DurationFlag{
 				Name:        "monitor-interval",
-				Value:       defaultArgMonitorInterval,
+				Value:       DefaultArgMonitorInterval,
 				Usage:       "Set the monitor interval in seconds.",
 				Destination: &args.MonitorInterval,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_MONITOR_INTERVAL"),
 			},
 			&cli.DurationFlag{
 				Name:  "clock-sync-interval",
-				Value: defaultClockSyncInterval,
+				Value: DefaultClockSyncInterval,
 				Usage: "Set the sync interval with the realtime clock. " +
 					"If zero, monotonic-realtime clock sync will be performed once, " +
 					"on agent startup, but not periodically.",
@@ -156,7 +164,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.BoolFlag{
 				Name:  "no-kernel-version-check",
-				Value: false,
+				Value: DefaultNoKernelVersionCheck,
 				Usage: "Disable checking kernel version for eBPF support. " +
 					"Use at your own risk, to run the agent on older kernels with backported eBPF features.",
 				Destination: &args.NoKernelVersionCheck,
@@ -164,14 +172,14 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.DurationFlag{
 				Name:        "probabilistic-interval",
-				Value:       defaultProbabilisticInterval,
+				Value:       DefaultProbabilisticInterval,
 				Usage:       "Time interval for which probabilistic profiling will be enabled or disabled.",
 				Destination: &args.ProbabilisticInterval,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_PROBABILISTIC_INTERVAL"),
 			},
 			&cli.UintFlag{
 				Name:  "probabilistic-threshold",
-				Value: defaultProbabilisticThreshold,
+				Value: DefaultProbabilisticThreshold,
 				Usage: fmt.Sprintf("If set to a value between 1 and %d will enable probabilistic profiling: "+
 					"every probabilistic-interval a random number between 0 and %d is chosen. "+
 					"If the given probabilistic-threshold is greater than this "+
@@ -182,28 +190,28 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.DurationFlag{
 				Name:        "upload-period",
-				Value:       defaultArgReporterInterval,
+				Value:       DefaultArgReporterInterval,
 				Usage:       "Set the reporter's interval in seconds.",
 				Destination: &args.ReporterInterval,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_UPLOAD_PERIOD"),
 			},
 			&cli.UintFlag{
 				Name:        "sampling-rate",
-				Value:       defaultArgSamplesPerSecond,
+				Value:       DefaultArgSamplesPerSecond,
 				Usage:       "Set the frequency (in Hz) of stack trace sampling.",
 				Destination: &args.SamplesPerSecond,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SAMPLING_RATE"),
 			},
 			&cli.BoolFlag{
 				Name:        "timeline",
-				Value:       false,
+				Value:       DefaultTimeline,
 				Usage:       "Enable timeline feature.",
 				Destination: &args.Timeline,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_TIMELINE_ENABLED"),
 			},
 			&cli.BoolFlag{
 				Name:        "send-error-frames",
-				Value:       defaultArgSendErrorFrames,
+				Value:       DefaultArgSendErrorFrames,
 				Usage:       "Send error frames",
 				Destination: &args.SendErrorFrames,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SEND_ERROR_FRAMES"),
@@ -219,14 +227,14 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			&cli.BoolFlag{
 				Name:        "verbose",
 				Aliases:     []string{"v"},
-				Value:       false,
+				Value:       DefaultVerboseMode,
 				Usage:       "Enable verbose logging and debugging capabilities.",
 				Destination: &args.VerboseMode,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_VERBOSE"),
 			},
 			&cli.BoolFlag{
 				Name:        "verbose-ebpf",
-				Value:       false,
+				Value:       DefaultVerboseeBPF,
 				Usage:       "Enable verbose logging and debugging capabilities for eBPF.",
 				Destination: &args.VerboseeBPF,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_VERBOSE_EBPF"),
@@ -304,7 +312,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.StringFlag{
 				Name:        "site",
-				Value:       "datadoghq.com",
+				Value:       DefaultSite,
 				Usage:       "Datadog site.",
 				Hidden:      true,
 				Destination: &args.Site,
@@ -319,7 +327,7 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.BoolFlag{
 				Name:        "profile",
-				Value:       false,
+				Value:       DefaultEnableGoRuntimeProfiler,
 				Usage:       "Enable self-profiling with the Go runtime profiler.",
 				Destination: &args.EnableGoRuntimeProfiler,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_RUNTIME_PROFILER"),
