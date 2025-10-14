@@ -203,24 +203,11 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	var validSymbolEndpoints []reporter.SymbolEndpoint
 
 	if c.UploadSymbols {
-		validSites := make([]string, 0)
-		symbolEndpoints := appendEndpoint(c.AdditionalSymbolEndpoints, c.Site, c.APIKey, c.AppKey)
-
-		for _, e := range symbolEndpoints {
-			validationErr := validateSymbolEndpoint(e.Site, e.APIKey, e.AppKey)
-			if validationErr != nil {
-				log.Warnf("Error to validate symbol endpoint: %v", err)
-			} else {
-				validSymbolEndpoints = append(validSymbolEndpoints, e)
-				validSites = append(validSites, e.Site)
-			}
-		}
-
-		if len(validSymbolEndpoints) == 0 {
-			log.Warning("No valid symbol endpoint is configured. Will not upload symbols.")
-		} else {
-			log.Infof("Enabling Datadog local symbol upload to the following sites: %s", strings.Join(validSites, ", "))
-		}
+		validSymbolEndpoints = GetValidSymbolEndpoints(c.Site, c.APIKey, c.AppKey, c.AdditionalSymbolEndpoints, func(msg string) {
+			log.Info(msg)
+		}, func(msg string) {
+			log.Warn(msg)
+		})
 	}
 
 	var intakeURL string
@@ -265,14 +252,16 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		CollectContext:                       c.CollectContext,
 		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
-			Enabled:              c.UploadSymbols,
-			UploadDynamicSymbols: c.UploadDynamicSymbols,
-			UploadGoPCLnTab:      c.UploadGoPCLnTab,
-			UseHTTP2:             c.UploadSymbolsHTTP2,
-			SymbolQueryInterval:  c.UploadSymbolQueryInterval,
-			DryRun:               c.UploadSymbolsDryRun,
-			SymbolEndpoints:      validSymbolEndpoints,
-			Version:              versionInfo.Version,
+			SymbolUploaderOptions: reporter.SymbolUploaderOptions{
+				Enabled:              c.UploadSymbols,
+				UploadDynamicSymbols: c.UploadDynamicSymbols,
+				UploadGoPCLnTab:      c.UploadGoPCLnTab,
+				UseHTTP2:             c.UploadSymbolsHTTP2,
+				SymbolQueryInterval:  c.UploadSymbolQueryInterval,
+				DryRun:               c.UploadSymbolsDryRun,
+				SymbolEndpoints:      validSymbolEndpoints,
+			},
+			Version: versionInfo.Version,
 		},
 	}, containerMetadataProvider)
 	if err != nil {
@@ -357,6 +346,41 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	log.Info("Exiting ...")
 	return ExitSuccess
+}
+
+// GetValidSymbolEndpoints returns a list of valid symbol endpoints
+// Note: This function is used in datadog-agent repository.
+func GetValidSymbolEndpoints(
+	site string,
+	apiKey string,
+	appKey string,
+	additionalSymbolEndpoints []reporter.SymbolEndpoint,
+	info func(string),
+	warn func(string)) []reporter.SymbolEndpoint {
+	validSites := make([]string, 0)
+	var validSymbolEndpoints []reporter.SymbolEndpoint
+
+	var symbolEndpoints []reporter.SymbolEndpoint
+	symbolEndpoints = append(symbolEndpoints, additionalSymbolEndpoints...)
+	symbolEndpoints = appendEndpoint(symbolEndpoints, site, apiKey, appKey)
+
+	for _, e := range symbolEndpoints {
+		validationErr := validateSymbolEndpoint(e.Site, e.APIKey, e.AppKey)
+		if validationErr != nil {
+			warn(fmt.Sprintf("Error to validate symbol endpoint: %v", validationErr))
+		} else {
+			validSymbolEndpoints = append(validSymbolEndpoints, e)
+			validSites = append(validSites, e.Site)
+		}
+	}
+
+	if len(validSymbolEndpoints) == 0 {
+		warn("No valid symbol endpoint is configured. Will not upload symbols.")
+	} else {
+		info("Enabling Datadog local symbol upload to the following sites: " + strings.Join(validSites, ", "))
+	}
+
+	return validSymbolEndpoints
 }
 
 func sanityCheck(c *config.Config, kernVersion kernelVersion) ExitCode {
