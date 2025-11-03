@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/ebpf-profiler/libpf"
+	"go.opentelemetry.io/ebpf-profiler/reporter/samples"
 
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 )
@@ -33,12 +34,15 @@ type TraceAndMetaKey struct {
 	Tid  libpf.PID
 }
 
+// We cannot directly use ebpf-profiler/reporter/samples.TraceEvents here because
+// it stores the labels as a single map[string]string for all traceevents sharing
+// the same TraceAndMetaKey.
+// Labels can be different for each traceevent though (eg. span ID), so we need
+// to store them for each traceevent as it's done for timestamps / offtimes.
+// The alternative would be to make labels part of the TraceAndMetaKey.
 type TraceEvents struct {
-	Frames       libpf.Frames
-	Timestamps   []uint64 // in nanoseconds
-	OffTimes     []int64  // in nanoseconds
+	samples.TraceEvents
 	CustomLabels []map[string]string
-	EnvVars      map[string]string
 }
 
 type ProcessContext struct {

@@ -128,8 +128,11 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 			sample.Location = append(sample.Location, loc)
 		}
 
-		var count int64 = 1
+		// We need to split TraceEvents into multiple samples when:
+		// - there are custom labels: each traceevent might have different labels
+		// - the timeline feature is enabled: each traceevent has a different timestamp
 		splitSample := hasCustomLabels(traceInfo) || b.timeline
+		var count int64 = 1
 		if !splitSample {
 			count = int64(len(traceInfo.Timestamps))
 		}
@@ -145,6 +148,7 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 		if !splitSample {
 			b.profile.Sample = append(b.profile.Sample, sample)
 		} else {
+			// Create one sample per traceevent
 			for ix, ts := range traceInfo.Timestamps {
 				sampleCopy := &pprofile.Sample{}
 				*sampleCopy = *sample
@@ -154,6 +158,7 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 					sampleCopy.NumLabel["timestamp_ns"] = append(sampleCopy.NumLabel["timestamp_ns"], int64(ts))
 				}
 				if len(traceInfo.CustomLabels) > 0 && len(traceInfo.CustomLabels[ix]) > 0 {
+					// addCustomLabels creates a copy of sampleCopy.Label and adds the custom labels
 					sampleCopy.Label = addCustomLabels(sampleCopy.Label, traceInfo.CustomLabels[ix])
 				}
 				b.profile.Sample = append(b.profile.Sample, sampleCopy)

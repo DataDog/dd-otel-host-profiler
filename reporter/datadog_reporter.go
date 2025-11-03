@@ -200,11 +200,13 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 	}
 
 	perOriginEvents[key] = &rsamples.TraceEvents{
-		Frames:       trace.Frames,
-		Timestamps:   []uint64{uint64(meta.Timestamp)},
-		OffTimes:     []int64{meta.OffTime},
+		TraceEvents: samples.TraceEvents{
+			Frames:     trace.Frames,
+			Timestamps: []uint64{uint64(meta.Timestamp)},
+			OffTimes:   []int64{meta.OffTime},
+			EnvVars:    meta.EnvVars,
+		},
 		CustomLabels: customLabels,
-		EnvVars:      meta.EnvVars,
 	}
 
 	return nil
@@ -385,9 +387,10 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 }
 
 func (r *DatadogReporter) getProcessLevelContext(events rsamples.KeyToEventMapping) *rsamples.ProcessContext {
-	// Service entity key only contains the runtime ID
-	// To get the full process context we need to look up the process metadata.
-	// We make the assumption that if several processes share the same runtime ID, they have the same process context.
+	// Service entity key only contains the runtime ID,
+	// but to get the full process context we need to look up the process metadata.
+	// We make the assumption that if several processes share the same runtime ID,
+	// then they have the same process context.
 	// To lookup the process metadata we use the first process in the events.
 
 	// This loop is expected to run only once since all keys in the events map have the same runtime ID
@@ -510,6 +513,7 @@ func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled
 	)
 
 	if processLevelContextAsLabels {
+		// If process level context is emitted as sample labels, make these labels available as custom context.
 		tags = append(tags,
 			MakeTag(customContextTagKey, "env"),
 			MakeTag(customContextTagKey, "runtime_id"),
