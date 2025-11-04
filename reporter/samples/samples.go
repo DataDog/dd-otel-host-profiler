@@ -34,6 +34,17 @@ type TraceAndMetaKey struct {
 	Tid  libpf.PID
 }
 
+// We cannot directly use ebpf-profiler/reporter/samples.TraceEvents here because
+// it stores the labels as a single map[string]string for all traceevents sharing
+// the same TraceAndMetaKey.
+// Labels can be different for each traceevent though (eg. span ID), so we need
+// to store them for each traceevent as it's done for timestamps / offtimes.
+// The alternative would be to make labels part of the TraceAndMetaKey.
+type TraceEvents struct {
+	samples.TraceEvents
+	CustomLabels []map[string]string
+}
+
 type ProcessContext struct {
 	ServiceName               string `msgpack:"service.name"`
 	ServiceVersion            string `msgpack:"service.version"`
@@ -58,12 +69,13 @@ type ProcessMetadata struct {
 type ServiceEntity struct {
 	Service         string
 	EntityID        string
+	RuntimeID       string
 	InferredService bool
 }
 
 type TraceEventsTree map[ServiceEntity]map[libpf.Origin]KeyToEventMapping
 
-type KeyToEventMapping map[TraceAndMetaKey]*samples.TraceEvents
+type KeyToEventMapping map[TraceAndMetaKey]*TraceEvents
 
 func fileHash(fileID libpf.FileID) string {
 	if fileID == (libpf.FileID{}) {

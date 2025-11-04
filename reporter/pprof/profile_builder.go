@@ -19,15 +19,26 @@ import (
 
 const unknownStr = "UNKNOWN"
 
+type Config struct {
+	Start                       time.Time
+	End                         time.Time
+	SamplesPerSecond            int
+	NumSamples                  int
+	Timeline                    bool
+	ProcessLevelContextAsLabels bool
+	Processes                   *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]
+}
+
 type ProfileBuilder struct {
-	profile            *pprofile.Profile
-	funcMap            map[funcInfo]*pprofile.Function
-	mappings           map[uniqueMapping]*pprofile.Mapping
-	processes          *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]
-	timeline           bool
-	totalSampleCount   int
-	pidsWithNoMetadata libpf.Set[libpf.PID]
-	samplingPeriod     int64
+	profile                     *pprofile.Profile
+	funcMap                     map[funcInfo]*pprofile.Function
+	mappings                    map[uniqueMapping]*pprofile.Mapping
+	processes                   *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]
+	timeline                    bool
+	processLevelContextAsLabels bool
+	totalSampleCount            int
+	pidsWithNoMetadata          libpf.Set[libpf.PID]
+	samplingPeriod              int64
 }
 
 type ProfileStats struct {
@@ -42,33 +53,33 @@ type uniqueMapping struct {
 	File libpf.FrameMappingFile
 }
 
-func NewProfileBuilder(start, end time.Time, samplesPerSecond int, numSamples int, timeline bool,
-	processes *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]) *ProfileBuilder {
+func NewProfileBuilder(cfg *Config) *ProfileBuilder {
 	// funcMap is a temporary helper that will build the Function array
 	// in profile and make sure information is deduplicated.
 	funcMap := make(map[funcInfo]*pprofile.Function)
 	mappings := make(map[uniqueMapping]*pprofile.Mapping)
 
-	samplingPeriod := 1000000000 / int64(samplesPerSecond)
+	samplingPeriod := 1000000000 / int64(cfg.SamplesPerSecond)
 	profile := &pprofile.Profile{
 		SampleType: []*pprofile.ValueType{{Type: "cpu-samples", Unit: "count"},
 			{Type: "cpu-time", Unit: "nanoseconds"}},
-		Sample:            make([]*pprofile.Sample, 0, numSamples),
+		Sample:            make([]*pprofile.Sample, 0, cfg.NumSamples),
 		PeriodType:        &pprofile.ValueType{Type: "cpu-time", Unit: "nanoseconds"},
 		Period:            samplingPeriod,
 		DefaultSampleType: "cpu-time",
 	}
-	profile.DurationNanos = end.Sub(start).Nanoseconds()
-	profile.TimeNanos = start.UnixNano()
+	profile.DurationNanos = cfg.End.Sub(cfg.Start).Nanoseconds()
+	profile.TimeNanos = cfg.Start.UnixNano()
 
 	return &ProfileBuilder{
-		profile:            profile,
-		funcMap:            funcMap,
-		mappings:           mappings,
-		processes:          processes,
-		pidsWithNoMetadata: libpf.Set[libpf.PID]{},
-		timeline:           timeline,
-		samplingPeriod:     samplingPeriod,
+		profile:                     profile,
+		funcMap:                     funcMap,
+		mappings:                    mappings,
+		processes:                   cfg.Processes,
+		pidsWithNoMetadata:          libpf.Set[libpf.PID]{},
+		timeline:                    cfg.Timeline,
+		processLevelContextAsLabels: cfg.ProcessLevelContextAsLabels,
+		samplingPeriod:              samplingPeriod,
 	}
 }
 
@@ -117,25 +128,40 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 			sample.Location = append(sample.Location, loc)
 		}
 
+		// We need to split TraceEvents into multiple samples when:
+		// - there are custom labels: each traceevent might have different labels
+		// - the timeline feature is enabled: each traceevent has a different timestamp
+		splitSample := hasCustomLabels(traceInfo) || b.timeline
 		var count int64 = 1
-		if !b.timeline {
+		if !splitSample {
 			count = int64(len(traceInfo.Timestamps))
 		}
 
 		labels := make(map[string][]string)
 		addTraceLabels(labels, traceKey, &processMeta, baseExec)
+		if processMeta.TracingContext != nil && b.processLevelContextAsLabels {
+			addProcessLevelContextAsLabels(labels, processMeta.TracingContext)
+		}
 		sample.Label = labels
 		sample.Value = append(sample.Value, count, count*b.samplingPeriod)
 
-		if !b.timeline {
+		if !splitSample {
 			b.profile.Sample = append(b.profile.Sample, sample)
 		} else {
-			for _, ts := range traceInfo.Timestamps {
-				sampleWithTimestamp := &pprofile.Sample{}
-				*sampleWithTimestamp = *sample
-				sampleWithTimestamp.NumLabel = make(map[string][]int64)
-				sampleWithTimestamp.NumLabel["timestamp_ns"] = append(sampleWithTimestamp.NumLabel["timestamp_ns"], int64(ts))
-				b.profile.Sample = append(b.profile.Sample, sampleWithTimestamp)
+			// Create one sample per traceevent
+			for ix, ts := range traceInfo.Timestamps {
+				sampleCopy := &pprofile.Sample{}
+				*sampleCopy = *sample
+
+				if b.timeline {
+					sampleCopy.NumLabel = make(map[string][]int64)
+					sampleCopy.NumLabel["timestamp_ns"] = append(sampleCopy.NumLabel["timestamp_ns"], int64(ts))
+				}
+				if len(traceInfo.CustomLabels) > 0 && len(traceInfo.CustomLabels[ix]) > 0 {
+					// addCustomLabels creates a copy of sampleCopy.Label and adds the custom labels
+					sampleCopy.Label = addCustomLabels(sampleCopy.Label, traceInfo.CustomLabels[ix])
+				}
+				b.profile.Sample = append(b.profile.Sample, sampleCopy)
 			}
 		}
 		b.totalSampleCount += len(traceInfo.Timestamps)
@@ -255,39 +281,61 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, proce
 	if containerMetadata.ContainerName != "" {
 		labels["container_name"] = append(labels["container_name"], containerMetadata.ContainerName)
 	}
+}
 
-	tracingCtx := processMeta.TracingContext
-	if tracingCtx != nil {
-		if tracingCtx.DeploymentEnvironmentName != "" {
-			labels["env"] = append(labels["env"], tracingCtx.DeploymentEnvironmentName)
-		}
+func addProcessLevelContextAsLabels(labels map[string][]string, tracingCtx *samples.ProcessContext) {
+	if tracingCtx.DeploymentEnvironmentName != "" {
+		labels["env"] = append(labels["env"], tracingCtx.DeploymentEnvironmentName)
+	}
 
-		if tracingCtx.ServiceInstanceID != "" {
-			labels["runtime_id"] = append(labels["runtime_id"], tracingCtx.ServiceInstanceID)
-		}
+	if tracingCtx.ServiceInstanceID != "" {
+		labels["runtime_id"] = append(labels["runtime_id"], tracingCtx.ServiceInstanceID)
+	}
 
-		if tracingCtx.ServiceName != "" {
-			labels["service_name"] = append(labels["service_name"], tracingCtx.ServiceName)
-		}
+	if tracingCtx.ServiceName != "" {
+		labels["service_name"] = append(labels["service_name"], tracingCtx.ServiceName)
+	}
 
-		if tracingCtx.ServiceVersion != "" {
-			labels["service_version"] = append(labels["service_version"], tracingCtx.ServiceVersion)
-		}
+	if tracingCtx.ServiceVersion != "" {
+		labels["service_version"] = append(labels["service_version"], tracingCtx.ServiceVersion)
+	}
 
-		if tracingCtx.HostName != "" {
-			labels["host_name"] = append(labels["host_name"], tracingCtx.HostName)
-		}
+	if tracingCtx.HostName != "" {
+		labels["host_name"] = append(labels["host_name"], tracingCtx.HostName)
+	}
 
-		if tracingCtx.TelemetrySdkLanguage != "" {
-			labels["telemetry_sdk_language"] = append(labels["telemetry_sdk_language"], tracingCtx.TelemetrySdkLanguage)
-		}
+	if tracingCtx.TelemetrySdkLanguage != "" {
+		labels["telemetry_sdk_language"] = append(labels["telemetry_sdk_language"], tracingCtx.TelemetrySdkLanguage)
+	}
 
-		if tracingCtx.TelemetrySdkName != "" {
-			labels["telemetry_sdk_name"] = append(labels["telemetry_sdk_name"], tracingCtx.TelemetrySdkName)
-		}
+	if tracingCtx.TelemetrySdkName != "" {
+		labels["telemetry_sdk_name"] = append(labels["telemetry_sdk_name"], tracingCtx.TelemetrySdkName)
+	}
 
-		if tracingCtx.TelemetrySdkVersion != "" {
-			labels["telemetry_sdk_version"] = append(labels["telemetry_sdk_version"], tracingCtx.TelemetrySdkVersion)
+	if tracingCtx.TelemetrySdkVersion != "" {
+		labels["telemetry_sdk_version"] = append(labels["telemetry_sdk_version"], tracingCtx.TelemetrySdkVersion)
+	}
+}
+
+func hasCustomLabels(traceInfo *samples.TraceEvents) bool {
+	if len(traceInfo.CustomLabels) == 0 {
+		return false
+	}
+	for _, customLabels := range traceInfo.CustomLabels {
+		if len(customLabels) > 0 {
+			return true
 		}
 	}
+	return false
+}
+
+func addCustomLabels(labels map[string][]string, customLabels map[string]string) map[string][]string {
+	labelsCopy := make(map[string][]string)
+	for key, value := range labels {
+		labelsCopy[key] = append(labelsCopy[key], value...)
+	}
+	for key, value := range customLabels {
+		labelsCopy[key] = append(labelsCopy[key], value)
+	}
+	return labelsCopy
 }

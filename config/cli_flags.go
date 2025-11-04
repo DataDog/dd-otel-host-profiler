@@ -378,7 +378,9 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 			},
 			&cli.BoolFlag{
 				Name: "collect-context",
-				// TODO: switch info log to debug log in reporter code once context collection is enabled by default
+				// TODO: before enabling context collection by default:
+				// - switch info log to debug log in reporter code
+				// - avoid splitting pprof profiles by runtimeID
 				Value:       DefaultCollectContext,
 				Hidden:      true,
 				Usage:       "Enable context collection.",
