@@ -150,6 +150,10 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 
 	pMeta, ok := r.processes.Get(meta.PID)
 	if !ok || time.Since(pMeta.UpdatedAt) > pidCacheUpdateInterval {
+		// Retrieve process metadata if not yet available or if it's been too long since the last update.
+		// Note that there are potential consistency issues between process metadata and trace events:
+		// - Some parts of process metdata are used as keys in the trace events tree (service name, runtime ID, etc.) and might be stale.
+		// - Some parts of process metadata are used when creating profiles (exec path) and the last update will be used for all trace events.
 		pMeta = r.addProcessMetadata(trace, meta)
 	}
 
@@ -170,6 +174,8 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 	}
 	if r.config.UseRuntimeIDInServiceEntityKey && pMeta.TracingContext != nil {
 		serviceEntityKey.RuntimeID = pMeta.TracingContext.ServiceInstanceID
+		// We could also add all the process level context to the service entity key.
+		// That could improve trace event / process context consistency.
 	}
 
 	perServiceEvents, exists := (*eventsTree)[serviceEntityKey]
