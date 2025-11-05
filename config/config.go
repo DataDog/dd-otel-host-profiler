@@ -41,7 +41,7 @@ func (s *additionalSymbolEndpoints) Set(value string) error {
 
 // Get allows us to implement the cli.Value interface
 // It is not used currently in our setup
-func (s *additionalSymbolEndpoints) Get() interface{} {
+func (s *additionalSymbolEndpoints) Get() any {
 	return s
 }
 

@@ -40,7 +40,7 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	goMinorVersions := []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
+	goMinorVersions := []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
 	for _, goMinorVersion := range goMinorVersions {
 		for name, test := range tests {
 			if goMinorVersion <= 12 && strings.HasPrefix(name, "pie") {
@@ -52,7 +52,7 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 			t.Run(fmt.Sprintf("go1.%v#%v", goMinorVersion, name), func(t *testing.T) {
 				t.Parallel()
 				exe := filepath.Join(tmpDir, fmt.Sprintf("%v.v1_%v.%v", strings.TrimRight(srcFile, ".go"), goMinorVersion, name))
-				cmd := exec.Command("go", append([]string{"build", "-o", exe}, test.buildArgs...)...) // #nosec G204
+				cmd := exec.CommandContext(t.Context(), "go", append([]string{"build", "-o", exe}, test.buildArgs...)...) // #nosec G204
 				cmd.Args = append(cmd.Args, srcFile)
 				cmd.Dir = testDataDir
 				cmd.Env = append(cmd.Environ(), getGoToolChain(goMinorVersion))
@@ -72,7 +72,7 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 				}
 
 				exeStripped := exe + ".stripped"
-				out, err = exec.Command("objcopy", "-S", "--rename-section", ".data.rel.ro.gopclntab=.foo1", "--rename-section", ".gopclntab=.foo2", exe, exeStripped).CombinedOutput() // #nosec G204
+				out, err = exec.CommandContext(t.Context(), "objcopy", "-S", "--rename-section", ".data.rel.ro.gopclntab=.foo1", "--rename-section", ".gopclntab=.foo2", exe, exeStripped).CombinedOutput() // #nosec G204
 				require.NoError(t, err, "failed to rename section: %s\n%s", err, out)
 
 				goPCLnTabInfo2, err := findGoPCLnTab(ef, true)

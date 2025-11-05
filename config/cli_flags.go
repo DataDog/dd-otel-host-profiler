@@ -18,7 +18,7 @@ import (
 	"github.com/DataDog/dd-otel-host-profiler/version"
 )
 
-// Short Copyright / license text for eBPF code
+// Copyright / license text for eBPF code
 const Copyright = `Copyright 2024 Datadog, Inc.
 
 For the eBPF code loaded by Universal Profiling Agent into the kernel,
@@ -38,7 +38,6 @@ https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 `
 
 const (
-	// Default values for CLI flags
 	DefaultArgSamplesPerSecond    = 20
 	DefaultArgReporterInterval    = 60 * time.Second
 	DefaultArgMonitorInterval     = 5.0 * time.Second
@@ -67,12 +66,13 @@ const (
 
 	// This is the X in 2^(n + x) where n is the default hardcoded map size value
 	defaultArgMapScaleFactor = 0
-	// 1TB of executable address space
+	// MaxArgMapScaleFactor needs 1TB of executable address space
 	MaxArgMapScaleFactor = 8
 )
 
 type Arguments struct {
 	Config
+
 	Copyright   bool
 	VerboseMode bool
 	cmd         *cli.Command
