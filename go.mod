@@ -1,6 +1,6 @@
 module github.com/DataDog/dd-otel-host-profiler
 
-go 1.24.6
+go 1.25.3
 
 require (
 	github.com/DataDog/dd-trace-go/v2 v2.2.2
