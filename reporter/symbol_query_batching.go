@@ -11,8 +11,6 @@ import (
 	"fmt"
 	"sync"
 
-	log "github.com/sirupsen/logrus"
-
 	samples "github.com/DataDog/dd-otel-host-profiler/reporter/samples"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
@@ -70,12 +68,12 @@ func (e *ElfWithBackendSources) fillWithError(err error) {
 	}
 }
 
-func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, queriers []SymbolQuerier) []ElfWithBackendSources {
+func ExecuteSymbolQueryBatch(ctx context.Context, batch SymbolQueryBatch, queriers []SymbolQuerier, logger Logger) []ElfWithBackendSources {
 	if len(batch) == 0 {
 		return nil
 	}
 
-	log.Infof("Querying symbols for %d executables", len(batch))
+	logger.Infof("Querying symbols for %d executables", len(batch))
 	buildIDToResult := make(map[string][]*ElfWithBackendSources)
 
 	// All the elfs in the batch are expected to have the same arch
