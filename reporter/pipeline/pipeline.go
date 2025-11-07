@@ -27,11 +27,13 @@ type ConsumerWorker[In any] struct {
 
 type StageWorker[In any, Out any] struct {
 	ConsumerWorker[In]
+
 	outputChan chan Out
 }
 
 type BatchingStageWorker[In any] struct {
 	StageWorker[In, []In]
+
 	batchSize     int
 	batchInterval time.Duration
 	clock         clockwork.Clock

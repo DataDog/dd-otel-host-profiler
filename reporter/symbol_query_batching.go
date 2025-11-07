@@ -26,6 +26,7 @@ type SymbolQueryResult struct {
 
 type ElfWithBackendSources struct {
 	*symbol.Elf
+
 	BackendSymbolSources []SymbolQueryResult
 }
 

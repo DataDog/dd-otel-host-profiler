@@ -34,7 +34,7 @@ type TraceAndMetaKey struct {
 	Tid  libpf.PID
 }
 
-// We cannot directly use ebpf-profiler/reporter/samples.TraceEvents here because
+// TraceEvents from ebpf-profiler/reporter/samples cannot be used here because
 // it stores the labels as a single map[string]string for all traceevents sharing
 // the same TraceAndMetaKey.
 // Labels can be different for each traceevent though (eg. span ID), so we need
@@ -42,6 +42,7 @@ type TraceAndMetaKey struct {
 // The alternative would be to make labels part of the TraceAndMetaKey.
 type TraceEvents struct {
 	samples.TraceEvents
+
 	CustomLabels []map[string]string
 }
 

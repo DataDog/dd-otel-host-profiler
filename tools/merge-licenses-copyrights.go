@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -147,14 +148,7 @@ func (l *Licenses) LoadFile(filename string) error {
 			l.data[component] = compLicense
 		}
 		if licenseInfo, found := compLicense[origin]; found {
-			var found bool
-			for _, spdx := range licenseInfo.spdx {
-				if spdx == license {
-					found = true
-					break
-				}
-			}
-			if found {
+			if slices.Contains(licenseInfo.spdx, license) {
 				continue
 			}
 		} else if val := compLicense[origin]; val != nil {
@@ -211,7 +205,7 @@ func (l *Licenses) WriteFile(filename string) error {
 		ld := records[l]
 		rd := records[r]
 		for i := range 4 {
-			cmp := strings.Compare(ld[i], rd[i])
+			cmp := strings.Compare(ld[i], rd[i]) //#nosec: G602 -- false positive
 			if cmp < 0 {
 				return true
 			} else if cmp > 0 {

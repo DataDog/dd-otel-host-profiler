@@ -10,7 +10,7 @@ all: build
 build:
 	go build $(GO_FLAGS)
 
-GOLANGCI_LINT_VERSION = "v2.1.6"
+GOLANGCI_LINT_VERSION = "v2.6.1"
 GO = $(shell go env GOROOT)/bin/go
 
 lint:

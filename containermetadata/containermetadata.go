@@ -6,7 +6,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-// containermetadata provides functionality for retrieving the kubernetes pod and container
+// Package containermetadata provides functionality for retrieving the kubernetes pod and container
 // metadata or the docker container metadata for a particular PID.
 // For kubernetes it uses the shared informer from the k8s client-go API
 // (https://github.com/kubernetes/client-go/blob/master/tools/cache/shared_informer.go). Through

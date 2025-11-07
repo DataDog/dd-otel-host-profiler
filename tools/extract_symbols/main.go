@@ -34,7 +34,7 @@ func extractDebugInfos(elfFile, outFile string) error {
 		sectionsToKeep = ef.GetSectionsRequiredForDynamicSymbols()
 	}
 
-	return reporter.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo, sectionsToKeep, reporter.CheckObjcopyZstdSupport())
+	return reporter.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo, sectionsToKeep, reporter.CheckObjcopyZstdSupport(context.Background()))
 }
 
 func main() {
