@@ -82,4 +82,5 @@ type Config struct {
 	EnableSplitByService          bool
 	SplitServiceSuffix            string
 	CollectContext                bool
+	FrameCacheSize                int64
 }
