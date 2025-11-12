@@ -33,6 +33,7 @@ import,github.com/containerd/log,Apache-2.0,unknown
 import,github.com/containerd/platforms,Apache-2.0,unknown
 import,github.com/containerd/ttrpc,Apache-2.0,unknown
 import,github.com/containerd/typeurl/v2,Apache-2.0,unknown
+import,github.com/cyphar/filepath-securejoin,MPL-2.0,Copyright (C) 2014-2015 Docker Inc & Go Authors. All rights reserved. | Copyright (C) 2017-2024 SUSE LLC. All rights reserved. | Copyright (C) 2014-2015 Docker Inc & Go Authors. All rights reserved. | Copyright (C) 2017-2024 SUSE LLC. All rights reserved.
 import,github.com/davecgh/go-spew/spew,ISC,Copyright (c) 2012-2016 Dave Collins <dave@davec.name>
 import,github.com/distribution/reference,Apache-2.0,unknown
 import,github.com/docker/docker,Apache-2.0,"Copyright 2013-2018 Docker, Inc. | Copyright 2012-2017 Docker, Inc."
