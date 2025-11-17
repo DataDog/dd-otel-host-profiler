@@ -5,7 +5,7 @@ set -euo pipefail
 TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/make-licenses.XXXXXX")
 trap "rm -rf ${TMPDIR}" EXIT ERR TERM
 
-GOBIN="${TMPDIR}/bin" $(go env GOROOT)/bin/go install github.com/google/go-licenses/v2@v2.0.0-alpha.1
+GOBIN="${TMPDIR}/bin" $(go env GOROOT)/bin/go install github.com/google/go-licenses/v2@v2.0.1
 
 "$TMPDIR/bin/go-licenses" save --save_path "${TMPDIR}/sources"  ./...
 "$TMPDIR/bin/go-licenses" report ./... --template ./tools/licenses.tpl > "LICENSE-3rdparty.csv" 2> "${TMPDIR}/errors" || (cat "${TMPDIR}/errors" >&2 && exit -1)

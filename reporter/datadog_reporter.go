@@ -99,7 +99,7 @@ type DatadogReporter struct {
 	profiles chan *uploadProfileData
 }
 
-func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, error) {
+func NewDatadog(ctx context.Context, cfg *Config, p containermetadata.Provider) (*DatadogReporter, error) {
 	executables, err := lru.NewSynced[libpf.FileID, rsamples.ExecInfo](cfg.ExecutablesCacheElements, libpf.FileID.Hash32)
 	if err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func NewDatadog(cfg *Config, p containermetadata.Provider) (*DatadogReporter, er
 
 	var symbolUploader *DatadogSymbolUploader
 	if cfg.SymbolUploaderConfig.Enabled {
-		symbolUploader, err = NewDatadogSymbolUploader(&cfg.SymbolUploaderConfig, DefaultLogger())
+		symbolUploader, err = NewDatadogSymbolUploader(ctx, &cfg.SymbolUploaderConfig, DefaultLogger())
 		if err != nil {
 			log.Errorf(
 				"Failed to create Datadog symbol uploader, symbol upload will be disabled: %v",
@@ -683,7 +683,7 @@ func getServiceNameFromProcPath(pid libpf.PID, procRoot string) string {
 func parseServiceNameFromEnvironData(envData []byte) string {
 	var serviceName string
 	foundIndex := len(ServiceNameEnvVars)
-	for _, envVar := range bytes.Split(envData, []byte{0}) {
+	for envVar := range bytes.SplitSeq(envData, []byte{0}) {
 		for i, envVarName := range ServiceNameEnvVars {
 			l := len(envVarName)
 			if len(envVar) > l+1 && envVar[l] == '=' && bytes.HasPrefix(envVar, []byte(envVarName)) {

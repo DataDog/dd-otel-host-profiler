@@ -44,6 +44,8 @@ linters:
     - wastedassign
     - wrapcheck
     - wsl
+    - wsl_v5
+    - noinlineerr
   settings:
     goconst:
       min-len: 2

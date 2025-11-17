@@ -236,7 +236,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	}
 
 	useRuntimeIDInServiceEntityKey := c.EnableSplitByService && c.CollectContext
-	rep, err := reporter.NewDatadog(&reporter.Config{
+	rep, err := reporter.NewDatadog(mainCtx, &reporter.Config{
 		IntakeURL:                            intakeURL,
 		Version:                              versionInfo.Version,
 		ReportInterval:                       intervals.ReportInterval(),
@@ -475,12 +475,12 @@ func readTracePipe(ctx context.Context) {
 	}
 }
 
-func ParseError(msg string, args ...interface{}) ExitCode {
+func ParseError(msg string, args ...any) ExitCode {
 	log.Errorf(msg, args...)
 	return exitParseError
 }
 
-func failure(msg string, args ...interface{}) ExitCode {
+func failure(msg string, args ...any) ExitCode {
 	log.Errorf(msg, args...)
 	return exitFailure
 }

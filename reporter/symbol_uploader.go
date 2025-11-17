@@ -80,12 +80,11 @@ type goPCLnTabDump struct {
 	goFuncPath    string
 }
 
-func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig, logger Logger) (*DatadogSymbolUploader, error) {
-	err := exec.Command("objcopy", "--version").Run()
+func NewDatadogSymbolUploader(ctx context.Context, cfg *SymbolUploaderConfig, logger Logger) (*DatadogSymbolUploader, error) {
+	err := exec.CommandContext(ctx, "objcopy", "--version").Run()
 	if err != nil {
 		return nil, fmt.Errorf("objcopy is not available: %w", err)
 	}
-
 	if len(cfg.SymbolEndpoints) == 0 {
 		return nil, errors.New("no endpoints to upload symbols to")
 	}
@@ -108,7 +107,7 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig, logger Logger) (*Datado
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
-	compressDebugSections := !cfg.DisableDebugSectionCompression && CheckObjcopyZstdSupport()
+	compressDebugSections := !cfg.DisableDebugSectionCompression && CheckObjcopyZstdSupport(ctx)
 
 	httpClient := &http.Client{Timeout: uploadTimeout}
 	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
@@ -145,8 +144,8 @@ func NewDatadogSymbolUploader(cfg *SymbolUploaderConfig, logger Logger) (*Datado
 	}, nil
 }
 
-func CheckObjcopyZstdSupport() bool {
-	return exec.Command("objcopy", "--compress-debug-sections=zstd", "--version").Run() == nil
+func CheckObjcopyZstdSupport(ctx context.Context) bool {
+	return exec.CommandContext(ctx, "objcopy", "--compress-debug-sections=zstd", "--version").Run() == nil
 }
 
 func buildSourcemapIntakeURL(site string) string {

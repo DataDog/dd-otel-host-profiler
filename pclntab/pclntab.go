@@ -23,7 +23,9 @@ const (
 	ver116
 	ver118
 	ver120
+)
 
+const (
 	ptrSize           = 8
 	maxBytesGoPclntab = 128 * 1024 * 1024
 	maxGoFuncID       = 22
@@ -81,6 +83,7 @@ type pclntabHeader struct {
 
 type pclntabHeader116 struct {
 	pclntabHeader
+
 	nfiles         uint
 	funcnameOffset uintptr
 	cuOffset       uintptr
@@ -93,6 +96,7 @@ type pclntabHeader116 struct {
 // structural definition of this is found in go/src/runtime/symtab.go as pcHeader
 type pclntabHeader118 struct {
 	pclntabHeader
+
 	nfiles         uint
 	textStart      uintptr
 	funcnameOffset uintptr
