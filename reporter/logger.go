@@ -11,10 +11,10 @@ import log "github.com/sirupsen/logrus"
 // implementations from other repositories while maintaining compatibility
 // with this package.
 type Logger interface {
-	Debugf(format string, args ...interface{})
-	Infof(format string, args ...interface{})
-	Warnf(format string, args ...interface{})
-	Errorf(format string, args ...interface{})
+	Debugf(format string, args ...any)
+	Infof(format string, args ...any)
+	Warnf(format string, args ...any)
+	Errorf(format string, args ...any)
 }
 
 // DefaultLogger returns a Logger implementation using the standard logrus logger.
