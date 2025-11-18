@@ -32,6 +32,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/cgroup"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/pipeline"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
@@ -162,6 +163,12 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		symbolQueryMaxBatchSize = 1
 	}
 
+	memoryBudget, err := cgroup.GetMemoryBudget()
+	// Couldn't read the budget from cgroups
+	if err != nil {
+		log.Warnf("Failed to fetch cgroup memory limit: %v", err)
+	}
+
 	symbolRetrievalStage := pipeline.NewStage(symbolRetrievalQueue,
 		d.symbolRetrievalWorker,
 		pipeline.WithConcurrency(defaultRetrievalWorkerCount),
@@ -173,9 +180,16 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		d.queryWorker,
 		pipeline.WithConcurrency(queryWorkerCount),
 		pipeline.WithOutputChanSize(defaultUploadQueueSize))
-	uploadStage := pipeline.NewSinkStage(queryStage.GetOutputChannel(),
-		d.uploadWorker,
-		pipeline.WithConcurrency(defaultUploadWorkerCount))
+	var uploadStage pipeline.Stage
+	if memoryBudget != -1 {
+		fmt.Println("memory budget of", memoryBudget)
+		uploadStage = pipeline.NewBudgetedSinkStage(queryStage.GetOutputChannel(), memoryBudget,
+			GetSize, d.uploadWorker, pipeline.WithConcurrency(defaultUploadWorkerCount))
+	} else {
+		uploadStage = pipeline.NewSinkStage(queryStage.GetOutputChannel(),
+			d.uploadWorker,
+			pipeline.WithConcurrency(defaultUploadWorkerCount))
+	}
 
 	d.pipeline = pipeline.NewPipeline(symbolRetrievalQueue,
 		symbolRetrievalStage, batchingStage, queryStage, uploadStage)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	"golang.org/x/sync/semaphore"
 )
 
 type Stage interface {
@@ -39,6 +40,15 @@ type BatchingStageWorker[In any] struct {
 	clock         clockwork.Clock
 }
 
+type BudgetedSinkStageWorker[In any] struct {
+	ConsumerWorker[In]
+
+	workChan       chan In
+	budget         semaphore.Weighted
+	budgetCapacity int64
+	costCalculator func(*In) int64
+}
+
 func newConsumerWorker[In any](inputChan <-chan In, concurrency int, fun func(context.Context, In)) ConsumerWorker[In] {
 	return ConsumerWorker[In]{
 		inputChan:      inputChan,
@@ -51,6 +61,17 @@ func NewSinkStage[In any](inputChan <-chan In, fun func(context.Context, In), op
 	opts := NewStageOptions(options...)
 	w := newConsumerWorker(inputChan, opts.concurrency, fun)
 	return &w
+}
+
+func NewBudgetedSinkStage[In any](inputChan <-chan In, budgetCapacity int64, costCalculator func(*In) int64, processingFunc func(context.Context, In), options ...StageOption) *BudgetedSinkStageWorker[In] {
+	opts := NewStageOptions(options...)
+	return &BudgetedSinkStageWorker[In]{
+		ConsumerWorker: newConsumerWorker(inputChan, opts.concurrency, processingFunc),
+		workChan:       make(chan In, 100),
+		budget:         *semaphore.NewWeighted(budgetCapacity),
+		budgetCapacity: budgetCapacity,
+		costCalculator: costCalculator,
+	}
 }
 
 func NewStage[In any, Out any](inputChan <-chan In, fun func(context.Context, In, chan<- Out), options ...StageOption) *StageWorker[In, Out] {
@@ -83,6 +104,52 @@ func NewBatchingStageWithClock[In any](inputChan <-chan In, batchInterval time.D
 	}
 }
 
+func (w *BudgetedSinkStageWorker[In]) Start(ctx context.Context) {
+	worker := func(obj In, cost int64) {
+		w.wg.Add(1)
+		defer w.wg.Done()
+		w.processingFunc(ctx, obj)
+		w.budget.Release(cost)
+	}
+
+	for range w.concurrency {
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case input, ok := <-w.inputChan:
+					if !ok {
+						return
+					}
+					w.workChan <- input
+				}
+			}
+		}()
+	}
+
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		for input := range w.workChan {
+			cost := w.costCalculator(&input)
+			if w.budget.TryAcquire(cost) {
+				go worker(input, cost)
+				continue
+			}
+
+			// will never get processed
+			if cost > w.budgetCapacity {
+				// log warning/error that too big to be processed: skipped
+				continue
+			}
+			w.workChan <- input
+		}
+	}()
+}
+
 func (w *ConsumerWorker[In]) Start(ctx context.Context) {
 	for range w.concurrency {
 		w.wg.Add(1)
@@ -110,6 +177,11 @@ func (w *ConsumerWorker[In]) Stop() {
 func (w *StageWorker[In, Out]) Stop() {
 	w.ConsumerWorker.Stop()
 	close(w.outputChan)
+}
+
+func (w *BudgetedSinkStageWorker[In]) Stop() {
+	close(w.workChan)
+	w.ConsumerWorker.Stop()
 }
 
 func (w *StageWorker[In, Out]) GetOutputChannel() <-chan Out {
