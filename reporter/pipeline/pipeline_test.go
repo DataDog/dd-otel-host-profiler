@@ -8,6 +8,7 @@ package pipeline
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,7 +97,7 @@ func TestPipeline(t *testing.T) {
 			input <- i
 		}
 		var output [][]int
-		stage1 := NewBatchingStage[int](input, 0, 10)
+		stage1 := NewBatchingStage(input, 0, 10)
 		stage2 := NewSinkStage(stage1.GetOutputChannel(),
 			func(_ context.Context, x []int) {
 				output = append(output, x)
@@ -135,5 +136,44 @@ func TestPipeline(t *testing.T) {
 		}
 		p.Stop()
 		require.Len(t, <-output, 5)
+	})
+
+	t.Run("PipelineWithBudgetedSinkStage", func(t *testing.T) {
+		input := make(chan int, 100)
+
+		const budgetCapacity int64 = 15
+		var inflightCost int64
+		var maxCost int64
+		processingFunction := func(_ context.Context, i int) {
+			atomic.AddInt64(&inflightCost, int64(i))
+
+			newCost := atomic.LoadInt64(&inflightCost)
+			for {
+				oldMax := atomic.LoadInt64(&maxCost)
+				if newCost <= oldMax || atomic.CompareAndSwapInt64(&maxCost, oldMax, newCost) {
+					break
+				}
+			}
+			time.Sleep(time.Millisecond * 2)
+			atomic.AddInt64(&inflightCost, -int64(i))
+		}
+
+		budgetedProcessingFunc := NewBudgetedProcessingFunc(budgetCapacity,
+			func(i int) int64 {
+				return int64(i)
+			},
+			processingFunction)
+		budgetedStage := NewSinkStage(input, budgetedProcessingFunc)
+		p := NewPipeline(input, budgetedStage)
+		p.Start(t.Context())
+		inputs := []int{5, 2, 3, 1, 1, 1, 1, 1, 1, 4, 10, 15, 11, 7, 8, 9}
+		for _, i := range inputs {
+			input <- i
+		}
+		time.Sleep(time.Millisecond * 40)
+		p.Stop()
+		if maxInFlight := atomic.LoadInt64(&maxCost); maxInFlight > budgetCapacity {
+			t.Fatal("the max in flight is higher than the overall budget!")
+		}
 	})
 }

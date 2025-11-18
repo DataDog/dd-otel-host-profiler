@@ -30,6 +30,12 @@ type ElfWithBackendSources struct {
 	BackendSymbolSources []SymbolQueryResult
 }
 
+// GetSize returns the size of the underlying elf.
+// It will return 0 if the size can't be retrieved.
+func (e *ElfWithBackendSources) GetSize() int64 {
+	return e.Elf.GetSize()
+}
+
 func invokeQuerier(ctx context.Context, buildIDs []string, arch string, querier SymbolQuerier, ind int,
 	buildIDToResult map[string][]*ElfWithBackendSources) {
 	symbolFiles, err := querier.QuerySymbols(ctx, buildIDs, arch)

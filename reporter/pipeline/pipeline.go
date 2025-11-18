@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	"golang.org/x/sync/semaphore"
 )
 
 type Stage interface {
@@ -37,6 +38,23 @@ type BatchingStageWorker[In any] struct {
 	batchSize     int
 	batchInterval time.Duration
 	clock         clockwork.Clock
+}
+
+// NewBudgetedProcessingFunc wraps a processing function with memory budget management.
+// The wrapped function will automatically acquire budget before processing and release it after.
+func NewBudgetedProcessingFunc[In any](budget int64, costCalculator func(In) int64, fun func(context.Context, In)) func(context.Context, In) {
+	budgetSemaphore := semaphore.NewWeighted(budget)
+	return func(ctx context.Context, i In) {
+		cost := costCalculator(i)
+
+		err := budgetSemaphore.Acquire(ctx, cost)
+		if err != nil {
+			return // the context is done
+		}
+		defer budgetSemaphore.Release(cost)
+
+		fun(ctx, i)
+	}
 }
 
 func newConsumerWorker[In any](inputChan <-chan In, concurrency int, fun func(context.Context, In)) ConsumerWorker[In] {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync/atomic"
 
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -122,6 +123,47 @@ func (e *Elf) Close() {
 	if e.elfDataDump != "" {
 		os.Remove(e.elfDataDump)
 	}
+}
+
+var BiggestBinarySize int64
+
+func updateBiggestBinarySize(size int64) {
+	for {
+		current := atomic.LoadInt64(&BiggestBinarySize)
+		if current >= size {
+			break
+		}
+		if atomic.CompareAndSwapInt64(&BiggestBinarySize, current, size) {
+			break
+		}
+	}
+}
+
+// GetSize returns the size of the elf file or data it contains.
+// It will return 0 if the size can't be retrieved.
+func (e *Elf) GetSize() int64 {
+	elfPath := e.SymbolPathOnDisk()
+	var size int64
+	// vdso
+	if elfPath == "" {
+		data, err := e.wrapper.ElfData()
+		if err != nil {
+			log.Warnf("Failed to get elf data: %v", err)
+			return 0
+		}
+		size = int64(len(data))
+	} else {
+		fi, err := os.Stat(elfPath)
+		if err != nil {
+			log.Warnf("Failed to get elf file: %v", err)
+			return 0
+		}
+		size = fi.Size()
+	}
+
+	updateBiggestBinarySize(size)
+
+	return size
 }
 
 func (e *Elf) SymbolSource() Source {
