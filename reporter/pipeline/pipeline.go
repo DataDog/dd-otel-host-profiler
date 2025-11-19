@@ -137,13 +137,14 @@ func (w *BudgetedSinkStageWorker[In]) Start(ctx context.Context) {
 		for input := range w.workChan {
 			cost := w.costCalculator(&input)
 			if w.budget.TryAcquire(cost) {
+				log.Infof("Treating process with cost %v: %v", cost, input)
 				go worker(input, cost)
 				continue
 			}
 
 			// will never get processed
 			if cost > w.budgetCapacity {
-				log.Warnf("The processing cost is higher than the budget capacity, skipping %v", input)
+				log.Warnf("is higher than the budget capacity, skipping %v", input)
 				continue
 			}
 			w.workChan <- input
