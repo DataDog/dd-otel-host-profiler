@@ -11,6 +11,7 @@ import (
 	"debug/elf"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -21,7 +22,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -84,12 +84,20 @@ func (d *dummyProcess) OpenELF(name string) (*pfelf.File, error) {
 	return pfelf.Open(name)
 }
 
-func (d *dummyProcess) ExtractAsFile(name string) (string, error) {
-	return path.Join("/proc", strconv.Itoa(int(d.pid)), "root", name), nil
-}
-
 func (d *dummyProcess) Close() error {
 	return nil
+}
+
+func (d *dummyProcess) GetExe() (libpf.String, error) {
+	str, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", d.pid))
+	if err != nil {
+		return libpf.NullString, err
+	}
+	return libpf.Intern(str), nil
+}
+
+func (d *dummyProcess) GetProcessMeta(_ process.MetaConfig) process.ProcessMeta {
+	return process.ProcessMeta{}
 }
 
 func newExecutableMetadata(t *testing.T, filePath, goBuildID string) *reporter.ExecutableMetadata {
@@ -241,8 +249,47 @@ func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.S
 	case symbol.SourceSymbolTable:
 		require.NotNil(t, findSymbol(elfFile, "main.main"))
 	case symbol.SourceDebugInfo:
-		require.True(t, pfelf.HasDWARFData(elfFile))
+		require.True(t, hasDWARFData(elfFile))
 	}
+}
+
+func hasDWARFData(elfFile *elf.File) bool {
+	hasBuildID := false
+	hasDebugStr := false
+	for _, section := range elfFile.Sections {
+		// NOBITS indicates that the section is actually empty, regardless of the size in the
+		// section header.
+		if section.Type == elf.SHT_NOBITS {
+			continue
+		}
+
+		if section.Name == ".note.gnu.build-id" {
+			hasBuildID = true
+		}
+
+		if section.Name == ".debug_str" || section.Name == ".zdebug_str" ||
+			section.Name == ".debug_str.dwo" {
+			hasDebugStr = section.Size > 0
+		}
+
+		// Some files have suspicious near-empty, partially stripped sections; consider them as not
+		// having DWARF data.
+		// The simplest binary gcc 10 can generate ("return 0") has >= 48 bytes for each section.
+		// Let's not worry about executables that may not verify this, as they would not be of
+		// interest to us.
+		if section.Size < 32 {
+			continue
+		}
+
+		if section.Name == ".debug_info" || section.Name == ".zdebug_info" {
+			return true
+		}
+	}
+
+	// Some alternate debug files only have a .debug_str section. For these we want to return true.
+	// Use the absence of program headers and presence of a Build ID as heuristic to identify
+	// alternate debug files.
+	return len(elfFile.Progs) == 0 && hasBuildID && hasDebugStr
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {

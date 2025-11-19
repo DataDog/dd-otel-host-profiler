@@ -11,10 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 	"go.opentelemetry.io/ebpf-profiler/process"
 )
@@ -41,6 +44,14 @@ var selfPid = os.Getpid()
 
 type FileHelper interface {
 	ExtractAsFile(string) (string, error)
+}
+
+type ProcessFileHelper struct {
+	pid libpf.PID
+}
+
+func (p *ProcessFileHelper) ExtractAsFile(filePath string) (string, error) {
+	return path.Join("/proc", strconv.Itoa(int(p.pid)), "root", filePath), nil
 }
 
 type elfWrapper struct {
@@ -77,7 +88,7 @@ func newElfWrapperFromVDSO(m *process.Mapping, pr process.Process) (ef *elfWrapp
 	if err != nil {
 		return nil, fmt.Errorf("failed to create elf file from vdso memory for PID %d: %w", pr.PID(), err)
 	}
-	return &elfWrapper{elfFile: elfFile, data: data, helper: pr}, nil
+	return &elfWrapper{elfFile: elfFile, data: data, helper: &ProcessFileHelper{pid: pr.PID()}}, nil
 }
 
 func newElfWrapperFromMapping(m *process.Mapping, pr process.Process) (ef *elfWrapper, err error) {
@@ -110,7 +121,7 @@ func newElfWrapperFromMapping(m *process.Mapping, pr process.Process) (ef *elfWr
 		return nil, fmt.Errorf("failed to cast mapping file %s to *os.File for PID %d", m.Path.String(), pr.PID())
 	}
 
-	return newElfWrapper(elfFile, m.Path.String(), f, pr, nil)
+	return newElfWrapper(elfFile, m.Path.String(), f, &ProcessFileHelper{pid: pr.PID()}, nil)
 }
 
 func newElfWrapperFromFile(filePath string, helper FileHelper) (ef *elfWrapper, err error) {
