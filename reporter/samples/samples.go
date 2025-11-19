@@ -43,7 +43,7 @@ type TraceAndMetaKey struct {
 type TraceEvents struct {
 	samples.TraceEvents
 
-	CustomLabels []map[string]string
+	CustomLabels []map[libpf.String]libpf.String
 }
 
 type ProcessContext struct {
