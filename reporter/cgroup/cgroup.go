@@ -20,6 +20,7 @@ const (
 	v1MaxMemory    = "memory.limit_in_bytes"
 	v2MaxMemory    = "memory.max"
 	memoryMaxUnset = 0x7FFFFFFFFFFFF000
+	budgetRatio    = 0.1
 )
 
 func isCgroup2UnifiedMode() bool {
@@ -114,5 +115,5 @@ func GetMemoryBudget() (int64, error) {
 		return maxMemory, err
 	}
 
-	return int64(float32(maxMemory) * 0.8), nil
+	return int64(float32(maxMemory) * budgetRatio), nil
 }

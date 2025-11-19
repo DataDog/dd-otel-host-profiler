@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -142,7 +143,7 @@ func (w *BudgetedSinkStageWorker[In]) Start(ctx context.Context) {
 
 			// will never get processed
 			if cost > w.budgetCapacity {
-				// log warning/error that too big to be processed: skipped
+				log.Warnf("The processing cost is higher than the budget capacity, skipping %v", input)
 				continue
 			}
 			w.workChan <- input

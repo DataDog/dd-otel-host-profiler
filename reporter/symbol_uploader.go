@@ -182,6 +182,7 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		pipeline.WithOutputChanSize(defaultUploadQueueSize))
 	var uploadStage pipeline.Stage
 	if memoryBudget != -1 {
+		log.Debugf("Symbol Uploader's memory budget is %v bytes", memoryBudget)
 		fmt.Println("memory budget of", memoryBudget)
 		uploadStage = pipeline.NewBudgetedSinkStage(queryStage.GetOutputChannel(), memoryBudget,
 			GetSize, d.uploadWorker, pipeline.WithConcurrency(defaultUploadWorkerCount))
