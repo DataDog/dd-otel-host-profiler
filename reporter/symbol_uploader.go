@@ -310,12 +310,12 @@ func (d *DatadogSymbolUploader) getSymbolSourceWithGoPCLnTab(e *symbol.Elf) (sym
 	if !e.IsGolang() || !d.uploadGoPCLnTab {
 		return symbolSource, nil
 	}
-	goPCLnTabInfo, err := e.GoPCLnTab()
-	if err != nil {
-		log.Infof("Failed to extract GoPCLnTab for executable %s: %v", e, err)
-		return symbolSource, nil
-	}
-	return max(symbolSource, symbol.SourceGoPCLnTab), goPCLnTabInfo
+	// goPCLnTabInfo, err := e.GoPCLnTab()
+	// if err != nil {
+	// 	log.Infof("Failed to extract GoPCLnTab for executable %s: %v", e, err)
+	return symbolSource, nil
+	// }
+	// return max(symbolSource, symbol.SourceGoPCLnTab), goPCLnTabInfo
 }
 
 func (d *DatadogSymbolUploader) getSymbolsFromDisk(execMeta *reporter.ExecutableMetadata) *symbol.Elf {

@@ -159,7 +159,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 
 	key := rsamples.TraceAndMetaKey{
 		Hash: trace.Hash,
-		Comm: meta.Comm,
+		Comm: meta.Comm.String(),
 		Pid:  meta.PID,
 		Tid:  meta.TID,
 	}
@@ -194,7 +194,11 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		events.Timestamps = append(events.Timestamps, uint64(meta.Timestamp))
 		events.OffTimes = append(events.OffTimes, meta.OffTime)
 		if r.config.CollectContext {
-			events.CustomLabels = append(events.CustomLabels, trace.CustomLabels)
+			customLabels := make(map[string]string)
+			for k, v := range trace.CustomLabels {
+				customLabels[k.String()] = v.String()
+			}
+			events.CustomLabels = append(events.CustomLabels, customLabels)
 		}
 		perOriginEvents[key] = events
 		return nil
@@ -202,7 +206,11 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 
 	var customLabels []map[string]string
 	if r.config.CollectContext {
-		customLabels = []map[string]string{trace.CustomLabels}
+		customLabel := make(map[string]string)
+		for k, v := range trace.CustomLabels {
+			customLabel[k.String()] = v.String()
+		}
+		customLabels = []map[string]string{customLabel}
 	}
 
 	perOriginEvents[key] = &rsamples.TraceEvents{
@@ -567,7 +575,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	if err != nil {
 		// Process might have exited since the trace was collected or process is a kernel thread.
 		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
-		execPath = meta.ExecutablePath
+		execPath = meta.ExecutablePath.String()
 	}
 	// Trim the "(deleted)" suffix if it exists.
 	// This can happen when the executable has been deleted or replaced while the process is running.
@@ -578,14 +586,15 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 		processName = string(name)
 	} else {
 		r.processAlreadyExitedCount++
-		processName = meta.ProcessName
+		processName = meta.ProcessName.String()
 	}
 
 	var service string
 	var ok bool
 	for _, envVarName := range ServiceNameEnvVars {
-		service, ok = meta.EnvVars[envVarName]
+		serviceLibpfString, ok := meta.EnvVars[libpf.Intern(envVarName)]
 		if ok {
+			service = serviceLibpfString.String()
 			break
 		}
 	}
@@ -596,7 +605,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	// This can occur when a container is started, during startup the process is runc
 	// (without the final container environment) that then execs into the final binary
 	// with the container environment.
-	if !ok && meta.ExecutablePath != execPath {
+	if !ok && meta.ExecutablePath.String() != execPath {
 		service = getServiceName(pid)
 	}
 
@@ -629,8 +638,8 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	case processName != "":
 		service = processName
 		inferredService = true
-	case meta.Comm != "":
-		service = meta.Comm
+	case meta.Comm.String() != "":
+		service = meta.Comm.String()
 		inferredService = true
 	default:
 		service = unknownServiceStr
@@ -638,13 +647,13 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	}
 
 	var containerMetadata containermetadata.ContainerMetadata
-	if meta.ContainerID != "" && r.config.EnableSplitByService {
+	if meta.ContainerID.String() != "" && r.config.EnableSplitByService {
 		// Use containerID when found by the eBPF profiler and not other container metadata is needed
 		// (ie. split by service is enabled).
 		// eBPF profiler only supports cgroup v2 and even with cgroup v2, depending on Kubernetes settings,
 		// containerID might not be available in /proc/<pid>/cgroup.
 		containerMetadata = containermetadata.ContainerMetadata{
-			EntityID: "ci-" + meta.ContainerID,
+			EntityID: "ci-" + meta.ContainerID.String(),
 		}
 	} else {
 		containerMetadata, err = r.containerMetadataProvider.GetContainerMetadata(pid)

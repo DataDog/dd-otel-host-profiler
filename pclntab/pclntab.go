@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"unsafe"
 
-	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 )
 
@@ -187,62 +186,62 @@ func goFuncOffset(v HeaderVersion) (uint32, error) {
 	return 40 * ptrSize, nil
 }
 
-func FindModuleData(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) (data []byte, address uint64, returnedErr error) {
-	// First try to locate module data by looking for runtime.firstmoduledata symbol.
-	if symtab != nil {
-		if symAddr, err := symtab.LookupSymbolAddress("runtime.firstmoduledata"); err == nil {
-			addr := uint64(symAddr)
-			section := sectionContaining(ef, addr)
-			if section == nil {
-				return nil, 0, errors.New("could not find section containing runtime.firstmoduledata")
-			}
-			data, err := section.Data(maxBytesGoPclntab)
-			if err != nil {
-				return nil, 0, fmt.Errorf("could not read section containing runtime.firstmoduledata: %w", err)
-			}
-			return data[addr-section.Addr:], addr, nil
-		}
-	}
+// func FindModuleData(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) (data []byte, address uint64, returnedErr error) {
+// 	// First try to locate module data by looking for runtime.firstmoduledata symbol.
+// 	if symtab != nil {
+// 		if symAddr, err := symtab.LookupSymbolAddress("runtime.firstmoduledata"); err == nil {
+// 			addr := uint64(symAddr)
+// 			section := sectionContaining(ef, addr)
+// 			if section == nil {
+// 				return nil, 0, errors.New("could not find section containing runtime.firstmoduledata")
+// 			}
+// 			data, err := section.Data(maxBytesGoPclntab)
+// 			if err != nil {
+// 				return nil, 0, fmt.Errorf("could not read section containing runtime.firstmoduledata: %w", err)
+// 			}
+// 			return data[addr-section.Addr:], addr, nil
+// 		}
+// 	}
 
-	// If runtime.firstmoduledata is missing, heuristically search for gopclntab address in .noptrdata section.
-	// https://www.mandiant.com/resources/blog/golang-internals-symbol-recovery
-	noPtrSection := ef.Section(".noptrdata")
-	noPtrSectionData, err := noPtrSection.Data(maxBytesGoPclntab)
-	if err != nil {
-		return nil, 0, fmt.Errorf("could not read .noptrdata section: %w", err)
-	}
+// 	// If runtime.firstmoduledata is missing, heuristically search for gopclntab address in .noptrdata section.
+// 	// https://www.mandiant.com/resources/blog/golang-internals-symbol-recovery
+// 	noPtrSection := ef.Section(".noptrdata")
+// 	noPtrSectionData, err := noPtrSection.Data(maxBytesGoPclntab)
+// 	if err != nil {
+// 		return nil, 0, fmt.Errorf("could not read .noptrdata section: %w", err)
+// 	}
 
-	var buf [2 * ptrSize]byte
-	binary.NativeEndian.PutUint64(buf[:], goPCLnTabInfo.Address)
-	binary.NativeEndian.PutUint64(buf[ptrSize:], goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.FuncNameTabOffset)
-	for i := 0; i < len(noPtrSectionData)-19*ptrSize; i += ptrSize {
-		n := bytes.Index(noPtrSectionData[i:], buf[:])
-		if n < 0 {
-			break
-		}
-		i += n
+// 	var buf [2 * ptrSize]byte
+// 	binary.NativeEndian.PutUint64(buf[:], goPCLnTabInfo.Address)
+// 	binary.NativeEndian.PutUint64(buf[ptrSize:], goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.FuncNameTabOffset)
+// 	for i := 0; i < len(noPtrSectionData)-19*ptrSize; i += ptrSize {
+// 		n := bytes.Index(noPtrSectionData[i:], buf[:])
+// 		if n < 0 {
+// 			break
+// 		}
+// 		i += n
 
-		off := i + 4*ptrSize
-		cuTabAddr := binary.NativeEndian.Uint64(noPtrSectionData[off:])
-		off += 3 * ptrSize
-		fileTabAddr := binary.NativeEndian.Uint64(noPtrSectionData[off:])
-		off += 3 * ptrSize
-		pcTabAddr := binary.NativeEndian.Uint64(noPtrSectionData[off:])
-		off += 6 * ptrSize
-		funcTabAddr := binary.NativeEndian.Uint64(noPtrSectionData[off:])
+// 		off := i + 4*ptrSize
+// 		cuTabAddr := binary.NativeEndian.Uint64(noPtrSectionData[off:])
+// 		off += 3 * ptrSize
+// 		fileTabAddr := binary.NativeEndian.Uint64(noPtrSectionData[off:])
+// 		off += 3 * ptrSize
+// 		pcTabAddr := binary.NativeEndian.Uint64(noPtrSectionData[off:])
+// 		off += 6 * ptrSize
+// 		funcTabAddr := binary.NativeEndian.Uint64(noPtrSectionData[off:])
 
-		// Check if the offsets are valid.
-		if cuTabAddr != goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.CuTabOffset ||
-			fileTabAddr != goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.FileTabOffset ||
-			pcTabAddr != goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.PcTabOffset ||
-			funcTabAddr != goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.FuncTabOffset {
-			continue
-		}
-		return noPtrSectionData[n:], noPtrSection.Addr + uint64(n), nil
-	}
+// 		// Check if the offsets are valid.
+// 		if cuTabAddr != goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.CuTabOffset ||
+// 			fileTabAddr != goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.FileTabOffset ||
+// 			pcTabAddr != goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.PcTabOffset ||
+// 			funcTabAddr != goPCLnTabInfo.Address+goPCLnTabInfo.Offsets.FuncTabOffset {
+// 			continue
+// 		}
+// 		return noPtrSectionData[n:], noPtrSection.Addr + uint64(n), nil
+// 	}
 
-	return nil, 0, errors.New("could not find moduledata")
-}
+// 	return nil, 0, errors.New("could not find moduledata")
+// }
 
 func findGoFuncEnd112(data []byte) int {
 	elemSize := int(unsafe.Sizeof(rawInlinedCall112{}))
@@ -278,48 +277,48 @@ func findGoFuncEnd(data []byte, version HeaderVersion) int {
 	return findGoFuncEnd120(data)
 }
 
-func findGoFuncVal(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) (uint64, error) {
-	// First try to locate goFunc with go:func.* symbol.
-	if symtab != nil {
-		if goFuncSym, err := symtab.LookupSymbol("go:func.*"); err == nil {
-			return uint64(goFuncSym.Address), nil
-		}
-		if goFuncSym, err := symtab.LookupSymbol("go.func.*"); err == nil {
-			return uint64(goFuncSym.Address), nil
-		}
-	}
+// func findGoFuncVal(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) (uint64, error) {
+// 	// First try to locate goFunc with go:func.* symbol.
+// 	if symtab != nil {
+// 		if goFuncSym, err := symtab.LookupSymbol("go:func.*"); err == nil {
+// 			return uint64(goFuncSym.Address), nil
+// 		}
+// 		if goFuncSym, err := symtab.LookupSymbol("go.func.*"); err == nil {
+// 			return uint64(goFuncSym.Address), nil
+// 		}
+// 	}
 
-	moduleData, _, err := FindModuleData(ef, goPCLnTabInfo, symtab)
-	if err != nil {
-		return 0, fmt.Errorf("could not find module data: %w", err)
-	}
-	goFuncOff, err := goFuncOffset(goPCLnTabInfo.Version)
-	if err != nil {
-		return 0, fmt.Errorf("could not get go func offset: %w", err)
-	}
-	if goFuncOff+ptrSize >= uint32(len(moduleData)) {
-		return 0, fmt.Errorf("invalid go func offset: %v", goFuncOff)
-	}
-	goFuncVal := binary.LittleEndian.Uint64(moduleData[goFuncOff:])
+// 	moduleData, _, err := FindModuleData(ef, goPCLnTabInfo, symtab)
+// 	if err != nil {
+// 		return 0, fmt.Errorf("could not find module data: %w", err)
+// 	}
+// 	goFuncOff, err := goFuncOffset(goPCLnTabInfo.Version)
+// 	if err != nil {
+// 		return 0, fmt.Errorf("could not get go func offset: %w", err)
+// 	}
+// 	if goFuncOff+ptrSize >= uint32(len(moduleData)) {
+// 		return 0, fmt.Errorf("invalid go func offset: %v", goFuncOff)
+// 	}
+// 	goFuncVal := binary.LittleEndian.Uint64(moduleData[goFuncOff:])
 
-	return goFuncVal, nil
-}
+// 	return goFuncVal, nil
+// }
 
-func FindGoFunc(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) (data []byte, goFuncVal uint64, err error) {
-	goFuncVal, err = findGoFuncVal(ef, goPCLnTabInfo, symtab)
-	if err != nil {
-		return nil, 0, fmt.Errorf("could not find go func: %w", err)
-	}
-	sec := sectionContaining(ef, goFuncVal)
-	if sec == nil {
-		return nil, 0, errors.New("could not find section containing gofunc")
-	}
-	secData, err := sec.Data(maxBytesGoPclntab)
-	if err != nil {
-		return nil, 0, fmt.Errorf("could not read section containing gofunc: %w", err)
-	}
-	return secData[goFuncVal-sec.Addr:], goFuncVal, nil
-}
+// func FindGoFunc(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, symtab *libpf.SymbolMap) (data []byte, goFuncVal uint64, err error) {
+// 	goFuncVal, err = findGoFuncVal(ef, goPCLnTabInfo, symtab)
+// 	if err != nil {
+// 		return nil, 0, fmt.Errorf("could not find go func: %w", err)
+// 	}
+// 	sec := sectionContaining(ef, goFuncVal)
+// 	if sec == nil {
+// 		return nil, 0, errors.New("could not find section containing gofunc")
+// 	}
+// 	secData, err := sec.Data(maxBytesGoPclntab)
+// 	if err != nil {
+// 		return nil, 0, fmt.Errorf("could not read section containing gofunc: %w", err)
+// 	}
+// 	return secData[goFuncVal-sec.Addr:], goFuncVal, nil
+// }
 
 func pclntabHeaderSignature(arch elf.Machine) []byte {
 	var quantum byte
@@ -439,32 +438,32 @@ func (g *GoPCLnTabInfo) computePCLnTabSize() int {
 	return alignUp(int(g.Offsets.FuncTabOffset)+funcDataSize, ptrSize)
 }
 
-func (g *GoPCLnTabInfo) trimGoFunc(goFuncData []byte, goFuncAddr uint64, symtab *libpf.SymbolMap) ([]byte, error) {
-	if symtab != nil {
-		// symbol runtime.gcbits.* follows goFunc, try to use it to determine the end of goFunc.
-		nextSymAddr, err := symtab.LookupSymbolAddress("runtime.gcbits.*")
-		if err == nil && uint64(nextSymAddr) > goFuncAddr {
-			dist := uint64(nextSymAddr) - goFuncAddr
-			if dist < uint64(len(goFuncData)) {
-				return goFuncData[:dist], nil
-			}
-		}
-	}
+// func (g *GoPCLnTabInfo) trimGoFunc(goFuncData []byte, goFuncAddr uint64, symtab *libpf.SymbolMap) ([]byte, error) {
+// 	if symtab != nil {
+// 		// symbol runtime.gcbits.* follows goFunc, try to use it to determine the end of goFunc.
+// 		nextSymAddr, err := symtab.LookupSymbolAddress("runtime.gcbits.*")
+// 		if err == nil && uint64(nextSymAddr) > goFuncAddr {
+// 			dist := uint64(nextSymAddr) - goFuncAddr
+// 			if dist < uint64(len(goFuncData)) {
+// 				return goFuncData[:dist], nil
+// 			}
+// 		}
+// 	}
 
-	// Iterate over the functions to find the maximum offset of the inline tree.
-	maxInlineTreeOffset := g.findMaxInlineTreeOffset()
+// 	// Iterate over the functions to find the maximum offset of the inline tree.
+// 	maxInlineTreeOffset := g.findMaxInlineTreeOffset()
 
-	if maxInlineTreeOffset == -1 || maxInlineTreeOffset >= len(goFuncData) {
-		return nil, fmt.Errorf("invalid inline tree offset: %v", maxInlineTreeOffset)
-	}
+// 	if maxInlineTreeOffset == -1 || maxInlineTreeOffset >= len(goFuncData) {
+// 		return nil, fmt.Errorf("invalid inline tree offset: %v", maxInlineTreeOffset)
+// 	}
 
-	// maxInlineTreeOffset is the base address of the inlined calls for a function
-	// find the end of the goFunc by finding heuristically the end of the last inlined call.
-	goFuncEndOffset := findGoFuncEnd(goFuncData[maxInlineTreeOffset:], g.Version)
-	goFuncSize := maxInlineTreeOffset + goFuncEndOffset
+// 	// maxInlineTreeOffset is the base address of the inlined calls for a function
+// 	// find the end of the goFunc by finding heuristically the end of the last inlined call.
+// 	goFuncEndOffset := findGoFuncEnd(goFuncData[maxInlineTreeOffset:], g.Version)
+// 	goFuncSize := maxInlineTreeOffset + goFuncEndOffset
 
-	return goFuncData[:goFuncSize], nil
-}
+// 	return goFuncData[:goFuncSize], nil
+// }
 
 func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 	var version HeaderVersion
@@ -581,120 +580,120 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 	}, nil
 }
 
-func FindGoPCLnTab(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
-	return findGoPCLnTab(ef, false)
-}
+// func FindGoPCLnTab(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
+// 	return findGoPCLnTab(ef, false)
+// }
 
-func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
-	if !disableRecover {
-		// gopclntab parsing code might panic if the data is corrupt.
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("panic while searching pclntab: %v", r)
-			}
-		}()
-	}
+// func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
+// 	if !disableRecover {
+// 		// gopclntab parsing code might panic if the data is corrupt.
+// 		defer func() {
+// 			if r := recover(); r != nil {
+// 				err = fmt.Errorf("panic while searching pclntab: %v", r)
+// 			}
+// 		}()
+// 	}
 
-	var data []byte
-	var goPCLnTabAddr uint64
-	var symtab *libpf.SymbolMap
+// 	var data []byte
+// 	var goPCLnTabAddr uint64
+// 	var symtab *libpf.SymbolMap
 
-	goPCLnTabEndKnown := true
-	if s := ef.Section(".gopclntab"); s != nil {
-		if data, err = s.Data(maxBytesGoPclntab); err != nil {
-			return nil, fmt.Errorf("failed to load .gopclntab: %w", err)
-		}
-		goPCLnTabAddr = s.Addr
-	} else if s := ef.Section(".data.rel.ro.gopclntab"); s != nil {
-		if data, err = s.Data(maxBytesGoPclntab); err != nil {
-			return nil, fmt.Errorf("failed to load .data.rel.ro.gopclntab: %w", err)
-		}
-		goPCLnTabAddr = s.Addr
-	} else if s := ef.Section(".go.buildinfo"); s != nil {
-		symtab, err = ef.ReadSymbols()
-		if err != nil {
-			// It seems the Go binary was stripped, use the heuristic approach to get find gopclntab.
-			// Note that `SearchGoPclntab` returns a slice starting from gopcltab header to the end of segment
-			// containing gopclntab. Therefore this slice might contain additional data after gopclntab.
-			// There does not seem to be an easy way to get the end of gopclntab segment without parsing the
-			// gopclntab itself.
-			if data, goPCLnTabAddr, err = SearchGoPclntab(ef); err != nil {
-				return nil, fmt.Errorf("failed to search .gopclntab: %w", err)
-			}
-			// Truncate the data to the end of the section containing gopclntab.
-			if sec := sectionContaining(ef, goPCLnTabAddr); sec != nil {
-				data = data[:sec.Addr+sec.Size-goPCLnTabAddr]
-			}
-			goPCLnTabEndKnown = false
-		} else {
-			var start, end libpf.SymbolValue
-			start, err = symtab.LookupSymbolAddress("runtime.pclntab")
-			if err != nil {
-				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
-			}
-			end, err = symtab.LookupSymbolAddress("runtime.epclntab")
-			if err != nil {
-				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
-			}
-			if start >= end {
-				return nil, fmt.Errorf("invalid .gopclntab symbols: %v-%v", start, end)
-			}
-			data = make([]byte, end-start)
-			if _, err = ef.ReadVirtualMemory(data, int64(start)); err != nil {
-				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
-			}
-			goPCLnTabAddr = uint64(start)
-		}
-	}
+// 	goPCLnTabEndKnown := true
+// 	if s := ef.Section(".gopclntab"); s != nil {
+// 		if data, err = s.Data(maxBytesGoPclntab); err != nil {
+// 			return nil, fmt.Errorf("failed to load .gopclntab: %w", err)
+// 		}
+// 		goPCLnTabAddr = s.Addr
+// 	} else if s := ef.Section(".data.rel.ro.gopclntab"); s != nil {
+// 		if data, err = s.Data(maxBytesGoPclntab); err != nil {
+// 			return nil, fmt.Errorf("failed to load .data.rel.ro.gopclntab: %w", err)
+// 		}
+// 		goPCLnTabAddr = s.Addr
+// 	} else if s := ef.Section(".go.buildinfo"); s != nil {
+// 		symtab, err = ef.ReadSymbols()
+// 		if err != nil {
+// 			// It seems the Go binary was stripped, use the heuristic approach to get find gopclntab.
+// 			// Note that `SearchGoPclntab` returns a slice starting from gopcltab header to the end of segment
+// 			// containing gopclntab. Therefore this slice might contain additional data after gopclntab.
+// 			// There does not seem to be an easy way to get the end of gopclntab segment without parsing the
+// 			// gopclntab itself.
+// 			if data, goPCLnTabAddr, err = SearchGoPclntab(ef); err != nil {
+// 				return nil, fmt.Errorf("failed to search .gopclntab: %w", err)
+// 			}
+// 			// Truncate the data to the end of the section containing gopclntab.
+// 			if sec := sectionContaining(ef, goPCLnTabAddr); sec != nil {
+// 				data = data[:sec.Addr+sec.Size-goPCLnTabAddr]
+// 			}
+// 			goPCLnTabEndKnown = false
+// 		} else {
+// 			var start, end libpf.SymbolValue
+// 			start, err = symtab.LookupSymbolAddress("runtime.pclntab")
+// 			if err != nil {
+// 				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
+// 			}
+// 			end, err = symtab.LookupSymbolAddress("runtime.epclntab")
+// 			if err != nil {
+// 				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
+// 			}
+// 			if start >= end {
+// 				return nil, fmt.Errorf("invalid .gopclntab symbols: %v-%v", start, end)
+// 			}
+// 			data = make([]byte, end-start)
+// 			if _, err = ef.ReadVirtualMemory(data, int64(start)); err != nil {
+// 				return nil, fmt.Errorf("failed to load .gopclntab via symbols: %w", err)
+// 			}
+// 			goPCLnTabAddr = uint64(start)
+// 		}
+// 	}
 
-	if data == nil {
-		return nil, errors.New("file does not contain any of the gopclntab expected sections")
-	}
+// 	if data == nil {
+// 		return nil, errors.New("file does not contain any of the gopclntab expected sections")
+// 	}
 
-	goPCLnTabInfo, err = parseGoPCLnTab(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse .gopclntab: %w", err)
-	}
+// 	goPCLnTabInfo, err = parseGoPCLnTab(data)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to parse .gopclntab: %w", err)
+// 	}
 
-	goPCLnTabInfo.Address = goPCLnTabAddr
+// 	goPCLnTabInfo.Address = goPCLnTabAddr
 
-	if (!goPCLnTabEndKnown || additionalChecks) && goPCLnTabInfo.Version >= ver116 {
-		// Do not try to find the size of the .gopclntab for older versions because pclntab layout is different.
-		// Failure to find the size of the .gopclntab is not critical because gopclntab is in .data.rel.ro which
-		// most likely does not contain sensitive information.
-		goPCLnTabSize := goPCLnTabInfo.computePCLnTabSize()
-		if additionalChecks && goPCLnTabEndKnown {
-			// check that the computed size matches the known size
-			if len(goPCLnTabInfo.Data) != goPCLnTabSize {
-				return nil, fmt.Errorf("invalid computed .gopclntab size: %v (computed) vs %v (expected)", goPCLnTabSize, len(goPCLnTabInfo.Data))
-			}
-		}
+// 	if (!goPCLnTabEndKnown || additionalChecks) && goPCLnTabInfo.Version >= ver116 {
+// 		// Do not try to find the size of the .gopclntab for older versions because pclntab layout is different.
+// 		// Failure to find the size of the .gopclntab is not critical because gopclntab is in .data.rel.ro which
+// 		// most likely does not contain sensitive information.
+// 		goPCLnTabSize := goPCLnTabInfo.computePCLnTabSize()
+// 		if additionalChecks && goPCLnTabEndKnown {
+// 			// check that the computed size matches the known size
+// 			if len(goPCLnTabInfo.Data) != goPCLnTabSize {
+// 				return nil, fmt.Errorf("invalid computed .gopclntab size: %v (computed) vs %v (expected)", goPCLnTabSize, len(goPCLnTabInfo.Data))
+// 			}
+// 		}
 
-		if goPCLnTabSize != -1 && goPCLnTabSize < len(goPCLnTabInfo.Data) {
-			goPCLnTabInfo.Data = goPCLnTabInfo.Data[:goPCLnTabSize]
-		}
-	}
+// 		if goPCLnTabSize != -1 && goPCLnTabSize < len(goPCLnTabInfo.Data) {
+// 			goPCLnTabInfo.Data = goPCLnTabInfo.Data[:goPCLnTabSize]
+// 		}
+// 	}
 
-	// Only search for goFunc if the version is 1.18 or later and heuristic search is enabled.
-	if goPCLnTabInfo.Version >= ver118 {
-		if symtab == nil {
-			symtab, _ = ef.ReadSymbols()
-		}
+// 	// Only search for goFunc if the version is 1.18 or later and heuristic search is enabled.
+// 	if goPCLnTabInfo.Version >= ver118 {
+// 		if symtab == nil {
+// 			symtab, _ = ef.ReadSymbols()
+// 		}
 
-		goFuncData, goFuncAddr, err := FindGoFunc(ef, goPCLnTabInfo, symtab)
-		if err == nil {
-			goFuncData, err = goPCLnTabInfo.trimGoFunc(goFuncData, goFuncAddr, symtab)
-			if err == nil {
-				goPCLnTabInfo.GoFuncAddr = goFuncAddr
-				goPCLnTabInfo.GoFuncData = goFuncData
-			} else if additionalChecks {
-				// if we failed to trim goFunc, return an error only if additionalChecks is enabled
-				// otherwise discard goFunc and continue.
-				// goFunc in this case is discarded because goFunc is in .rodata section that may contain
-				// sensitive information past the end of the goFunc.
-				return nil, fmt.Errorf("failed to trim goFunc: %w", err)
-			}
-		}
-	}
-	return goPCLnTabInfo, nil
-}
+// 		goFuncData, goFuncAddr, err := FindGoFunc(ef, goPCLnTabInfo, symtab)
+// 		if err == nil {
+// 			goFuncData, err = goPCLnTabInfo.trimGoFunc(goFuncData, goFuncAddr, symtab)
+// 			if err == nil {
+// 				goPCLnTabInfo.GoFuncAddr = goFuncAddr
+// 				goPCLnTabInfo.GoFuncData = goFuncData
+// 			} else if additionalChecks {
+// 				// if we failed to trim goFunc, return an error only if additionalChecks is enabled
+// 				// otherwise discard goFunc and continue.
+// 				// goFunc in this case is discarded because goFunc is in .rodata section that may contain
+// 				// sensitive information past the end of the goFunc.
+// 				return nil, fmt.Errorf("failed to trim goFunc: %w", err)
+// 			}
+// 		}
+// 	}
+// 	return goPCLnTabInfo, nil
+// }

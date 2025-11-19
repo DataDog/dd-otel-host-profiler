@@ -6,7 +6,6 @@
 package symbol
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -138,12 +137,12 @@ func (e *Elf) HasGoPCLnTabInfo() bool {
 	return e.goPCLnTabInfo != nil
 }
 
-func (e *Elf) GoPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
-	if e.goPCLnTabInfoErr == nil && e.goPCLnTabInfo == nil {
-		e.goPCLnTabInfo, e.goPCLnTabInfoErr = e.goPCLnTab()
-	}
-	return e.goPCLnTabInfo, e.goPCLnTabInfoErr
-}
+// func (e *Elf) GoPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
+// 	if e.goPCLnTabInfoErr == nil && e.goPCLnTabInfo == nil {
+// 		e.goPCLnTabInfo, e.goPCLnTabInfoErr = e.goPCLnTab()
+// 	}
+// 	return e.goPCLnTabInfo, e.goPCLnTabInfoErr
+// }
 
 func (e *Elf) SymbolPathOnDisk() string {
 	if e.separateSymbols != nil && e.separateSymbols.symbolSource > e.symbolSource {
@@ -195,18 +194,18 @@ func (e *Elf) GetSectionsRequiredForDynamicSymbols() []SectionInfo {
 	return e.wrapper.GetSectionsRequiredForDynamicSymbols()
 }
 
-func (e *Elf) goPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
-	if !e.isGolang {
-		return nil, errors.New("not a Go executable")
-	}
+// func (e *Elf) goPCLnTab() (*pclntab.GoPCLnTabInfo, error) {
+// 	if !e.isGolang {
+// 		return nil, errors.New("not a Go executable")
+// 	}
 
-	goPCLnTab, err := pclntab.FindGoPCLnTab(e.wrapper.elfFile)
-	if err != nil {
-		return nil, err
-	}
+// 	goPCLnTab, err := pclntab.FindGoPCLnTab(e.wrapper.elfFile)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	return goPCLnTab, nil
-}
+// 	return goPCLnTab, nil
+// }
 
 func newElf(wrapper *elfWrapper, fileID libpf.FileID, gnuBuildID, goBuildID string) (*Elf, error) {
 	elf := &Elf{
