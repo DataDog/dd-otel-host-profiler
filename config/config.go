@@ -59,6 +59,7 @@ type Config struct {
 	SamplesPerSecond              uint64
 	PprofPrefix                   string
 	SendErrorFrames               bool
+	SendIdleFrames                bool
 	HostServiceName               string
 	Environment                   string
 	UploadSymbolQueryInterval     time.Duration
