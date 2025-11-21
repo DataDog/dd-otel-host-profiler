@@ -294,6 +294,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		Intervals:              intervals,
 		IncludeTracers:         includeTracers,
 		FilterErrorFrames:      !c.SendErrorFrames,
+		FilterIdleFrames:       !c.SendIdleFrames,
 		SamplesPerSecond:       int(c.SamplesPerSecond),
 		MapScaleFactor:         int(c.MapScaleFactor),
 		KernelVersionCheck:     !c.NoKernelVersionCheck,
