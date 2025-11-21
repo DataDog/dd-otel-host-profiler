@@ -46,6 +46,7 @@ const (
 	DefaultProbabilisticInterval  = 1 * time.Minute
 	DefaultArgSendErrorFrames     = false
 	DefaultArgAgentURL            = "http://localhost:8126"
+	DefaultSendIdleFrames         = false
 
 	DefaultSymbolQueryInterval  = 5 * time.Second
 	DefaultUploadSymbolsDryRun  = false
@@ -215,6 +216,13 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 				Usage:       "Send error frames",
 				Destination: &args.SendErrorFrames,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_SEND_ERROR_FRAMES"),
+			},
+			&cli.BoolFlag{
+				Name:        "send-idle-frames",
+				Value:       DefaultSendIdleFrames,
+				Usage:       "Unwind and report idle states of the Linux kernel.",
+				Destination: &args.SendIdleFrames,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_USE_RUNTIME_ID_IN_SERVICE_ENTITY_KEY"),
 			},
 			&cli.StringFlag{
 				Name:        "tracers",
@@ -386,6 +394,14 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 				Usage:       "Enable context collection.",
 				Destination: &args.CollectContext,
 				Sources:     cli.EnvVars("DD_HOST_PROFILING_COLLECT_CONTEXT"),
+			},
+			&cli.IntFlag{
+				Name:        "frame-cache-size",
+				Value:       -1,
+				Hidden:      true,
+				Usage:       "Size of the frame cache.",
+				Destination: &args.FrameCacheSize,
+				Sources:     cli.EnvVars("DD_HOST_PROFILING_FRAME_CACHE_SIZE"),
 			},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
