@@ -8,6 +8,7 @@ package pprof
 import (
 	"fmt"
 	"path"
+	"strconv"
 	"time"
 
 	lru "github.com/elastic/go-freelru"
@@ -268,6 +269,8 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, proce
 	if processName != "" {
 		labels["process name"] = append(labels["process name"], processName)
 	}
+
+	labels["cpu.logical_number"] = append(labels["cpu.logical_number"], strconv.Itoa(int(i.CPU)))
 
 	containerMetadata := processMeta.ContainerMetadata
 	if containerMetadata.PodName != "" {
