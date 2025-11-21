@@ -162,6 +162,7 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		Comm: meta.Comm.String(),
 		Pid:  meta.PID,
 		Tid:  meta.TID,
+		CPU:  int64(meta.CPU),
 	}
 
 	eventsTree := r.traceEvents.WLock()

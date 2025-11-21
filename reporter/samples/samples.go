@@ -32,6 +32,7 @@ type TraceAndMetaKey struct {
 	Comm string
 	Pid  libpf.PID
 	Tid  libpf.PID
+	CPU  int64
 }
 
 // TraceEvents from ebpf-profiler/reporter/samples cannot be used here because
