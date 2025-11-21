@@ -6,13 +6,8 @@
 package cgroup
 
 import (
-	"errors"
-	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -20,62 +15,35 @@ const (
 	v1MaxMemory    = "memory.limit_in_bytes"
 	v2MaxMemory    = "memory.max"
 	memoryMaxUnset = 0x7FFFFFFFFFFFF000
-	budgetRatio    = 0.1
+	budgetRatio    = 8
 )
 
-func isCgroup2UnifiedMode() bool {
-	var st unix.Statfs_t
-	err := unix.Statfs(cgroupRoot, &st)
-	if err != nil {
-		return false
-	}
-	return st.Type == unix.CGROUP2_SUPER_MAGIC
-}
-
-func readFromFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(data)), nil
-}
-
 func v1GetMaxUsableMemory() (int64, error) {
-	str, err := readFromFile(filepath.Join(cgroupRoot, "memory", v1MaxMemory))
+	cgroupPath, err := v1GetCurrentCgroupPath()
 	if err != nil {
 		return -1, err
 	}
 
-	value, err := strconv.ParseInt(str, 10, 64)
+	str, err := readFromFile(filepath.Join(cgroupRoot, "memory", cgroupPath, v1MaxMemory))
+	if err != nil {
+		return -1, err
+	}
+
+	limit, err := strconv.ParseInt(str, 10, 64)
 
 	if err != nil {
 		return -1, err
 	}
 
-	if value < 0 || value == memoryMaxUnset {
+	if limit < 0 || limit == memoryMaxUnset {
 		return -1, nil
 	}
 
-	return value, nil
-}
-
-func getCurrentCgroupPath() (string, error) {
-	data, err := os.ReadFile("/proc/self/cgroup")
-	if err != nil {
-		return "", err
-	}
-
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if path, ok := strings.CutPrefix(line, "0::"); ok {
-			return filepath.Join(cgroupRoot, path), nil
-		}
-	}
-
-	return "", errors.New("cgroup path not found in /proc/self/cgroup")
+	return limit, nil
 }
 
 func v2GetMaxUsableMemory() (int64, error) {
-	currCgroupPath, err := getCurrentCgroupPath()
+	currCgroupPath, err := v2GetCurrentCgroupPath()
 	if err != nil {
 		return -1, err
 	}
@@ -107,13 +75,15 @@ func GetMaxUsableMemory() (int64, error) {
 	return v2GetMaxUsableMemory()
 }
 
+// GetMemoryBudget returns a percentage of the overall memory limit found in
+// cgroup. If there are no limits, it returns -1.
 func GetMemoryBudget() (int64, error) {
 	maxMemory, err := GetMaxUsableMemory()
 	if err != nil {
 		return -1, err
 	} else if maxMemory == -1 {
-		return maxMemory, err
+		return maxMemory, nil
 	}
 
-	return int64(float32(maxMemory) * budgetRatio), nil
+	return maxMemory * budgetRatio / 10, nil
 }

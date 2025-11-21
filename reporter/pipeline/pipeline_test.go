@@ -7,6 +7,7 @@ package pipeline
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,18 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 )
+
+const (
+	dummyUploadBudget = math.MaxInt64
+)
+
+func dummyIntCostFunction(i *int) int64 {
+	return int64(*i)
+}
+
+func dummyArrayCostFunction[In any](i *[]In) int64 {
+	return int64(len(*i))
+}
 
 func TestPipeline(t *testing.T) {
 	t.Run("EmptyPipeline", func(_ *testing.T) {
@@ -26,7 +39,8 @@ func TestPipeline(t *testing.T) {
 	t.Run("PipelineWithOneSink", func(t *testing.T) {
 		input := make(chan int)
 		output := make(chan int)
-		p := NewPipeline(input, NewSinkStage(input,
+		p := NewPipeline(input, NewSinkStage(input, dummyUploadBudget,
+			dummyIntCostFunction,
 			func(_ context.Context, x int) {
 				output <- x * 2
 			}))
@@ -43,7 +57,7 @@ func TestPipeline(t *testing.T) {
 			func(_ context.Context, x int, outputChan chan<- []int) {
 				outputChan <- []int{x * 2, x * 3}
 			})
-		stage2 := NewSinkStage(stage1.GetOutputChannel(),
+		stage2 := NewSinkStage(stage1.GetOutputChannel(), dummyUploadBudget, dummyArrayCostFunction,
 			func(_ context.Context, x []int) {
 				var sum int
 				for _, v := range x {
@@ -77,7 +91,7 @@ func TestPipeline(t *testing.T) {
 			func(_ context.Context, x int, outputChan chan<- int) {
 				outputChan <- x + 1
 			}, WithConcurrency(10))
-		stage3 := NewSinkStage(stage2.GetOutputChannel(),
+		stage3 := NewSinkStage(stage2.GetOutputChannel(), dummyUploadBudget, dummyIntCostFunction,
 			func(_ context.Context, x int) {
 				mut.Lock()
 				output = append(output, x)
@@ -96,8 +110,8 @@ func TestPipeline(t *testing.T) {
 			input <- i
 		}
 		var output [][]int
-		stage1 := NewBatchingStage[int](input, 0, 10)
-		stage2 := NewSinkStage(stage1.GetOutputChannel(),
+		stage1 := NewBatchingStage(input, 0, 10)
+		stage2 := NewSinkStage(stage1.GetOutputChannel(), dummyUploadBudget, dummyArrayCostFunction,
 			func(_ context.Context, x []int) {
 				output = append(output, x)
 			})

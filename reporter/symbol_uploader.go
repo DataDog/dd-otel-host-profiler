@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/cgroup"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/oom"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/pipeline"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
@@ -169,6 +171,13 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		log.Warnf("Failed to fetch cgroup memory limit: %v", err)
 	}
 
+	if memoryBudget == -1 {
+		log.Info("No memory limit found in cgroup, unlimited budget for symbol upload")
+		memoryBudget = math.MaxInt64
+	} else {
+		log.Infof("Memory budget for symbol upload of %v", memoryBudget)
+	}
+
 	symbolRetrievalStage := pipeline.NewStage(symbolRetrievalQueue,
 		d.symbolRetrievalWorker,
 		pipeline.WithConcurrency(defaultRetrievalWorkerCount),
@@ -180,17 +189,10 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		d.queryWorker,
 		pipeline.WithConcurrency(queryWorkerCount),
 		pipeline.WithOutputChanSize(defaultUploadQueueSize))
-	var uploadStage pipeline.Stage
-	if memoryBudget != -1 {
-		log.Debugf("Symbol Uploader's memory budget is %v bytes", memoryBudget)
-		fmt.Println("memory budget of", memoryBudget)
-		uploadStage = pipeline.NewBudgetedSinkStage(queryStage.GetOutputChannel(), memoryBudget,
-			GetSize, d.uploadWorker, pipeline.WithConcurrency(defaultUploadWorkerCount))
-	} else {
-		uploadStage = pipeline.NewSinkStage(queryStage.GetOutputChannel(),
-			d.uploadWorker,
-			pipeline.WithConcurrency(defaultUploadWorkerCount))
-	}
+
+	uploadStage := pipeline.NewSinkStage(queryStage.GetOutputChannel(), memoryBudget, GetSize,
+		d.uploadWorker,
+		pipeline.WithConcurrency(defaultUploadWorkerCount))
 
 	d.pipeline = pipeline.NewPipeline(symbolRetrievalQueue,
 		symbolRetrievalStage, batchingStage, queryStage, uploadStage)
@@ -562,10 +564,20 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 
 	args = append(args, inputPath, outputPath)
 
-	_, err := exec.CommandContext(ctx, "objcopy", args...).Output()
-	if err != nil {
+	cmd := exec.CommandContext(ctx, "objcopy", args...)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start copying symbols: %w", cleanCmdError(err))
+	}
+
+	// Increase probability that objcopy gets killed in case the cgroup is OOM
+	if err := oom.SetOOMScoreAdj(cmd.Process.Pid, 1000); err != nil {
+		log.Warnf("Could not adjust OOM score: %v", err)
+	}
+
+	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("failed to extract debug symbols: %w", cleanCmdError(err))
 	}
+
 	return nil
 }
 

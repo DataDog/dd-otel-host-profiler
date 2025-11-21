@@ -41,11 +41,10 @@ type BatchingStageWorker[In any] struct {
 	clock         clockwork.Clock
 }
 
-type BudgetedSinkStageWorker[In any] struct {
+type SinkStageWorker[In any] struct {
 	ConsumerWorker[In]
 
-	workChan       chan In
-	budget         semaphore.Weighted
+	budget         *semaphore.Weighted
 	budgetCapacity int64
 	costCalculator func(*In) int64
 }
@@ -58,20 +57,22 @@ func newConsumerWorker[In any](inputChan <-chan In, concurrency int, fun func(co
 	}
 }
 
-func NewSinkStage[In any](inputChan <-chan In, fun func(context.Context, In), options ...StageOption) *ConsumerWorker[In] {
+func NewSinkStage[In any](inputChan <-chan In, budgetCapacity int64, costCalculator func(*In) int64, processingFunc func(context.Context, In), options ...StageOption) *SinkStageWorker[In] {
 	opts := NewStageOptions(options...)
-	w := newConsumerWorker(inputChan, opts.concurrency, fun)
-	return &w
-}
 
-func NewBudgetedSinkStage[In any](inputChan <-chan In, budgetCapacity int64, costCalculator func(*In) int64, processingFunc func(context.Context, In), options ...StageOption) *BudgetedSinkStageWorker[In] {
-	opts := NewStageOptions(options...)
-	return &BudgetedSinkStageWorker[In]{
+	return &SinkStageWorker[In]{
 		ConsumerWorker: newConsumerWorker(inputChan, opts.concurrency, processingFunc),
-		workChan:       make(chan In, 100),
-		budget:         *semaphore.NewWeighted(budgetCapacity),
+		budget:         semaphore.NewWeighted(budgetCapacity),
 		budgetCapacity: budgetCapacity,
-		costCalculator: costCalculator,
+		costCalculator: func(obj *In) int64 {
+			cost := costCalculator(obj)
+			// clamp cost to the max budgetCapacity to attempt operation
+			if cost >= budgetCapacity {
+				log.Warnf("Memory cost is higher than capacity, attempting upload of %v", *obj)
+				return budgetCapacity
+			}
+			return cost
+		},
 	}
 }
 
@@ -105,14 +106,7 @@ func NewBatchingStageWithClock[In any](inputChan <-chan In, batchInterval time.D
 	}
 }
 
-func (w *BudgetedSinkStageWorker[In]) Start(ctx context.Context) {
-	worker := func(obj In, cost int64) {
-		w.wg.Add(1)
-		defer w.wg.Done()
-		w.processingFunc(ctx, obj)
-		w.budget.Release(cost)
-	}
-
+func (w *SinkStageWorker[In]) Start(ctx context.Context) {
 	for range w.concurrency {
 		w.wg.Add(1)
 		go func() {
@@ -125,31 +119,19 @@ func (w *BudgetedSinkStageWorker[In]) Start(ctx context.Context) {
 					if !ok {
 						return
 					}
-					w.workChan <- input
+
+					cost := w.costCalculator(&input)
+					err := w.budget.Acquire(ctx, cost)
+					if err != nil {
+						return // the context is done
+					}
+
+					w.processingFunc(ctx, input)
+					w.budget.Release(cost)
 				}
 			}
 		}()
 	}
-
-	w.wg.Add(1)
-	go func() {
-		defer w.wg.Done()
-		for input := range w.workChan {
-			cost := w.costCalculator(&input)
-			if w.budget.TryAcquire(cost) {
-				log.Infof("Treating process with cost %v: %v", cost, input)
-				go worker(input, cost)
-				continue
-			}
-
-			// will never get processed
-			if cost > w.budgetCapacity {
-				log.Warnf("is higher than the budget capacity, skipping %v", input)
-				continue
-			}
-			w.workChan <- input
-		}
-	}()
 }
 
 func (w *ConsumerWorker[In]) Start(ctx context.Context) {
@@ -181,8 +163,7 @@ func (w *StageWorker[In, Out]) Stop() {
 	close(w.outputChan)
 }
 
-func (w *BudgetedSinkStageWorker[In]) Stop() {
-	close(w.workChan)
+func (w *SinkStageWorker[In]) Stop() {
 	w.ConsumerWorker.Stop()
 }
 
