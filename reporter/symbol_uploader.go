@@ -189,7 +189,6 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		d.queryWorker,
 		pipeline.WithConcurrency(queryWorkerCount),
 		pipeline.WithOutputChanSize(defaultUploadQueueSize))
-
 	uploadStage := pipeline.NewSinkStage(queryStage.GetOutputChannel(), memoryBudget, GetSize,
 		d.uploadWorker,
 		pipeline.WithConcurrency(defaultUploadWorkerCount))
