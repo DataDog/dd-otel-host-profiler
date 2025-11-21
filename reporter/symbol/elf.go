@@ -124,6 +124,28 @@ func (e *Elf) Close() {
 	}
 }
 
+func (e *Elf) GetSize() int64 {
+	elfPath := e.SymbolPathOnDisk()
+
+	// vdso
+	if elfPath == "" {
+		data, err := e.wrapper.ElfData()
+		if err != nil {
+			log.Warnf("Failed to get elf data: %v", err)
+			return 0
+		}
+		return int64(len(data))
+	}
+
+	fi, err := os.Stat(elfPath)
+	if err != nil {
+		log.Warnf("Failed to get elf file: %v", err)
+		return 0
+	}
+
+	return fi.Size()
+}
+
 func (e *Elf) SymbolSource() Source {
 	source := e.symbolSource
 

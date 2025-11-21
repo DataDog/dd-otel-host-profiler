@@ -30,6 +30,10 @@ type ElfWithBackendSources struct {
 	BackendSymbolSources []SymbolQueryResult
 }
 
+func GetSize(e *ElfWithBackendSources) int64 {
+	return e.GetSize()
+}
+
 func invokeQuerier(ctx context.Context, buildIDs []string, arch string, querier SymbolQuerier, ind int,
 	buildIDToResult map[string][]*ElfWithBackendSources) {
 	symbolFiles, err := querier.QuerySymbols(ctx, buildIDs, arch)

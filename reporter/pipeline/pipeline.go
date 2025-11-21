@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/sync/semaphore"
 )
 
 type Stage interface {
@@ -39,6 +41,14 @@ type BatchingStageWorker[In any] struct {
 	clock         clockwork.Clock
 }
 
+type SinkStageWorker[In any] struct {
+	ConsumerWorker[In]
+
+	budget         *semaphore.Weighted
+	budgetCapacity int64
+	costCalculator func(*In) int64
+}
+
 func newConsumerWorker[In any](inputChan <-chan In, concurrency int, fun func(context.Context, In)) ConsumerWorker[In] {
 	return ConsumerWorker[In]{
 		inputChan:      inputChan,
@@ -47,10 +57,23 @@ func newConsumerWorker[In any](inputChan <-chan In, concurrency int, fun func(co
 	}
 }
 
-func NewSinkStage[In any](inputChan <-chan In, fun func(context.Context, In), options ...StageOption) *ConsumerWorker[In] {
+func NewSinkStage[In any](inputChan <-chan In, budgetCapacity int64, costCalculator func(*In) int64, processingFunc func(context.Context, In), options ...StageOption) *SinkStageWorker[In] {
 	opts := NewStageOptions(options...)
-	w := newConsumerWorker(inputChan, opts.concurrency, fun)
-	return &w
+
+	return &SinkStageWorker[In]{
+		ConsumerWorker: newConsumerWorker(inputChan, opts.concurrency, processingFunc),
+		budget:         semaphore.NewWeighted(budgetCapacity),
+		budgetCapacity: budgetCapacity,
+		costCalculator: func(obj *In) int64 {
+			cost := costCalculator(obj)
+			// clamp cost to the max budgetCapacity to attempt operation
+			if cost >= budgetCapacity {
+				log.Warnf("Memory cost is higher than capacity, attempting upload of %v", *obj)
+				return budgetCapacity
+			}
+			return cost
+		},
+	}
 }
 
 func NewStage[In any, Out any](inputChan <-chan In, fun func(context.Context, In, chan<- Out), options ...StageOption) *StageWorker[In, Out] {
@@ -83,6 +106,34 @@ func NewBatchingStageWithClock[In any](inputChan <-chan In, batchInterval time.D
 	}
 }
 
+func (w *SinkStageWorker[In]) Start(ctx context.Context) {
+	for range w.concurrency {
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case input, ok := <-w.inputChan:
+					if !ok {
+						return
+					}
+
+					cost := w.costCalculator(&input)
+					err := w.budget.Acquire(ctx, cost)
+					if err != nil {
+						return // the context is done
+					}
+
+					w.processingFunc(ctx, input)
+					w.budget.Release(cost)
+				}
+			}
+		}()
+	}
+}
+
 func (w *ConsumerWorker[In]) Start(ctx context.Context) {
 	for range w.concurrency {
 		w.wg.Add(1)
@@ -110,6 +161,10 @@ func (w *ConsumerWorker[In]) Stop() {
 func (w *StageWorker[In, Out]) Stop() {
 	w.ConsumerWorker.Stop()
 	close(w.outputChan)
+}
+
+func (w *SinkStageWorker[In]) Stop() {
+	w.ConsumerWorker.Stop()
 }
 
 func (w *StageWorker[In, Out]) GetOutputChannel() <-chan Out {
