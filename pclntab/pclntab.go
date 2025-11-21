@@ -163,8 +163,8 @@ func getUint8(data []byte, offset int) int {
 	return int(*(*uint8)(unsafe.Pointer(&data[offset])))
 }
 
-// HeaderSize returns the minimal pclntab header size.
-func HeaderSize() int {
+// pclntabHeaderSize returns the minimal pclntab header size.
+func pclntabHeaderSize() int {
 	return int(unsafe.Sizeof(pclntabHeader{}))
 }
 
@@ -345,12 +345,17 @@ func SearchGoPclntab(ef *pfelf.File) (data []byte, address uint64, err error) {
 			continue
 		}
 
+		// Skip segments that are too small anyway.
+		if p.Filesz < uint64(pclntabHeaderSize()) {
+			continue
+		}
+
 		data, err = p.Data(maxBytesGoPclntab)
 		if err != nil {
 			return nil, 0, err
 		}
 
-		for i := 1; i < len(data)-16; i += 8 {
+		for i := 1; i < len(data)-pclntabHeaderSize(); i += 8 {
 			// Search for something looking like a valid pclntabHeader header
 			// Ignore the first byte on bytes.Index (differs on magicGo1_XXX)
 			n := bytes.Index(data[i:], signature)
@@ -462,7 +467,7 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 	var version HeaderVersion
 	var offsets TableOffsets
 	var funcSize, funcNpcdataOffset int
-	hdrSize := uintptr(HeaderSize())
+	hdrSize := uintptr(pclntabHeaderSize())
 
 	dataLen := uintptr(len(data))
 	if dataLen < hdrSize {
