@@ -503,6 +503,7 @@ func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled
 	tags := append(Tags{}, userTags...)
 
 	customContextTagKey := "ddprof.custom_ctx"
+	tags = append(tags, MakeTag(customContextTagKey, pprof.CPUIDLabel))
 	if !splitByServiceEnabled {
 		tags = append(tags,
 			MakeTag(customContextTagKey, "container_id"),
