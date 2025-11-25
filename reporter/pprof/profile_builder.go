@@ -20,6 +20,7 @@ import (
 
 const (
 	unknownStr = "UNKNOWN"
+	CPUIDLabel = "cpu.logical_number"
 )
 
 type Config struct {
@@ -270,7 +271,7 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, proce
 		labels["process name"] = append(labels["process name"], processName)
 	}
 
-	labels["cpu.logical_number"] = append(labels["cpu.logical_number"], strconv.Itoa(int(i.CPU)))
+	labels[CPUIDLabel] = append(labels[CPUIDLabel], strconv.Itoa(int(i.CPU)))
 
 	containerMetadata := processMeta.ContainerMetadata
 	if containerMetadata.PodName != "" {
