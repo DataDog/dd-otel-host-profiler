@@ -93,10 +93,17 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 			loc := b.createPProfLocation(uint64(frame.AddressOrLineno))
 			loc.Mapping = b.createPprofMappingForFrame(&frame)
 
-			if frame.FunctionName != libpf.NullString || frame.SourceFile != libpf.NullString {
+			switch frameType := frame.Type; frameType {
+			case libpf.NativeFrame:
+				// For native frames, we don't emit any Line.
+			default:
+				functionName := frame.FunctionName.String()
+				if functionName == "" {
+					functionName = unknownStr
+				}
 				line := pprofile.Line{
 					Line:     int64(frame.SourceLine),
-					Function: b.createPprofFunctionEntry(frame.FunctionName.String(), frame.SourceFile.String()),
+					Function: b.createPprofFunctionEntry(functionName, frame.SourceFile.String(), frameType.String()),
 				}
 				loc.Line = append(loc.Line, line)
 			}
@@ -123,7 +130,7 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 
 		if execPath != "" {
 			loc := b.createPProfLocation(0)
-			m := b.createPprofFunctionEntry(baseExec, execPath)
+			m := b.createPprofFunctionEntry(baseExec, execPath, "")
 			loc.Line = append(loc.Line, pprofile.Line{Function: m})
 			sample.Location = append(sample.Location, loc)
 		}
@@ -178,15 +185,17 @@ func (b *ProfileBuilder) Build() (*pprofile.Profile, ProfileStats) {
 
 // funcInfo is a helper to construct profile.Function messages.
 type funcInfo struct {
-	name     string
-	fileName string
+	name      string
+	fileName  string
+	frameType string
 }
 
 // createFunctionEntry adds a new function and returns its reference index.
-func (b *ProfileBuilder) createPprofFunctionEntry(name, fileName string) *pprofile.Function {
+func (b *ProfileBuilder) createPprofFunctionEntry(name, fileName, frameType string) *pprofile.Function {
 	key := funcInfo{
-		name:     name,
-		fileName: fileName,
+		name:      name,
+		fileName:  fileName,
+		frameType: frameType,
 	}
 	if function, exists := b.funcMap[key]; exists {
 		return function
@@ -194,9 +203,10 @@ func (b *ProfileBuilder) createPprofFunctionEntry(name, fileName string) *pprofi
 
 	idx := uint64(len(b.profile.Function)) + 1
 	function := &pprofile.Function{
-		ID:       idx,
-		Name:     name,
-		Filename: fileName,
+		ID:         idx,
+		Name:       name,
+		Filename:   fileName,
+		SystemName: frameType,
 	}
 	b.profile.Function = append(b.profile.Function, function)
 	b.funcMap[key] = function
@@ -225,6 +235,7 @@ func (b *ProfileBuilder) createPprofMappingForFrame(frame *libpf.Frame) *pprofil
 
 	mf := frame.MappingFile.Value()
 	fileName := unknownStr
+	// Not sure if it's possible to have a null string here, but just in case.
 	if mf.FileName != libpf.NullString {
 		fileName = mf.FileName.String()
 	}
