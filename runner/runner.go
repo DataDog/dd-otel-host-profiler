@@ -36,6 +36,7 @@ import (
 	"github.com/DataDog/dd-otel-host-profiler/config"
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/oom"
 	"github.com/DataDog/dd-otel-host-profiler/version"
 )
 
@@ -105,6 +106,15 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	if code := sanityCheck(c, kernVersion); code != ExitSuccess {
 		return code
+	}
+
+	currentScore, err := oom.GetOOMScoreAdj(0)
+	if err != nil {
+		log.Warnf("Failed to get OOM score adjustment: %v", err)
+	} else if currentScore > 0 {
+		if err = oom.SetOOMScoreAdj(0, 0); err != nil {
+			log.Warnf("Could not adjust OOM score: %v", err)
+		}
 	}
 
 	if c.EnableGoRuntimeProfiler {

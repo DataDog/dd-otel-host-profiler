@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -22,6 +23,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DataDog/zstd"
@@ -32,6 +34,8 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/DataDog/dd-otel-host-profiler/pclntab"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/cgroup"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/oom"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/pipeline"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
@@ -49,7 +53,7 @@ const (
 	defaultQueryWorkerCount     = 10
 
 	defaultUploadQueueSize   = 1000
-	defaultUploadWorkerCount = 5
+	defaultUploadWorkerCount = 10
 
 	sourceMapEndpoint = "/api/v2/srcmap"
 
@@ -162,6 +166,12 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		symbolQueryMaxBatchSize = 1
 	}
 
+	memoryBudget, err := cgroup.GetMemoryBudget()
+	// Couldn't read the budget from cgroups
+	if err != nil {
+		log.Warnf("Failed to fetch cgroup memory limit: %v", err)
+	}
+
 	symbolRetrievalStage := pipeline.NewStage(symbolRetrievalQueue,
 		d.symbolRetrievalWorker,
 		pipeline.WithConcurrency(defaultRetrievalWorkerCount),
@@ -173,9 +183,29 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		d.queryWorker,
 		pipeline.WithConcurrency(queryWorkerCount),
 		pipeline.WithOutputChanSize(defaultUploadQueueSize))
+
+	// Always use budgeted processing to track binary sizes via GetSize()
+	// If no memory limit, use MaxInt64 for effectively unlimited budget
+	if memoryBudget == -1 {
+		log.Debug("No memory limit found in cgroup, unlimited budget for symbol upload")
+		memoryBudget = math.MaxInt64
+	} else {
+		log.Debugf("Memory budget for symbol upload of %v", memoryBudget)
+	}
+
+	uploadWorker := pipeline.NewBudgetedProcessingFunc(memoryBudget,
+		func(elfSymbols ElfWithBackendSources) int64 {
+			size := elfSymbols.GetSize()
+			if size > memoryBudget {
+				log.Warnf("Upload size is larger than memory limit, attempting upload if %v", elfSymbols)
+				size = memoryBudget
+			}
+			return size
+		},
+		d.uploadWorker)
+
 	uploadStage := pipeline.NewSinkStage(queryStage.GetOutputChannel(),
-		d.uploadWorker,
-		pipeline.WithConcurrency(defaultUploadWorkerCount))
+		uploadWorker, pipeline.WithConcurrency(defaultUploadWorkerCount))
 
 	d.pipeline = pipeline.NewPipeline(symbolRetrievalQueue,
 		symbolRetrievalStage, batchingStage, queryStage, uploadStage)
@@ -547,10 +577,24 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 
 	args = append(args, inputPath, outputPath)
 
-	_, err := exec.CommandContext(ctx, "objcopy", args...).Output()
-	if err != nil {
+	cmd := exec.CommandContext(ctx, "objcopy", args...)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start copying symbols: %w", cleanCmdError(err))
+	}
+
+	// Increase probability that objcopy gets killed in case the cgroup is OOM
+	if err := oom.SetOOMScoreAdj(cmd.Process.Pid, 1000); err != nil {
+		log.Warnf("Could not adjust OOM score: %v", err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		var ExitError *exec.ExitError
+		if errors.As(err, &ExitError) && ExitError.ExitCode() == -1 { // killed by signal
+			return fmt.Errorf("got killed. Consider increasing memory limits to at least %v (biggest uncompressed elf file size found)", atomic.LoadInt64(&symbol.BiggestBinarySize))
+		}
 		return fmt.Errorf("failed to extract debug symbols: %w", cleanCmdError(err))
 	}
+
 	return nil
 }
 
