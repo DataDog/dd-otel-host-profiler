@@ -59,6 +59,7 @@ type Config struct {
 	SamplesPerSecond              uint64
 	PprofPrefix                   string
 	SendErrorFrames               bool
+	SendIdleFrames                bool
 	HostServiceName               string
 	Environment                   string
 	UploadSymbolQueryInterval     time.Duration
@@ -82,4 +83,5 @@ type Config struct {
 	EnableSplitByService          bool
 	SplitServiceSuffix            string
 	CollectContext                bool
+	FrameCacheSize                int64
 }
