@@ -77,6 +77,7 @@ type DatadogSymbolUploader struct {
 	retrievalQueue      chan *reporter.ExecutableMetadata
 	pipeline            pipeline.Pipeline[*reporter.ExecutableMetadata]
 	mut                 sync.Mutex
+	biggestBinarySize   int64
 }
 
 type goPCLnTabDump struct {
@@ -197,7 +198,7 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		func(elfSymbols ElfWithBackendSources) int64 {
 			size := elfSymbols.GetSize()
 			if size > memoryBudget {
-				log.Warnf("Upload size is larger than memory limit, attempting upload if %v", elfSymbols)
+				log.Warnf("Upload size is larger than memory limit, attempting upload of %v", elfSymbols)
 				size = memoryBudget
 			}
 			return size
@@ -449,6 +450,18 @@ func newSymbolUploadRequestMetadata(e *symbol.Elf, symbolSource symbol.Source, p
 	}
 }
 
+func (d *DatadogSymbolUploader) updateBiggestBinarySize(size int64) {
+	for {
+		current := atomic.LoadInt64(&d.biggestBinarySize)
+		if current >= size {
+			break
+		}
+		if atomic.CompareAndSwapInt64(&d.biggestBinarySize, current, size) {
+			break
+		}
+	}
+}
+
 func (d *DatadogSymbolUploader) createSymbolFile(ctx context.Context, e *symbol.Elf) (*os.File, error) {
 	symbolFile, err := os.CreateTemp("", "objcopy-debug")
 	if err != nil {
@@ -481,9 +494,17 @@ func (d *DatadogSymbolUploader) createSymbolFile(ctx context.Context, e *symbol.
 		sectionsToKeep = e.GetSectionsRequiredForDynamicSymbols()
 	}
 
+	// keep track of the biggest binary size we try to upload for logging purposes
+	d.updateBiggestBinarySize(e.GetSize())
 	err = CopySymbols(ctx, elfPath, symbolFile.Name(), goPCLnTabInfo, sectionsToKeep, d.compressDebugSections)
+
 	if err != nil {
-		return nil, fmt.Errorf("failed to copy symbols: %w", err)
+		var ExitError *exec.ExitError
+		if errors.As(err, &ExitError) && ExitError.ExitCode() == -1 { // killed by signal
+			return nil, fmt.Errorf("failed to copy symbols: got killed. Consider increasing memory limits to at least %v (biggest uncompressed elf file size found)", atomic.LoadInt64(&d.biggestBinarySize))
+		}
+
+		return nil, fmt.Errorf("failed to copy symbols: failed to extract debug symbols: %w", cleanCmdError(err))
 	}
 
 	return symbolFile, nil
@@ -587,15 +608,7 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 		log.Warnf("Could not adjust OOM score: %v", err)
 	}
 
-	if err := cmd.Wait(); err != nil {
-		var ExitError *exec.ExitError
-		if errors.As(err, &ExitError) && ExitError.ExitCode() == -1 { // killed by signal
-			return fmt.Errorf("got killed. Consider increasing memory limits to at least %v (biggest uncompressed elf file size found)", atomic.LoadInt64(&symbol.BiggestBinarySize))
-		}
-		return fmt.Errorf("failed to extract debug symbols: %w", cleanCmdError(err))
-	}
-
-	return nil
+	return cmd.Wait()
 }
 
 func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFilePath string, e *symbolUploadRequestMetadata, endpointIdx int) error {
