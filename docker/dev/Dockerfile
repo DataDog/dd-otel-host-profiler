@@ -13,9 +13,14 @@ RUN cross_debian_arch=$(uname -m | sed -e 's/aarch64/amd64/'  -e 's/x86_64/arm64
     apt-get clean autoclean && \
     apt-get autoremove --yes
 
-RUN useradd -ms /bin/bash build
+ARG UID
+ARG GID
+
+RUN addgroup --gid ${GID} build
+RUN useradd -ms /bin/bash build -u ${UID} -g ${GID}
 RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 RUN adduser build sudo
+RUN chown -R build:build /go
 
 USER build
 
