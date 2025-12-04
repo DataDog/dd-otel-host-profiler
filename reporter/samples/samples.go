@@ -32,6 +32,7 @@ type TraceAndMetaKey struct {
 	Comm string
 	Pid  libpf.PID
 	Tid  libpf.PID
+	CPU  int64
 }
 
 // TraceEvents from ebpf-profiler/reporter/samples cannot be used here because
@@ -43,7 +44,7 @@ type TraceAndMetaKey struct {
 type TraceEvents struct {
 	samples.TraceEvents
 
-	CustomLabels []map[string]string
+	CustomLabels []map[libpf.String]libpf.String
 }
 
 type ProcessContext struct {
