@@ -2,7 +2,7 @@ module github.com/DataDog/dd-otel-host-profiler
 
 go 1.24.9
 
-toolchain go1.25.3
+toolchain go1.25.5
 
 require (
 	github.com/DataDog/dd-trace-go/v2 v2.2.2
