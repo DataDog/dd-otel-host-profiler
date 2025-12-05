@@ -7,11 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	log "log/slog"
 	"os"
 	"runtime"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v3"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 
@@ -412,7 +412,7 @@ func (args *Arguments) Dump() {
 		if args.cmd.IsSet(f.Names()[0]) {
 			setStr = "set"
 		}
-		log.Debugf("%s: \"%v\" [%s]", f.Names()[0], args.cmd.Value(f.Names()[0]), setStr)
+		log.Debug("config flag", "flag", f.Names()[0], "value", args.cmd.Value(f.Names()[0]), "source", setStr)
 	}
 }
 
