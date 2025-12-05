@@ -12,10 +12,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 
-	log "github.com/sirupsen/logrus"
+	ebpfLog "go.opentelemetry.io/ebpf-profiler/log"
 	"golang.org/x/sys/unix"
 
 	"github.com/DataDog/dd-otel-host-profiler/config"
@@ -29,7 +30,7 @@ func main() {
 func mainWithExitCode() runner.ExitCode {
 	args, err := config.ParseArgs()
 	if err != nil {
-		return runner.ParseError("Failure to parse arguments: %v", err)
+		return runner.ParseError("Failure to parse arguments", "error", err)
 	}
 
 	if args == nil {
@@ -46,8 +47,9 @@ func mainWithExitCode() runner.ExitCode {
 		unix.SIGINT, unix.SIGTERM, unix.SIGABRT)
 	defer mainCancel()
 
+	ebpfLog.SetLogger(*slog.Default())
 	if args.VerboseMode {
-		log.SetLevel(log.DebugLevel)
+		slog.SetLogLoggerLevel(slog.LevelDebug)
 		// Dump the arguments in debug mode.
 		args.Dump()
 	}

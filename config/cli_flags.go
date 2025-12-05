@@ -7,11 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v3"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 
@@ -414,13 +414,13 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 }
 
 func (args *Arguments) Dump() {
-	log.Debug("Config:")
+	slog.Debug("Config:")
 	for _, f := range args.cmd.Flags {
 		setStr := "default"
 		if args.cmd.IsSet(f.Names()[0]) {
 			setStr = "set"
 		}
-		log.Debugf("%s: \"%v\" [%s]", f.Names()[0], args.cmd.Value(f.Names()[0]), setStr)
+		slog.Debug("config flag", slog.String("flag", f.Names()[0]), slog.Any("value", args.cmd.Value(f.Names()[0])), slog.String("source", setStr))
 	}
 }
 

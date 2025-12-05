@@ -14,7 +14,6 @@ require (
 	github.com/google/pprof v0.0.0-20241101162523-b92577c0c142
 	github.com/jarcoal/httpmock v1.3.1
 	github.com/jonboulle/clockwork v0.5.0
-	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v3 v3.1.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
@@ -129,6 +128,7 @@ require (
 	github.com/richardartoul/molecule v1.0.1-0.20240531184615-7ca0df43c0b3 // indirect
 	github.com/secure-systems-lab/go-securesystemslib v0.9.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.25.3 // indirect
+	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/tinylib/msgp v1.2.5 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect

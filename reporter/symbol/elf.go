@@ -8,10 +8,10 @@ package symbol
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 
-	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/process"
 
@@ -72,13 +72,13 @@ func NewElfFromDisk(path string) (*Elf, error) {
 	goBuildID := ""
 	gnuBuildID, err := wrapper.elfFile.GetBuildID()
 	if err != nil {
-		log.Debugf("failed to get GNU build ID for file %s: %s", path, err)
+		slog.Debug("failed to get GNU build ID for file", slog.String("path", path), slog.String("error", err.Error()))
 	}
 
 	if wrapper.elfFile.IsGolang() {
 		goBuildID, err = wrapper.elfFile.GetGoBuildID()
 		if err != nil {
-			log.Debugf("failed to get Go build ID for file %s: %s", path, err)
+			slog.Debug("failed to get Go build ID for file", slog.String("path", path), slog.String("error", err.Error()))
 		}
 	}
 
@@ -132,7 +132,7 @@ func (e *Elf) GetSize() int64 {
 	if elfPath == "" {
 		data, err := e.wrapper.ElfData()
 		if err != nil {
-			log.Warnf("Failed to get elf data: %v", err)
+			slog.Warn("Failed to get elf data", slog.String("error", err.Error()))
 			return 0
 		}
 		return int64(len(data))
@@ -140,7 +140,7 @@ func (e *Elf) GetSize() int64 {
 
 	fi, err := os.Stat(elfPath)
 	if err != nil {
-		log.Warnf("Failed to get elf file: %v", err)
+		slog.Warn("Failed to get elf file", slog.String("error", err.Error()))
 		return 0
 	}
 	return fi.Size()
