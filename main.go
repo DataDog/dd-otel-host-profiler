@@ -12,10 +12,11 @@ package main
 import (
 	"context"
 	"fmt"
+	log "log/slog"
 	"os"
 	"os/signal"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 
 	"github.com/DataDog/dd-otel-host-profiler/config"
@@ -29,7 +30,7 @@ func main() {
 func mainWithExitCode() runner.ExitCode {
 	args, err := config.ParseArgs()
 	if err != nil {
-		return runner.ParseError("Failure to parse arguments: %v", err)
+		return runner.ParseError("Failure to parse arguments", "error", err)
 	}
 
 	if args == nil {
@@ -47,7 +48,8 @@ func mainWithExitCode() runner.ExitCode {
 	defer mainCancel()
 
 	if args.VerboseMode {
-		log.SetLevel(log.DebugLevel)
+		log.SetLogLoggerLevel(log.LevelDebug) // dd-otel-host-profiler's logs
+		logrus.SetLevel(logrus.DebugLevel)    // datadog epbf fork's logger
 		// Dump the arguments in debug mode.
 		args.Dump()
 	}

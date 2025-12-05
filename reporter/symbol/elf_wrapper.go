@@ -10,11 +10,11 @@ import (
 	"debug/elf"
 	"errors"
 	"fmt"
+	log "log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 
-	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
 	"go.opentelemetry.io/ebpf-profiler/process"
 )
@@ -208,7 +208,7 @@ func (e *elfWrapper) symbolSource() Source {
 // following the same order as GDB
 // https://sourceware.org/gdb/current/onlinedocs/gdb.html/Separate-Debug-Files.html
 func (e *elfWrapper) findSeparateSymbolsWithDebugInfo() *elfWrapper {
-	log.Debugf("No debug symbols found in %s", e.filePath)
+	log.Debug("No debug symbols found in file", "path", e.filePath)
 
 	// First, check based on the GNU build ID
 	debugElf := e.findDebugSymbolsWithBuildID()
@@ -217,7 +217,7 @@ func (e *elfWrapper) findSeparateSymbolsWithDebugInfo() *elfWrapper {
 			return debugElf
 		}
 		debugElf.Close()
-		log.Debugf("No debug symbols found in buildID link file %s", debugElf.filePath)
+		log.Debug("No debug symbols found in buildID link file", "path", debugElf.filePath)
 	}
 
 	// Then, check based on the debug link
@@ -226,7 +226,7 @@ func (e *elfWrapper) findSeparateSymbolsWithDebugInfo() *elfWrapper {
 		if HasDWARFData(debugElf.elfFile) {
 			return debugElf
 		}
-		log.Debugf("No debug symbols found in debug link file %s", debugElf.filePath)
+		log.Debug("No debug symbols found in debug link file", "path", debugElf.filePath)
 		debugElf.Close()
 	}
 
@@ -236,7 +236,7 @@ func (e *elfWrapper) findSeparateSymbolsWithDebugInfo() *elfWrapper {
 func (e *elfWrapper) findDebugSymbolsWithBuildID() *elfWrapper {
 	buildID, err := e.elfFile.GetBuildID()
 	if err != nil || len(buildID) < 2 {
-		log.Debugf("Failed to get build ID for %s: %v", e.filePath, err)
+		log.Debug("Failed to get build ID for file", "path", e.filePath, "error", err)
 		return nil
 	}
 
