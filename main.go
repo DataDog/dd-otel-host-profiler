@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 
 	"github.com/DataDog/dd-otel-host-profiler/config"
@@ -47,7 +48,8 @@ func mainWithExitCode() runner.ExitCode {
 	defer mainCancel()
 
 	if args.VerboseMode {
-		log.SetLogLoggerLevel(log.LevelDebug)
+		log.SetLogLoggerLevel(log.LevelDebug) // dd-otel-host-profiler's logs
+		logrus.SetLevel(logrus.DebugLevel)    // datadog epbf fork's logger
 		// Dump the arguments in debug mode.
 		args.Dump()
 	}
