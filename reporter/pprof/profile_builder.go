@@ -18,6 +18,8 @@ import (
 )
 
 const unknownStr = "UNKNOWN"
+const symbolicationFailedStr = "[symbolication_failed]"
+const abortStr = "[abort]"
 
 type Config struct {
 	Start                       time.Time
@@ -99,7 +101,12 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 			default:
 				functionName := frame.FunctionName.String()
 				if functionName == "" {
-					functionName = unknownStr
+					switch frameType {
+					case libpf.AbortFrame:
+						functionName = abortStr
+					default:
+						functionName = symbolicationFailedStr
+					}
 				}
 				line := pprofile.Line{
 					Line:     int64(frame.SourceLine),
