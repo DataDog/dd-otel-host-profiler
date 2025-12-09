@@ -26,9 +26,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/host"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/metrics"
-	otelreporter "go.opentelemetry.io/ebpf-profiler/reporter"
 	"go.opentelemetry.io/ebpf-profiler/times"
-	"go.opentelemetry.io/ebpf-profiler/tracehandler"
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -59,8 +57,7 @@ const (
 	defaultProcessesCacheSize   = 16384
 )
 
-func startTraceHandling(ctx context.Context, rep otelreporter.TraceReporter,
-	intervals *times.Times, trc *tracer.Tracer, cacheSize uint32) error {
+func startTraceHandling(ctx context.Context, trc *tracer.Tracer) error {
 	// Spawn monitors for the various result maps
 	traceCh := make(chan *host.Trace)
 
@@ -68,10 +65,21 @@ func startTraceHandling(ctx context.Context, rep otelreporter.TraceReporter,
 		return fmt.Errorf("failed to start map monitors: %w", err)
 	}
 
-	_, err := tracehandler.Start(ctx, rep, trc.TraceProcessor(),
-		traceCh, intervals, cacheSize)
+	go func() {
+		// Poll the output channels
+		for {
+			select {
+			case trace := <-traceCh:
+				if trace != nil {
+					trc.HandleTrace(trace)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
-	return err
+	return nil
 }
 
 func appendEndpoint(symbolEndpoints []reporter.SymbolEndpoint, site, apiKey, appKey string) []reporter.SymbolEndpoint {
@@ -164,9 +172,6 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	if err = tracer.ProbeBPFSyscall(); err != nil {
 		return failure("Failed to probe eBPF syscall: %v", err)
 	}
-
-	// disable trace handler cache because it consumes too much memory for almost no CPU benefit
-	traceHandlerCacheSize := uint32(0)
 
 	intervals := times.New(c.ReporterInterval, c.MonitorInterval,
 		c.ProbabilisticInterval)
@@ -295,9 +300,11 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	// Load the eBPF code and map definitions
 	trc, err := tracer.NewTracer(mainCtx, &tracer.Config{
 		ExecutableReporter:     rep,
+		TraceReporter:          rep,
 		Intervals:              intervals,
 		IncludeTracers:         includeTracers,
 		FilterErrorFrames:      !c.SendErrorFrames,
+		FilterIdleFrames:       !c.SendIdleFrames,
 		SamplesPerSecond:       int(c.SamplesPerSecond),
 		MapScaleFactor:         int(c.MapScaleFactor),
 		KernelVersionCheck:     !c.NoKernelVersionCheck,
@@ -341,7 +348,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	// change this log line update also the system test.
 	log.Printf("Attached sched monitor")
 
-	if err := startTraceHandling(mainCtx, rep, intervals, trc, traceHandlerCacheSize); err != nil {
+	if err := startTraceHandling(mainCtx, trc); err != nil {
 		return failure("Failed to start trace handling: %v", err)
 	}
 
