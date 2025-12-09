@@ -294,7 +294,7 @@ func addProcessLevelContextAsLabels(labels map[string][]string, tracingCtx *samp
 	}
 
 	if tracingCtx.ServiceInstanceID != "" {
-		labels["runtime_id"] = append(labels["runtime_id"], tracingCtx.ServiceInstanceID)
+		labels["runtime-id"] = append(labels["runtime-id"], tracingCtx.ServiceInstanceID)
 	}
 
 	if tracingCtx.ServiceName != "" {

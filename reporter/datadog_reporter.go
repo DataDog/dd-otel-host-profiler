@@ -524,7 +524,7 @@ func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled
 		// If process level context is emitted as sample labels, make these labels available as custom context.
 		tags = append(tags,
 			MakeTag(customContextTagKey, "env"),
-			MakeTag(customContextTagKey, "runtime_id"),
+			MakeTag(customContextTagKey, "runtime-id"),
 			MakeTag(customContextTagKey, "service_name"),
 			MakeTag(customContextTagKey, "service_version"),
 			MakeTag(customContextTagKey, "telemetry_sdk_language"),
@@ -552,7 +552,7 @@ func createTagsForProfile(tags Tags, profileSeq uint64, serviceEntity rsamples.S
 func addProcessLevelContextTags(tags Tags, processContext *rsamples.ProcessContext) Tags {
 	tags = append(tags,
 		MakeTag("env", processContext.DeploymentEnvironmentName),
-		MakeTag("runtime_id", processContext.ServiceInstanceID),
+		MakeTag("runtime-id", processContext.ServiceInstanceID),
 		MakeTag("service_name", processContext.ServiceName),
 		MakeTag("service_version", processContext.ServiceVersion),
 		MakeTag("host_name", processContext.HostName),
