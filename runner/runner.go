@@ -110,10 +110,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	currentScore, err := oom.GetOOMScoreAdj(0)
 	if err != nil {
-		log.Warn("Failed to get OOM score adjustment", "error", err)
+		log.Warn("Failed to get OOM score adjustment", log.Any("error", err))
 	} else if currentScore > 0 {
 		if err = oom.SetOOMScoreAdj(0, 0); err != nil {
-			log.Warn("Could not adjust OOM score", "error", err)
+			log.Warn("Could not adjust OOM score", log.Any("error", err))
 		}
 	}
 
@@ -159,10 +159,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	}
 
 	log.Info("Starting Datadog OTEL host profiler",
-		"version", versionInfo.Version,
-		"revision", versionInfo.VcsRevision,
-		"date", versionInfo.VcsTime,
-		"arch", runtime.GOARCH)
+		log.String("version", versionInfo.Version),
+		log.String("revision", versionInfo.VcsRevision),
+		log.String("date", versionInfo.VcsTime),
+		log.String("arch", runtime.GOARCH))
 
 	if err = tracer.ProbeBPFSyscall(); err != nil {
 		return failure("Failed to probe eBPF syscall", "error", err)
@@ -192,10 +192,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	} else {
 		includeTracers.Disable(tracertypes.Labels)
 	}
-	log.Info("Enabled tracers", "tracers", includeTracers.String())
+	log.Info("Enabled tracers", log.String("tracers", includeTracers.String()))
 
 	validatedTags := config.ValidateTags(c.Tags)
-	log.Debug("Validated tags", "tags", validatedTags)
+	log.Debug("Validated tags", log.Any("tags", validatedTags))
 
 	// Add tags from the arguments
 	config.AddTagsFromArgs(&validatedTags, c)
@@ -459,7 +459,7 @@ func getTracePipe() (*os.File, error) {
 		if err == nil {
 			return t, nil
 		}
-		log.Info("Could not open trace_pipe", "mount", mnt, "error", err)
+		log.Info("Could not open trace_pipe", log.String("mount", mnt), log.Any("error", err))
 	}
 	return nil, os.ErrNotExist
 }
@@ -484,12 +484,12 @@ func readTracePipe(ctx context.Context) {
 			if errors.Is(err, io.EOF) {
 				continue
 			}
-			log.Error("error reading trace_pipe", "error", err)
+			log.Error("error reading trace_pipe", log.Any("error", err))
 			return
 		}
 		line = strings.TrimSpace(line)
 		if line != "" {
-			log.Info("ebpf-profiler output", "line", line)
+			log.Info("ebpf-profiler output", log.String("line", line))
 		}
 	}
 }

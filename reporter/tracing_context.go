@@ -61,13 +61,13 @@ func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []by
 
 	vaddr, err := strconv.ParseUint(addrs[0], 16, 64)
 	if err != nil {
-		log.Debug("vaddr: failed to convert to uint64", "value", addrs[0], "error", err)
+		log.Debug("vaddr: failed to convert to uint64", log.String("value", addrs[0]), log.Any("error", err))
 		return nil
 	}
 
 	vend, err := strconv.ParseUint(addrs[1], 16, 64)
 	if err != nil {
-		log.Debug("vend: failed to convert to uint64", "value", addrs[1], "error", err)
+		log.Debug("vend: failed to convert to uint64", log.String("value", addrs[1]), log.Any("error", err))
 		return nil
 	}
 
@@ -80,7 +80,7 @@ func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []by
 	// CodeQL complains about the conversion from uint64 to libpf.Address, but it's safe since we target only 64-bit architectures
 	err = rm.Read(libpf.Address(vaddr), pfunsafe.FromPointer(&header))
 	if err != nil {
-		log.Debug("failed to read context mapping", "error", err)
+		log.Debug("failed to read context mapping", log.Any("error", err))
 		return nil
 	}
 	if pfunsafe.ToString(header.Signature[:]) != otelContextSignature {
@@ -96,7 +96,7 @@ func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []by
 	payload := make([]byte, header.PayloadSize)
 	err = rm.Read(libpf.Address(header.PayloadAddr), payload)
 	if err != nil {
-		log.Debug("failed to read context payload", "error", err)
+		log.Debug("failed to read context payload", log.Any("error", err))
 		return nil
 	}
 	return payload
@@ -150,7 +150,7 @@ func readProcessContext(mapsFile io.Reader, rm remotememory.RemoteMemory, useMap
 	var ctx samples.ProcessContext
 	err = msgpack.Unmarshal(data, &ctx)
 	if err != nil {
-		log.Warn("failed to unmarshal context mapping", "error", err)
+		log.Warn("failed to unmarshal context mapping", log.Any("error", err))
 		return nil, err
 	}
 	return &ctx, nil
@@ -159,7 +159,7 @@ func readProcessContext(mapsFile io.Reader, rm remotememory.RemoteMemory, useMap
 func ReadProcessLevelContext(pid libpf.PID, useMappingNames bool) (*samples.ProcessContext, error) {
 	mapsFile, err := os.Open(fmt.Sprintf("/proc/%d/maps", pid))
 	if err != nil {
-		log.Debug("failed to open maps file", "error", err)
+		log.Debug("failed to open maps file", log.Any("error", err))
 		return nil, err
 	}
 	defer mapsFile.Close()

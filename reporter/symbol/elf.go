@@ -72,13 +72,13 @@ func NewElfFromDisk(path string) (*Elf, error) {
 	goBuildID := ""
 	gnuBuildID, err := wrapper.elfFile.GetBuildID()
 	if err != nil {
-		log.Debug("failed to get GNU build ID for file", "path", path, "error", err)
+		log.Debug("failed to get GNU build ID for file", log.String("path", path), log.Any("error", err))
 	}
 
 	if wrapper.elfFile.IsGolang() {
 		goBuildID, err = wrapper.elfFile.GetGoBuildID()
 		if err != nil {
-			log.Debug("failed to get Go build ID for file", "path", path, "error", err)
+			log.Debug("failed to get Go build ID for file", log.String("path", path), log.Any("error", err))
 		}
 	}
 
@@ -132,7 +132,7 @@ func (e *Elf) GetSize() int64 {
 	if elfPath == "" {
 		data, err := e.wrapper.ElfData()
 		if err != nil {
-			log.Warn("Failed to get elf data", "error", err)
+			log.Warn("Failed to get elf data", log.Any("error", err))
 			return 0
 		}
 		return int64(len(data))
@@ -140,7 +140,7 @@ func (e *Elf) GetSize() int64 {
 
 	fi, err := os.Stat(elfPath)
 	if err != nil {
-		log.Warn("Failed to get elf file", "error", err)
+		log.Warn("Failed to get elf file", log.Any("error", err))
 		return 0
 	}
 	return fi.Size()

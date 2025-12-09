@@ -412,7 +412,7 @@ func (args *Arguments) Dump() {
 		if args.cmd.IsSet(f.Names()[0]) {
 			setStr = "set"
 		}
-		log.Debug("config flag", "flag", f.Names()[0], "value", args.cmd.Value(f.Names()[0]), "source", setStr)
+		log.Debug("config flag", log.String("flag", f.Names()[0]), log.Any("value", args.cmd.Value(f.Names()[0])), log.String("source", setStr))
 	}
 }
 
