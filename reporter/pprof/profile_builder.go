@@ -8,6 +8,7 @@ package pprof
 import (
 	"fmt"
 	"path"
+	"strconv"
 	"time"
 
 	lru "github.com/elastic/go-freelru"
@@ -17,7 +18,10 @@ import (
 	samples "github.com/DataDog/dd-otel-host-profiler/reporter/samples"
 )
 
-const unknownStr = "UNKNOWN"
+const (
+	unknownStr = "UNKNOWN"
+	CPUIDLabel = "cpu.logical_number"
+)
 
 type Config struct {
 	Start                       time.Time
@@ -32,7 +36,7 @@ type Config struct {
 type ProfileBuilder struct {
 	profile                     *pprofile.Profile
 	funcMap                     map[funcInfo]*pprofile.Function
-	mappings                    map[uniqueMapping]*pprofile.Mapping
+	mappings                    map[libpf.FrameMapping]*pprofile.Mapping
 	processes                   *lru.SyncedLRU[libpf.PID, samples.ProcessMetadata]
 	timeline                    bool
 	processLevelContextAsLabels bool
@@ -45,19 +49,11 @@ type ProfileStats struct {
 	TotalSampleCount int
 }
 
-// uniqueMapping defines an unique mapping in a process.
-type uniqueMapping struct {
-	// mapping start in the ELF virtual address space
-	Start libpf.Address
-	// mapping file
-	File libpf.FrameMappingFile
-}
-
 func NewProfileBuilder(cfg *Config) *ProfileBuilder {
 	// funcMap is a temporary helper that will build the Function array
 	// in profile and make sure information is deduplicated.
 	funcMap := make(map[funcInfo]*pprofile.Function)
-	mappings := make(map[uniqueMapping]*pprofile.Mapping)
+	mappings := make(map[libpf.FrameMapping]*pprofile.Mapping)
 
 	samplingPeriod := 1000000000 / int64(cfg.SamplesPerSecond)
 	profile := &pprofile.Profile{
@@ -225,24 +221,20 @@ func (b *ProfileBuilder) createPProfLocation(address uint64) *pprofile.Location 
 }
 
 func (b *ProfileBuilder) createPprofMappingForFrame(frame *libpf.Frame) *pprofile.Mapping {
-	if !frame.MappingFile.Valid() {
+	if !frame.Mapping.Valid() {
 		return nil
 	}
 
-	if mapping, exists := b.mappings[uniqueMapping{Start: frame.MappingStart, File: frame.MappingFile}]; exists {
+	if mapping, exists := b.mappings[frame.Mapping]; exists {
 		return mapping
 	}
 
-	mf := frame.MappingFile.Value()
-	fileName := unknownStr
-	// Not sure if it's possible to have a null string here, but just in case.
-	if mf.FileName != libpf.NullString {
-		fileName = mf.FileName.String()
-	}
+	m := frame.Mapping.Value()
+	mf := m.File.Value()
 	buildID := samples.GetBuildID(mf.GnuBuildID, mf.GoBuildID, mf.FileID)
 
-	mapping := b.createPprofMapping(fileName, buildID, frame.MappingStart, frame.MappingFileOffset)
-	b.mappings[uniqueMapping{Start: frame.MappingStart, File: frame.MappingFile}] = mapping
+	mapping := b.createPprofMapping(mf.FileName.String(), buildID, m.Start, m.FileOffset)
+	b.mappings[frame.Mapping] = mapping
 	return mapping
 }
 
@@ -278,6 +270,8 @@ func addTraceLabels(labels map[string][]string, i samples.TraceAndMetaKey, proce
 	if processName != "" {
 		labels["process name"] = append(labels["process name"], processName)
 	}
+
+	labels[CPUIDLabel] = append(labels[CPUIDLabel], strconv.Itoa(int(i.CPU)))
 
 	containerMetadata := processMeta.ContainerMetadata
 	if containerMetadata.PodName != "" {
@@ -340,13 +334,13 @@ func hasCustomLabels(traceInfo *samples.TraceEvents) bool {
 	return false
 }
 
-func addCustomLabels(labels map[string][]string, customLabels map[string]string) map[string][]string {
+func addCustomLabels(labels map[string][]string, customLabels map[libpf.String]libpf.String) map[string][]string {
 	labelsCopy := make(map[string][]string)
 	for key, value := range labels {
 		labelsCopy[key] = append(labelsCopy[key], value...)
 	}
 	for key, value := range customLabels {
-		labelsCopy[key] = append(labelsCopy[key], value)
+		labelsCopy[key.String()] = append(labelsCopy[key.String()], value.String())
 	}
 	return labelsCopy
 }
