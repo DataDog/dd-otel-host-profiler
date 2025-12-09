@@ -16,7 +16,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/sirupsen/logrus"
+	ebpfLog "go.opentelemetry.io/ebpf-profiler/log"
 	"golang.org/x/sys/unix"
 
 	"github.com/DataDog/dd-otel-host-profiler/config"
@@ -47,9 +47,9 @@ func mainWithExitCode() runner.ExitCode {
 		unix.SIGINT, unix.SIGTERM, unix.SIGABRT)
 	defer mainCancel()
 
+	ebpfLog.SetLogger(*log.Default())
 	if args.VerboseMode {
-		log.SetLogLoggerLevel(log.LevelDebug) // dd-otel-host-profiler's logs
-		logrus.SetLevel(logrus.DebugLevel)    // datadog epbf fork's logger
+		log.SetLogLoggerLevel(log.LevelDebug)
 		// Dump the arguments in debug mode.
 		args.Dump()
 	}
