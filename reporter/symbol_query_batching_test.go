@@ -103,7 +103,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 	defer cancel()
 
 	t.Run("Empty batch", func(t *testing.T) {
-		results := ExecuteSymbolQueryBatch(ctx, nil, queriers)
+		results := ExecuteSymbolQueryBatch(ctx, nil, queriers, DefaultLogger())
 		require.Empty(t, results)
 	})
 
@@ -116,7 +116,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 			symbol.NewElfForTest("arch1", "", "", fileID),                 // empty buildID
 			symbol.NewElfForTest("arch1", "buildid2", "", fileID),         // multiple matching buildIDs, first one should be used
 		}
-		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
+		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers, DefaultLogger())
 		require.ElementsMatch(t, []ElfWithBackendSources{
 			{
 				Elf: elfs[0],
@@ -180,7 +180,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 		elfs := []*symbol.Elf{
 			symbol.NewElfForTest("arch0", "buildid1", "", libpf.FileID{}),
 		}
-		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
+		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers, DefaultLogger())
 		require.Error(t, results[0].BackendSymbolSources[0].Err)
 		require.Error(t, results[0].BackendSymbolSources[1].Err)
 	})
@@ -189,7 +189,7 @@ func TestBatchSymbolQuerier_Multiplexing(t *testing.T) {
 		elfs := []*symbol.Elf{
 			symbol.NewElfForTest("arch2", "buildid1", "", libpf.FileID{}),
 		}
-		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers)
+		results := ExecuteSymbolQueryBatch(ctx, elfs, queriers, DefaultLogger())
 		require.Error(t, results[0].BackendSymbolSources[1].Err)
 		require.NoError(t, results[0].BackendSymbolSources[0].Err)
 		require.Equal(t, symbol.SourceDebugInfo, results[0].BackendSymbolSources[0].SymbolSource)
