@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	unknownStr = "UNKNOWN"
-	CPUIDLabel = "cpu.logical_number"
+	unknownStr             = "UNKNOWN"
+	CPUIDLabel             = "cpu.logical_number"
+	symbolicationFailedStr = "[symbolication_failed]"
+	abortStr               = "[abort]"
 )
 
 type Config struct {
@@ -95,7 +97,12 @@ func (b *ProfileBuilder) AddEvents(events samples.KeyToEventMapping) {
 			default:
 				functionName := frame.FunctionName.String()
 				if functionName == "" {
-					functionName = unknownStr
+					switch frameType {
+					case libpf.AbortFrame:
+						functionName = abortStr
+					default:
+						functionName = symbolicationFailedStr
+					}
 				}
 				line := pprofile.Line{
 					Line:     int64(frame.SourceLine),
