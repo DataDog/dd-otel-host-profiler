@@ -114,21 +114,17 @@ import,go.opentelemetry.io/collector/component,Apache-2.0,unknown
 import,go.opentelemetry.io/collector/consumer,Apache-2.0,unknown
 import,go.opentelemetry.io/collector/consumer/xconsumer,Apache-2.0,unknown
 import,go.opentelemetry.io/collector/featuregate,Apache-2.0,unknown
-import,go.opentelemetry.io/collector/internal/telemetry,Apache-2.0,unknown
 import,go.opentelemetry.io/collector/pdata,Apache-2.0,unknown
 import,go.opentelemetry.io/collector/pdata/pprofile,Apache-2.0,unknown
 import,go.opentelemetry.io/collector/semconv,Apache-2.0,unknown
-import,go.opentelemetry.io/contrib/bridges/otelzap,Apache-2.0,unknown
 import,go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp,Apache-2.0,unknown
 import,go.opentelemetry.io/ebpf-profiler,Apache-2.0,unknown
 import,go.opentelemetry.io/otel,Apache-2.0,Copyright 2009 The Go Authors.
-import,go.opentelemetry.io/otel/log,Apache-2.0,Copyright 2009 The Go Authors.
 import,go.opentelemetry.io/otel/metric,Apache-2.0,Copyright 2009 The Go Authors.
-import,go.opentelemetry.io/otel/sdk,Apache-2.0,Copyright 2009 The Go Authors.
 import,go.opentelemetry.io/otel/trace,Apache-2.0,Copyright 2009 The Go Authors.
 import,go.uber.org/atomic,MIT,"Copyright (c) 2016 Uber Technologies, Inc."
 import,go.uber.org/multierr,MIT,"Copyright (c) 2017-2021 Uber Technologies, Inc."
-import,go.uber.org/zap,MIT,"Copyright (c) 2016-2017 Uber Technologies, Inc."
+import,go.uber.org/zap,MIT,"Copyright (c) 2016-2024 Uber Technologies, Inc."
 import,golang.org/x/arch,BSD-3-Clause,Copyright 2015 The Go Authors.
 import,golang.org/x/exp/constraints,BSD-3-Clause,Copyright 2009 The Go Authors.
 import,golang.org/x/mod/semver,BSD-3-Clause,Copyright 2009 The Go Authors.

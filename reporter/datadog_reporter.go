@@ -159,9 +159,10 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 
 	key := rsamples.TraceAndMetaKey{
 		Hash: trace.Hash,
-		Comm: meta.Comm,
+		Comm: meta.Comm.String(),
 		Pid:  meta.PID,
 		Tid:  meta.TID,
+		CPU:  int64(meta.CPU),
 	}
 
 	eventsTree := r.traceEvents.WLock()
@@ -200,9 +201,9 @@ func (r *DatadogReporter) ReportTraceEvent(trace *libpf.Trace, meta *samples.Tra
 		return nil
 	}
 
-	var customLabels []map[string]string
+	var customLabels []map[libpf.String]libpf.String
 	if r.config.CollectContext {
-		customLabels = []map[string]string{trace.CustomLabels}
+		customLabels = []map[libpf.String]libpf.String{trace.CustomLabels}
 	}
 
 	perOriginEvents[key] = &rsamples.TraceEvents{
@@ -502,6 +503,7 @@ func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled
 	tags := append(Tags{}, userTags...)
 
 	customContextTagKey := "ddprof.custom_ctx"
+	tags = append(tags, MakeTag(customContextTagKey, pprof.CPUIDLabel))
 	if !splitByServiceEnabled {
 		tags = append(tags,
 			MakeTag(customContextTagKey, "container_id"),
@@ -522,7 +524,7 @@ func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled
 		// If process level context is emitted as sample labels, make these labels available as custom context.
 		tags = append(tags,
 			MakeTag(customContextTagKey, "env"),
-			MakeTag(customContextTagKey, "runtime_id"),
+			MakeTag(customContextTagKey, "runtime-id"),
 			MakeTag(customContextTagKey, "service_name"),
 			MakeTag(customContextTagKey, "service_version"),
 			MakeTag(customContextTagKey, "telemetry_sdk_language"),
@@ -550,7 +552,7 @@ func createTagsForProfile(tags Tags, profileSeq uint64, serviceEntity rsamples.S
 func addProcessLevelContextTags(tags Tags, processContext *rsamples.ProcessContext) Tags {
 	tags = append(tags,
 		MakeTag("env", processContext.DeploymentEnvironmentName),
-		MakeTag("runtime_id", processContext.ServiceInstanceID),
+		MakeTag("runtime-id", processContext.ServiceInstanceID),
 		MakeTag("service_name", processContext.ServiceName),
 		MakeTag("service_version", processContext.ServiceVersion),
 		MakeTag("host_name", processContext.HostName),
@@ -567,7 +569,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	if err != nil {
 		// Process might have exited since the trace was collected or process is a kernel thread.
 		log.Debugf("Failed to get process metadata for PID %d: %v", pid, err)
-		execPath = meta.ExecutablePath
+		execPath = meta.ExecutablePath.String()
 	}
 	// Trim the "(deleted)" suffix if it exists.
 	// This can happen when the executable has been deleted or replaced while the process is running.
@@ -578,14 +580,13 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 		processName = string(name)
 	} else {
 		r.processAlreadyExitedCount++
-		processName = meta.ProcessName
+		processName = meta.ProcessName.String()
 	}
 
 	var service string
-	var ok bool
 	for _, envVarName := range ServiceNameEnvVars {
-		service, ok = meta.EnvVars[envVarName]
-		if ok {
+		if s, ok := meta.EnvVars[libpf.Intern(envVarName)]; ok {
+			service = s.String()
 			break
 		}
 	}
@@ -596,7 +597,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	// This can occur when a container is started, during startup the process is runc
 	// (without the final container environment) that then execs into the final binary
 	// with the container environment.
-	if !ok && meta.ExecutablePath != execPath {
+	if service == "" && meta.ExecutablePath.String() != execPath {
 		service = getServiceName(pid)
 	}
 
@@ -629,8 +630,8 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	case processName != "":
 		service = processName
 		inferredService = true
-	case meta.Comm != "":
-		service = meta.Comm
+	case meta.Comm != libpf.NullString:
+		service = meta.Comm.String()
 		inferredService = true
 	default:
 		service = unknownServiceStr
@@ -638,13 +639,13 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	}
 
 	var containerMetadata containermetadata.ContainerMetadata
-	if meta.ContainerID != "" && r.config.EnableSplitByService {
+	if meta.ContainerID != libpf.NullString && r.config.EnableSplitByService {
 		// Use containerID when found by the eBPF profiler and not other container metadata is needed
 		// (ie. split by service is enabled).
 		// eBPF profiler only supports cgroup v2 and even with cgroup v2, depending on Kubernetes settings,
 		// containerID might not be available in /proc/<pid>/cgroup.
 		containerMetadata = containermetadata.ContainerMetadata{
-			EntityID: "ci-" + meta.ContainerID,
+			EntityID: "ci-" + meta.ContainerID.String(),
 		}
 	} else {
 		containerMetadata, err = r.containerMetadataProvider.GetContainerMetadata(pid)

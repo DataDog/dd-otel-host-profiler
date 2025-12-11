@@ -26,7 +26,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
       - name: Get Go version from go.mod file
         id: go-version
-        run: echo "version=$(go mod edit -json | jq -r .Go)" >> "${GITHUB_OUTPUT}"
+        run: echo "version=$(go mod edit -json | jq -r .Toolchain | cut -c3-)" >> "${GITHUB_OUTPUT}"
       - name: Checkout Go
         uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
         with:

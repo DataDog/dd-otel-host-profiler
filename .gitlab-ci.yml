@@ -26,6 +26,7 @@ variables:
     IMAGE_VERSION: parametrized
     IMAGE_NAME: dd-otel-host-profiler
     DOCKER_ENV_PREFIX: "X_DOCKER_ENV_"
+    ENABLE_NYDUS_PREVIEW: "true"
 
 deploy_to_reliability_env:
   stage: deploy
