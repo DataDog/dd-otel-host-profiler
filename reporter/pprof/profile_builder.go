@@ -19,10 +19,10 @@ import (
 )
 
 const (
-	unknownStr = "UNKNOWN"
-	CPUIDLabel = "cpu.logical_number"
-  symbolicationFailedStr = "[symbolication_failed]"
-  abortStr = "[abort]"
+	unknownStr             = "UNKNOWN"
+	CPUIDLabel             = "cpu.logical_number"
+	symbolicationFailedStr = "[symbolication_failed]"
+	abortStr               = "[abort]"
 )
 
 type Config struct {
