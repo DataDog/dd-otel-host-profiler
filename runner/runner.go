@@ -30,6 +30,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/tracer"
 	tracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 	"go.opentelemetry.io/otel/metric/noop"
+	"golang.org/x/sys/unix"
 
 	"github.com/DataDog/dd-otel-host-profiler/config"
 	"github.com/DataDog/dd-otel-host-profiler/containermetadata"
@@ -100,8 +101,12 @@ func getKernelVersion() (kernelVersion, error) {
 	return kernelVersion{major: major, minor: minor, patch: patch}, nil
 }
 
-func kernelSupportsNamedAnonymousMappings(ver kernelVersion) bool {
-	return ver.major > 5 || (ver.major == 5 && ver.minor >= 17)
+func kernelSupportsNamedAnonymousMappings() bool {
+	// Check for PR_SET_VMA support with PR_SET_VMA_ANON_NAME.
+	// Calling with 0 length is a no-op that returns 0 if supported,
+	// and EINVAL if the syscall or option is not supported.
+	err := unix.Prctl(unix.PR_SET_VMA, unix.PR_SET_VMA_ANON_NAME, 0, 0, 0)
+	return err == nil
 }
 
 func Run(mainCtx context.Context, c *config.Config) ExitCode {
@@ -267,7 +272,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		HostServiceName:                      c.HostServiceName,
 		CollectContext:                       c.CollectContext,
 		UseRuntimeIDInServiceEntityKey:       useRuntimeIDInServiceEntityKey,
-		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(kernVersion),
+		KernelSupportsNamedAnonymousMappings: kernelSupportsNamedAnonymousMappings(),
 		SymbolUploaderConfig: reporter.SymbolUploaderConfig{
 			SymbolUploaderOptions: reporter.SymbolUploaderOptions{
 				Enabled:              c.UploadSymbols,
