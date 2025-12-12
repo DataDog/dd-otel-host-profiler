@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -28,7 +29,6 @@ import (
 	"github.com/DataDog/jsonapi"
 	"github.com/DataDog/zstd"
 	"github.com/jarcoal/httpmock"
-	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -452,7 +452,7 @@ func TestSymbolUpload(t *testing.T) {
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
-	log.SetLevel(log.DebugLevel)
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	buildID := "some_go_build_id"
 	channels := registerResponders(t, buildID)
 
