@@ -22,7 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	log "log/slog"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -198,7 +198,7 @@ func NewContainerMetadataProvider(ctx context.Context, nodeName string) (
 			return nil, fmt.Errorf("failed to create kubernetes client %w", err)
 		}
 	} else {
-		log.Info("Environment variable not set", log.String("variable", kubernetesServiceHost))
+		slog.Info("Environment variable not set", slog.String("variable", kubernetesServiceHost))
 		p.containerMetadataCache, err = lru.NewSynced[string, ContainerMetadata](
 			containerMetadataCacheSize, hashString)
 		if err != nil {
@@ -206,7 +206,7 @@ func NewContainerMetadataProvider(ctx context.Context, nodeName string) (
 		}
 	}
 
-	log.Debug("Container metadata handler initialized", log.Any("handler", p))
+	slog.Debug("Container metadata handler initialized", slog.Any("handler", p))
 
 	return p, nil
 }
@@ -237,7 +237,7 @@ func getContainerMetadataCache(ctx context.Context, h *containerMetadataProvider
 
 	podsPerNode, err := getPodsPerNode(ctx, h)
 	if err != nil {
-		log.Info("Failed to size cache based on pods per node", log.String("error", err.Error()))
+		slog.Info("Failed to size cache based on pods per node", slog.String("error", err.Error()))
 	} else {
 		cacheSize *= podsPerNode
 	}
@@ -247,7 +247,7 @@ func getContainerMetadataCache(ctx context.Context, h *containerMetadataProvider
 }
 
 func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) error {
-	log.Debug("Creating Kubernetes client")
+	slog.Debug("Creating Kubernetes client")
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -290,7 +290,7 @@ func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) e
 		AddFunc: func(obj any) {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
-				log.Error("Received unknown object in AddFunc handler", log.Any("object", obj))
+				slog.Error("Received unknown object in AddFunc handler", slog.Any("object", obj))
 				return
 			}
 			p.putCache(pod)
@@ -298,7 +298,7 @@ func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) e
 		UpdateFunc: func(_ any, newObj any) {
 			pod, ok := newObj.(*corev1.Pod)
 			if !ok {
-				log.Error("Received unknown object in UpdateFunc handler", log.Any("object", newObj))
+				slog.Error("Received unknown object in UpdateFunc handler", slog.Any("object", newObj))
 				return
 			}
 			p.putCache(pod)
@@ -314,7 +314,7 @@ func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) e
 		<-ctx.Done()
 		close(stopper)
 		if err := informer.RemoveEventHandler(handle); err != nil {
-			log.Error("Failed to remove event handler", log.String("error", err.Error()))
+			slog.Error("Failed to remove event handler", slog.String("error", err.Error()))
 		}
 	}()
 	// Run the informer
@@ -337,14 +337,14 @@ func getContainerdClient() *containerd.Client {
 			return c
 		}
 	}
-	log.Info("Can't connect Containerd client", log.Any("sockets", knownContainerdSockets))
+	slog.Info("Can't connect Containerd client", slog.Any("sockets", knownContainerdSockets))
 	return nil
 }
 
 func getDockerClient() *client.Client {
 	c, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		log.Info("Can't connect Docker client", log.String("error", err.Error()))
+		slog.Info("Can't connect Docker client", slog.String("error", err.Error()))
 	}
 	return c
 }
@@ -403,7 +403,7 @@ func (p *containerMetadataProvider) GetContainerMetadata(pid libpf.PID) (Contain
 	}
 
 	if err != nil {
-		log.Debug("Failed to get container metadata", log.String("container_id", pidContainerID), log.String("error", err.Error()))
+		slog.Debug("Failed to get container metadata", slog.String("container_id", pidContainerID), slog.String("error", err.Error()))
 
 		// If we failed to get the container metadata, still return the container ID
 		data = ContainerMetadata{
@@ -421,14 +421,14 @@ func (p *containerMetadataProvider) GetContainerMetadata(pid libpf.PID) (Contain
 
 // putCache updates the container id metadata cache for the provided pod.
 func (p *containerMetadataProvider) putCache(pod *corev1.Pod) {
-	log.Debug("Updating container metadata cache", log.String("pod_name", pod.Name))
+	slog.Debug("Updating container metadata cache", slog.String("pod_name", pod.Name))
 
 	for i := range pod.Status.ContainerStatuses {
 		var containerID string
 		var err error
 		if containerID, err = matchContainerID(
 			pod.Status.ContainerStatuses[i].ContainerID); err != nil {
-			log.Debug("Failed to get kubernetes container metadata", log.String("pod_name", pod.Name), log.String("error", err.Error()))
+			slog.Debug("Failed to get kubernetes container metadata", slog.String("pod_name", pod.Name), slog.String("error", err.Error()))
 			continue
 		}
 
@@ -453,7 +453,7 @@ func getNodeName() (string, error) {
 	if nodeName != "" {
 		return nodeName, nil
 	}
-	log.Debug("Environment variable not set", log.String("variable", kubernetesNodeName))
+	slog.Debug("Environment variable not set", slog.String("variable", kubernetesNodeName))
 
 	// The Elastic manifest for kubernetes uses NODE_NAME instead of KUBERNETES_NODE_NAME.
 	// Therefore, we check for both environment variables.
@@ -467,7 +467,7 @@ func getNodeName() (string, error) {
 
 func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID string) (
 	ContainerMetadata, error) {
-	log.Debug("Getting kubernetes pod metadata", log.String("container_id", pidContainerID))
+	slog.Debug("Getting kubernetes pod metadata", slog.String("container_id", pidContainerID))
 
 	p.kubernetesClientQueryCount.Add(1)
 	pods, err := p.kubeClientSet.CoreV1().Pods("").List(context.TODO(), v1.ListOptions{
@@ -486,7 +486,7 @@ func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID stri
 				continue
 			}
 			if containerID, err = matchContainerID(containers[i].ContainerID); err != nil {
-				log.Error("Failed to match container ID", log.String("error", err.Error()))
+				slog.Error("Failed to match container ID", slog.String("error", err.Error()))
 				continue
 			}
 			if containerID == pidContainerID {
@@ -507,7 +507,7 @@ func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID stri
 				continue
 			}
 			if containerID, err = matchContainerID(initContainers[i].ContainerID); err != nil {
-				log.Error("Failed to match container ID", log.String("error", err.Error()))
+				slog.Error("Failed to match container ID", slog.String("error", err.Error()))
 				continue
 			}
 			if containerID == pidContainerID {
@@ -529,7 +529,7 @@ func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID stri
 
 func (p *containerMetadataProvider) getDockerContainerMetadata(pidContainerID string) (
 	ContainerMetadata, error) {
-	log.Debug("Getting docker container metadata", log.String("container_id", pidContainerID))
+	slog.Debug("Getting docker container metadata", slog.String("container_id", pidContainerID))
 
 	p.dockerClientQueryCount.Add(1)
 	containers, err := p.dockerClient.ContainerList(context.Background(),
@@ -557,7 +557,7 @@ func (p *containerMetadataProvider) getDockerContainerMetadata(pidContainerID st
 
 func (p *containerMetadataProvider) getContainerdContainerMetadata(pidContainerID string) (
 	ContainerMetadata, error) {
-	log.Debug("Getting containerd container metadata", log.String("container_id", pidContainerID))
+	slog.Debug("Getting containerd container metadata", slog.String("container_id", pidContainerID))
 
 	// Avoid heap allocations here - do not use strings.SplitN()
 	var fields [4]string // allocate the array on the stack with capacity 3
@@ -629,7 +629,7 @@ func (p *containerMetadataProvider) extractContainerIDFromFile(cgroupFilePath st
 	f, err := os.Open(cgroupFilePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			log.Debug("cgroup file does not exist anymore, could not get container id", log.String("path", cgroupFilePath))
+			slog.Debug("cgroup file does not exist anymore, could not get container id", slog.String("path", cgroupFilePath))
 			return "", envUndefined, nil
 		}
 		return "", envUndefined, fmt.Errorf("failed to get container id from %s: %w",

@@ -15,7 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	log "log/slog"
+	"log/slog"
 	"os"
 	"runtime"
 	"strings"
@@ -118,10 +118,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	currentScore, err := oom.GetOOMScoreAdj(0)
 	if err != nil {
-		log.Warn("Failed to get OOM score adjustment", log.String("error", err.Error()))
+		slog.Warn("Failed to get OOM score adjustment", slog.String("error", err.Error()))
 	} else if currentScore > 0 {
 		if err = oom.SetOOMScoreAdj(0, 0); err != nil {
-			log.Warn("Could not adjust OOM score", log.String("error", err.Error()))
+			slog.Warn("Could not adjust OOM score", slog.String("error", err.Error()))
 		}
 	}
 
@@ -166,11 +166,11 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		defer ddtracer.Stop()
 	}
 
-	log.Info("Starting Datadog OTEL host profiler",
-		log.String("version", versionInfo.Version),
-		log.String("revision", versionInfo.VcsRevision),
-		log.String("date", versionInfo.VcsTime),
-		log.String("arch", runtime.GOARCH))
+	slog.Info("Starting Datadog OTEL host profiler",
+		slog.String("version", versionInfo.Version),
+		slog.String("revision", versionInfo.VcsRevision),
+		slog.String("date", versionInfo.VcsTime),
+		slog.String("arch", runtime.GOARCH))
 
 	if err = tracer.ProbeBPFSyscall(); err != nil {
 		return failure("Failed to probe eBPF syscall", "error", err)
@@ -184,7 +184,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	// Start periodic synchronization with the realtime clock
 	times.StartRealtimeSync(mainCtx, c.ClockSyncInterval)
 
-	log.Debug("Determining tracers to include")
+	slog.Debug("Determining tracers to include")
 	includeTracers, err := tracertypes.Parse(c.Tracers)
 	if err != nil {
 		return failure("Failed to parse the included tracers", "error", err)
@@ -197,10 +197,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	} else {
 		includeTracers.Disable(tracertypes.Labels)
 	}
-	log.Info("Enabled tracers", log.String("tracers", includeTracers.String()))
+	slog.Info("Enabled tracers", slog.String("tracers", includeTracers.String()))
 
 	validatedTags := config.ValidateTags(c.Tags)
-	log.Debug("Validated tags", log.String("tags", validatedTags.String()))
+	slog.Debug("Validated tags", slog.String("tags", validatedTags.String()))
 
 	// Add tags from the arguments
 	config.AddTagsFromArgs(&validatedTags, c)
@@ -222,9 +222,9 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	if c.UploadSymbols {
 		validSymbolEndpoints = GetValidSymbolEndpoints(c.Site, c.APIKey, c.AppKey, c.AdditionalSymbolEndpoints, func(msg string) {
-			log.Info(msg)
+			slog.Info(msg)
 		}, func(msg string) {
-			log.Warn(msg)
+			slog.Warn(msg)
 		})
 	}
 
@@ -250,7 +250,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		return failure("Service name is required when running in non-split-by-service mode")
 	}
 	if c.HostServiceName != "" && c.EnableSplitByService {
-		log.Warn("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
+		slog.Warn("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
 	}
 
 	useRuntimeIDInServiceEntityKey := c.EnableSplitByService && c.CollectContext
@@ -320,24 +320,24 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	if err != nil {
 		return failure("Failed to load eBPF tracer", "error", err)
 	}
-	log.Info("eBPF tracer loaded")
+	slog.Info("eBPF tracer loaded")
 	defer trc.Close()
 
 	now := time.Now()
 	trc.StartPIDEventProcessor(mainCtx)
 
 	metrics.Add(metrics.IDProcPIDStartupMs, metrics.MetricValue(time.Since(now).Milliseconds()))
-	log.Debug("Completed initial PID listing")
+	slog.Debug("Completed initial PID listing")
 
 	// Attach our tracer to the perf event
 	if err := trc.AttachTracer(); err != nil {
 		return failure("Failed to attach to perf event", "error", err)
 	}
-	log.Info("Attached tracer program")
+	slog.Info("Attached tracer program")
 
 	if c.ProbabilisticThreshold < tracer.ProbabilisticThresholdMax {
 		trc.StartProbabilisticProfiling(mainCtx)
-		log.Info("Enabled probabilistic profiling")
+		slog.Info("Enabled probabilistic profiling")
 	} else {
 		if err := trc.EnableProfiling(); err != nil {
 			return failure("Failed to enable perf events", "error", err)
@@ -349,24 +349,24 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	}
 	// This log line is used in our system tests to verify if that the agent has started. So if you
 	// change this log line update also the system test.
-	log.Info("Attached sched monitor")
+	slog.Info("Attached sched monitor")
 
 	if err := startTraceHandling(mainCtx, trc); err != nil {
 		return failure("Failed to start trace handling", "error", err)
 	}
 
 	if c.VerboseeBPF {
-		log.Info("Reading from trace_pipe...")
+		slog.Info("Reading from trace_pipe...")
 		go readTracePipe(mainCtx)
 	}
 
 	// Block waiting for a signal to indicate the program should terminate
 	<-mainCtx.Done()
 
-	log.Info("Stop processing ...")
+	slog.Info("Stop processing ...")
 	rep.Stop()
 
-	log.Info("Exiting ...")
+	slog.Info("Exiting ...")
 	return ExitSuccess
 }
 
@@ -466,7 +466,7 @@ func getTracePipe() (*os.File, error) {
 		if err == nil {
 			return t, nil
 		}
-		log.Info("Could not open trace_pipe", log.String("mount", mnt), log.String("error", err.Error()))
+		slog.Info("Could not open trace_pipe", slog.String("mount", mnt), slog.String("error", err.Error()))
 	}
 	return nil, os.ErrNotExist
 }
@@ -474,7 +474,7 @@ func getTracePipe() (*os.File, error) {
 func readTracePipe(ctx context.Context) {
 	tp, err := getTracePipe()
 	if err != nil {
-		log.Warn("Could not open trace_pipe, check that debugfs is mounted")
+		slog.Warn("Could not open trace_pipe, check that debugfs is mounted")
 		return
 	}
 
@@ -491,23 +491,23 @@ func readTracePipe(ctx context.Context) {
 			if errors.Is(err, io.EOF) {
 				continue
 			}
-			log.Error("error reading trace_pipe", log.String("error", err.Error()))
+			slog.Error("error reading trace_pipe", slog.String("error", err.Error()))
 			return
 		}
 		line = strings.TrimSpace(line)
 		if line != "" {
-			log.Info("ebpf-profiler output", log.String("line", line))
+			slog.Info("ebpf-profiler output", slog.String("line", line))
 		}
 	}
 }
 
 func ParseError(msg string, args ...any) ExitCode {
-	log.Error(msg, args...)
+	slog.Error(msg, args...)
 	return exitParseError
 }
 
 func failure(msg string, args ...any) ExitCode {
-	log.Error(msg, args...)
+	slog.Error(msg, args...)
 	return exitFailure
 }
 

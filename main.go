@@ -12,7 +12,7 @@ package main
 import (
 	"context"
 	"fmt"
-	log "log/slog"
+	"log/slog"
 	"os"
 	"os/signal"
 
@@ -47,9 +47,9 @@ func mainWithExitCode() runner.ExitCode {
 		unix.SIGINT, unix.SIGTERM, unix.SIGABRT)
 	defer mainCancel()
 
-	ebpfLog.SetLogger(*log.Default())
+	ebpfLog.SetLogger(*slog.Default())
 	if args.VerboseMode {
-		log.SetLogLoggerLevel(log.LevelDebug)
+		slog.SetLogLoggerLevel(slog.LevelDebug)
 		// Dump the arguments in debug mode.
 		args.Dump()
 	}

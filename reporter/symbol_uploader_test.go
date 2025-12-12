@@ -13,7 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	log "log/slog"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -452,7 +452,7 @@ func TestSymbolUpload(t *testing.T) {
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
-	log.SetLogLoggerLevel(log.LevelDebug)
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	buildID := "some_go_build_id"
 	channels := registerResponders(t, buildID)
 

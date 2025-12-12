@@ -11,7 +11,7 @@ package config
 
 import (
 	"fmt"
-	log "log/slog"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"strings"
@@ -38,7 +38,7 @@ func ValidateTags(tags string) reporter.Tags {
 	for _, tag := range splitTags {
 		key, value, found := strings.Cut(tag, ":")
 		if !found || !ValidTagKeyRegex.MatchString(key) || !ValidTagValueRegex.MatchString(value) {
-			log.Warn("Rejected user-specified tag", log.String("tag", tag))
+			slog.Warn("Rejected user-specified tag", slog.String("tag", tag))
 		} else {
 			validatedTags = append(validatedTags, reporter.MakeTag(key, value))
 		}

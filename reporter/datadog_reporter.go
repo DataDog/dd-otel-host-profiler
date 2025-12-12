@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	log "log/slog"
+	"log/slog"
 	"os"
 	"path"
 	"runtime"
@@ -116,8 +116,8 @@ func NewDatadog(ctx context.Context, cfg *Config, p containermetadata.Provider) 
 	if cfg.SymbolUploaderConfig.Enabled {
 		symbolUploader, err = NewDatadogSymbolUploader(ctx, &cfg.SymbolUploaderConfig)
 		if err != nil {
-			log.Error("Failed to create Datadog symbol uploader, symbol upload will be disabled",
-				log.String("error", err.Error()))
+			slog.Error("Failed to create Datadog symbol uploader, symbol upload will be disabled",
+				slog.String("error", err.Error()))
 		}
 	}
 
@@ -266,7 +266,7 @@ func (r *DatadogReporter) Start(mainCtx context.Context) error {
 					return
 				case profile := <-r.profiles:
 					if err := r.reportProfile(ctx, profile); err != nil {
-						log.Error("Request failed", log.String("error", err.Error()))
+						slog.Error("Request failed", slog.String("error", err.Error()))
 					}
 				}
 			}
@@ -359,7 +359,7 @@ func (r *DatadogReporter) reportProfile(ctx context.Context, data *uploadProfile
 	profile := data.profile
 
 	if len(profile.Sample) == 0 {
-		log.Debug("Skip sending of pprof profile with no samples")
+		slog.Debug("Skip sending of pprof profile with no samples")
 		return nil
 	}
 
@@ -454,13 +454,13 @@ func (r *DatadogReporter) getPprofProfile() {
 			end:     intervalEnd,
 			tags:    tags,
 		}
-		log.Info("Tags", log.String("tags", tags.String()))
-		log.Info("Reporting single profile",
-			log.Uint64("profile_seq", profileSeq),
-			log.String("start", intervalStart.Format(time.RFC3339)),
-			log.String("end", intervalEnd.Format(time.RFC3339)),
-			log.Int("samples", stats.TotalSampleCount),
-			log.Int("pids_no_metadata", processAlreadyExitedCount))
+		slog.Info("Tags", slog.String("tags", tags.String()))
+		slog.Info("Reporting single profile",
+			slog.Uint64("profile_seq", profileSeq),
+			slog.String("start", intervalStart.Format(time.RFC3339)),
+			slog.String("end", intervalEnd.Format(time.RFC3339)),
+			slog.Int("samples", stats.TotalSampleCount),
+			slog.Int("pids_no_metadata", processAlreadyExitedCount))
 		return
 	}
 
@@ -496,18 +496,18 @@ func (r *DatadogReporter) getPprofProfile() {
 			entityID: s.EntityID,
 			tags:     tags,
 		}
-		log.Debug("Reporting profile for service",
-			log.String("service", s.Service),
-			log.Int("samples", stats.TotalSampleCount),
-			log.String("tags", tags.String()))
+		slog.Debug("Reporting profile for service",
+			slog.String("service", s.Service),
+			slog.Int("samples", stats.TotalSampleCount),
+			slog.String("tags", tags.String()))
 	}
-	log.Info("Reporting multiple profiles",
-		log.Int("profile_count", len(reportedEvents)),
-		log.Uint64("profile_seq", profileSeq),
-		log.String("start", intervalStart.Format(time.RFC3339)),
-		log.String("end", intervalEnd.Format(time.RFC3339)),
-		log.Int("total_samples", totalSampleCount),
-		log.Int("pids_no_metadata", processAlreadyExitedCount))
+	slog.Info("Reporting multiple profiles",
+		slog.Int("profile_count", len(reportedEvents)),
+		slog.Uint64("profile_seq", profileSeq),
+		slog.String("start", intervalStart.Format(time.RFC3339)),
+		slog.String("end", intervalEnd.Format(time.RFC3339)),
+		slog.Int("total_samples", totalSampleCount),
+		slog.Int("pids_no_metadata", processAlreadyExitedCount))
 }
 
 func createTags(userTags Tags, runtimeTag, version string, splitByServiceEnabled, processLevelContextAsLabels bool) Tags {
@@ -579,7 +579,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	execPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
 		// Process might have exited since the trace was collected or process is a kernel thread.
-		log.Debug("Failed to get process metadata", log.Int("pid", int(pid)), log.String("error", err.Error()))
+		slog.Debug("Failed to get process metadata", slog.Int("pid", int(pid)), slog.String("error", err.Error()))
 		execPath = meta.ExecutablePath.String()
 	}
 	// Trim the "(deleted)" suffix if it exists.
@@ -617,7 +617,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 		tracingCtx, err = ReadProcessLevelContext(pid, r.config.KernelSupportsNamedAnonymousMappings)
 		if err == nil {
 			// TODO: switch to debug log once context collection is enabled by default
-			log.Info("read process context", log.Int("pid", int(pid)), log.Any("context", tracingCtx))
+			slog.Info("read process context", slog.Int("pid", int(pid)), slog.Any("context", tracingCtx))
 			if tracingCtx.ServiceName != "" {
 				service = tracingCtx.ServiceName
 			}
@@ -661,7 +661,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 	} else {
 		containerMetadata, err = r.containerMetadataProvider.GetContainerMetadata(pid)
 		if err != nil {
-			log.Debug("Failed to get container metadata", log.Int("pid", int(pid)), log.String("error", err.Error()))
+			slog.Debug("Failed to get container metadata", slog.Int("pid", int(pid)), slog.String("error", err.Error()))
 			// Even upon failure, we might still have managed to get the containerID
 		}
 	}
@@ -682,7 +682,7 @@ func (r *DatadogReporter) addProcessMetadata(trace *libpf.Trace, meta *samples.T
 func getServiceNameFromProcPath(pid libpf.PID, procRoot string) string {
 	envData, err := os.ReadFile(fmt.Sprintf("%s/proc/%d/environ", procRoot, pid))
 	if err != nil {
-		log.Debug("Failed to read environ", log.Int("pid", int(pid)), log.String("error", err.Error()))
+		slog.Debug("Failed to read environ", slog.Int("pid", int(pid)), slog.String("error", err.Error()))
 		return ""
 	}
 
