@@ -170,7 +170,7 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 	memoryBudget, err := cgroup.GetMemoryBudget()
 	// Couldn't read the budget from cgroups
 	if err != nil {
-		log.Warn("Failed to fetch cgroup memory limit", log.Any("error", err))
+		log.Warn("Failed to fetch cgroup memory limit", log.String("error", err.Error()))
 	}
 
 	symbolRetrievalStage := pipeline.NewStage(symbolRetrievalQueue,
@@ -198,7 +198,7 @@ func (d *DatadogSymbolUploader) Start(ctx context.Context) {
 		func(elfSymbols ElfWithBackendSources) int64 {
 			size := elfSymbols.GetSize()
 			if size > memoryBudget {
-				log.Warn("Upload size is larger than memory limit, attempting upload anyway", log.Any("elf", elfSymbols))
+				log.Warn("Upload size is larger than memory limit, attempting upload anyway", log.String("elf", elfSymbols.String()))
 				size = memoryBudget
 			}
 			return size
@@ -292,17 +292,17 @@ func (d *DatadogSymbolUploader) uploadWorker(ctx context.Context, elfSymbols Elf
 	for i, backendSymbolSource := range elfSymbols.BackendSymbolSources {
 		if backendSymbolSource.Err != nil {
 			log.Warn("Failed to query symbols for executable",
-				log.Any("executable", elfSymbols),
-				log.Any("error", backendSymbolSource.Err))
+				log.String("executable", elfSymbols.String()),
+				log.String("error", backendSymbolSource.Err.Error()))
 			removeFromCache = true
 			continue
 		}
 
 		if backendSymbolSource.SymbolSource != symbol.SourceNone {
 			log.Debug("Existing symbols for executable",
-				log.Any("executable", elfSymbols),
+				log.String("executable", elfSymbols.String()),
 				log.Int("endpoint", i),
-				log.Any("source", backendSymbolSource.SymbolSource))
+				log.String("source", backendSymbolSource.SymbolSource.String()))
 		}
 
 		upload, symbolSource := d.shouldUpload(elfSymbols.Elf, backendSymbolSource.SymbolSource, i)
@@ -352,8 +352,8 @@ func (d *DatadogSymbolUploader) getSymbolSourceWithGoPCLnTab(e *symbol.Elf) (sym
 	goPCLnTabInfo, err := e.GoPCLnTab()
 	if err != nil {
 		log.Info("Failed to extract GoPCLnTab for executable",
-			log.Any("executable", e),
-			log.Any("error", err))
+			log.String("executable", e.String()),
+			log.String("error", err.Error()))
 		return symbolSource, nil
 	}
 	return max(symbolSource, symbol.SourceGoPCLnTab), goPCLnTabInfo
@@ -365,7 +365,7 @@ func (d *DatadogSymbolUploader) getSymbolsFromDisk(execMeta *reporter.Executable
 	if err != nil {
 		log.Debug("Skipping symbol upload for executable",
 			log.String("path", execMeta.Mapping.Path.String()),
-			log.Any("error", err))
+			log.String("error", err.Error()))
 		return nil
 	}
 
@@ -417,7 +417,7 @@ func (d *DatadogSymbolUploader) shouldUpload(e *symbol.Elf, existingSymbolSource
 func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, endpointIndices []int) bool {
 	symbolFile, err := d.createSymbolFile(ctx, e)
 	if err != nil {
-		log.Error("failed to create symbol file", log.Any("error", err))
+		log.Error("failed to create symbol file", log.String("error", err.Error()))
 		return false
 	}
 	defer os.Remove(symbolFile.Name())
@@ -426,7 +426,7 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, endpo
 	metadata := newSymbolUploadRequestMetadata(e, symbolSource, d.version)
 
 	if d.dryRun {
-		log.Info("Dry run: would upload symbols for executable", log.Any("executable", e))
+		log.Info("Dry run: would upload symbols for executable", log.String("executable", e.String()))
 		return true
 	}
 
@@ -440,12 +440,12 @@ func (d *DatadogSymbolUploader) upload(ctx context.Context, e *symbol.Elf, endpo
 	err = g.Wait()
 	if err != nil {
 		log.Error("Failed to upload symbols",
-			log.Any("error", err),
-			log.Any("executable", e))
+			log.String("error", err.Error()),
+			log.String("executable", e.String()))
 		return false
 	}
 
-	log.Info("Symbols uploaded successfully for executable", log.Any("executable", e))
+	log.Info("Symbols uploaded successfully for executable", log.String("executable", e.String()))
 	return true
 }
 
@@ -630,7 +630,7 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 
 	// Increase probability that objcopy gets killed in case the cgroup is OOM
 	if err := oom.SetOOMScoreAdj(cmd.Process.Pid, 1000); err != nil {
-		log.Warn("Could not adjust OOM score", log.Any("error", err))
+		log.Warn("Could not adjust OOM score", log.String("error", err.Error()))
 	}
 
 	return cmd.Wait()

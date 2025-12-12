@@ -247,7 +247,7 @@ func (e *elfWrapper) findSeparateSymbolsWithDebugInfo() *elfWrapper {
 func (e *elfWrapper) findDebugSymbolsWithBuildID() *elfWrapper {
 	buildID, err := e.elfFile.GetBuildID()
 	if err != nil || len(buildID) < 2 {
-		log.Debug("Failed to get build ID for file", log.String("path", e.filePath), log.Any("error", err))
+		log.Debug("Failed to get build ID for file", log.String("path", e.filePath), log.String("error", err.Error()))
 		return nil
 	}
 

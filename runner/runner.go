@@ -118,10 +118,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	currentScore, err := oom.GetOOMScoreAdj(0)
 	if err != nil {
-		log.Warn("Failed to get OOM score adjustment", log.Any("error", err))
+		log.Warn("Failed to get OOM score adjustment", log.String("error", err.Error()))
 	} else if currentScore > 0 {
 		if err = oom.SetOOMScoreAdj(0, 0); err != nil {
-			log.Warn("Could not adjust OOM score", log.Any("error", err))
+			log.Warn("Could not adjust OOM score", log.String("error", err.Error()))
 		}
 	}
 
@@ -200,7 +200,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	log.Info("Enabled tracers", log.String("tracers", includeTracers.String()))
 
 	validatedTags := config.ValidateTags(c.Tags)
-	log.Debug("Validated tags", log.Any("tags", validatedTags))
+	log.Debug("Validated tags", log.String("tags", validatedTags.String()))
 
 	// Add tags from the arguments
 	config.AddTagsFromArgs(&validatedTags, c)
@@ -466,7 +466,7 @@ func getTracePipe() (*os.File, error) {
 		if err == nil {
 			return t, nil
 		}
-		log.Info("Could not open trace_pipe", log.String("mount", mnt), log.Any("error", err))
+		log.Info("Could not open trace_pipe", log.String("mount", mnt), log.String("error", err.Error()))
 	}
 	return nil, os.ErrNotExist
 }
@@ -491,7 +491,7 @@ func readTracePipe(ctx context.Context) {
 			if errors.Is(err, io.EOF) {
 				continue
 			}
-			log.Error("error reading trace_pipe", log.Any("error", err))
+			log.Error("error reading trace_pipe", log.String("error", err.Error()))
 			return
 		}
 		line = strings.TrimSpace(line)

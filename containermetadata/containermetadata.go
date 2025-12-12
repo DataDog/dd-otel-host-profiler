@@ -237,7 +237,7 @@ func getContainerMetadataCache(ctx context.Context, h *containerMetadataProvider
 
 	podsPerNode, err := getPodsPerNode(ctx, h)
 	if err != nil {
-		log.Info("Failed to size cache based on pods per node", log.Any("error", err))
+		log.Info("Failed to size cache based on pods per node", log.String("error", err.Error()))
 	} else {
 		cacheSize *= podsPerNode
 	}
@@ -314,7 +314,7 @@ func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) e
 		<-ctx.Done()
 		close(stopper)
 		if err := informer.RemoveEventHandler(handle); err != nil {
-			log.Error("Failed to remove event handler", log.Any("error", err))
+			log.Error("Failed to remove event handler", log.String("error", err.Error()))
 		}
 	}()
 	// Run the informer
@@ -344,7 +344,7 @@ func getContainerdClient() *containerd.Client {
 func getDockerClient() *client.Client {
 	c, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		log.Info("Can't connect Docker client", log.Any("error", err))
+		log.Info("Can't connect Docker client", log.String("error", err.Error()))
 	}
 	return c
 }
@@ -403,7 +403,7 @@ func (p *containerMetadataProvider) GetContainerMetadata(pid libpf.PID) (Contain
 	}
 
 	if err != nil {
-		log.Debug("Failed to get container metadata", log.String("container_id", pidContainerID), log.Any("error", err))
+		log.Debug("Failed to get container metadata", log.String("container_id", pidContainerID), log.String("error", err.Error()))
 
 		// If we failed to get the container metadata, still return the container ID
 		data = ContainerMetadata{
@@ -428,7 +428,7 @@ func (p *containerMetadataProvider) putCache(pod *corev1.Pod) {
 		var err error
 		if containerID, err = matchContainerID(
 			pod.Status.ContainerStatuses[i].ContainerID); err != nil {
-			log.Debug("Failed to get kubernetes container metadata", log.String("pod_name", pod.Name), log.Any("error", err))
+			log.Debug("Failed to get kubernetes container metadata", log.String("pod_name", pod.Name), log.String("error", err.Error()))
 			continue
 		}
 
@@ -486,7 +486,7 @@ func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID stri
 				continue
 			}
 			if containerID, err = matchContainerID(containers[i].ContainerID); err != nil {
-				log.Error("Failed to match container ID", log.Any("error", err))
+				log.Error("Failed to match container ID", log.String("error", err.Error()))
 				continue
 			}
 			if containerID == pidContainerID {
@@ -507,7 +507,7 @@ func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID stri
 				continue
 			}
 			if containerID, err = matchContainerID(initContainers[i].ContainerID); err != nil {
-				log.Error("Failed to match container ID", log.Any("error", err))
+				log.Error("Failed to match container ID", log.String("error", err.Error()))
 				continue
 			}
 			if containerID == pidContainerID {
