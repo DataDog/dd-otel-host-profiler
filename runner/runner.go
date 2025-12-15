@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"runtime"
 	"strings"
@@ -22,7 +23,6 @@ import (
 
 	ddtracer "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
 	"github.com/DataDog/dd-trace-go/v2/profiler"
-	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/ebpf-profiler/host"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/metrics"
@@ -114,7 +114,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	kernVersion, err := getKernelVersion()
 	if err != nil {
-		return failure("Failed to get kernel version: %v", err)
+		return failure("Failed to get kernel version", "error", err)
 	}
 
 	if code := sanityCheck(c, kernVersion); code != ExitSuccess {
@@ -123,10 +123,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	currentScore, err := oom.GetOOMScoreAdj(0)
 	if err != nil {
-		log.Warnf("Failed to get OOM score adjustment: %v", err)
+		slog.Warn("Failed to get OOM score adjustment", slog.String("error", err.Error()))
 	} else if currentScore > 0 {
 		if err = oom.SetOOMScoreAdj(0, 0); err != nil {
-			log.Warnf("Could not adjust OOM score: %v", err)
+			slog.Warn("Could not adjust OOM score", slog.String("error", err.Error()))
 		}
 	}
 
@@ -150,7 +150,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		}
 		err = profiler.Start(opts...)
 		if err != nil {
-			failure("failed to start the runtime profiler: %v", err)
+			failure("failed to start the runtime profiler", "error", err)
 		}
 		defer profiler.Stop()
 	}
@@ -166,16 +166,19 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 			ddtracer.WithTraceEnabled(false),
 		)
 		if err != nil {
-			failure("failed to start the tracer: %v", err)
+			failure("failed to start the tracer", "error", err)
 		}
 		defer ddtracer.Stop()
 	}
 
-	log.Infof("Starting Datadog OTEL host profiler v%s (revision: %s, date: %s), arch: %v",
-		versionInfo.Version, versionInfo.VcsRevision, versionInfo.VcsTime, runtime.GOARCH)
+	slog.Info("Starting Datadog OTEL host profiler",
+		slog.String("version", versionInfo.Version),
+		slog.String("revision", versionInfo.VcsRevision),
+		slog.String("date", versionInfo.VcsTime),
+		slog.String("arch", runtime.GOARCH))
 
 	if err = tracer.ProbeBPFSyscall(); err != nil {
-		return failure("Failed to probe eBPF syscall: %v", err)
+		return failure("Failed to probe eBPF syscall", "error", err)
 	}
 
 	intervals := times.New(c.ReporterInterval, c.MonitorInterval,
@@ -186,10 +189,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	// Start periodic synchronization with the realtime clock
 	times.StartRealtimeSync(mainCtx, c.ClockSyncInterval)
 
-	log.Debugf("Determining tracers to include")
+	slog.Debug("Determining tracers to include")
 	includeTracers, err := tracertypes.Parse(c.Tracers)
 	if err != nil {
-		return failure("Failed to parse the included tracers: %v", err)
+		return failure("Failed to parse the included tracers", "error", err)
 	}
 
 	// Disable Go interpreter because we are doing Go symbolization remotely.
@@ -199,10 +202,10 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	} else {
 		includeTracers.Disable(tracertypes.Labels)
 	}
-	log.Infof("Enabled tracers: %s", includeTracers.String())
+	slog.Info("Enabled tracers", slog.String("tracers", includeTracers.String()))
 
 	validatedTags := config.ValidateTags(c.Tags)
-	log.Debugf("Validated tags: %s", validatedTags)
+	slog.Debug("Validated tags", slog.String("tags", validatedTags.String()))
 
 	// Add tags from the arguments
 	config.AddTagsFromArgs(&validatedTags, c)
@@ -216,7 +219,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		containerMetadataProvider, err =
 			containermetadata.NewContainerMetadataProvider(mainCtx, c.Node)
 		if err != nil {
-			return failure("Failed to create container metadata provider: %v", err)
+			return failure("Failed to create container metadata provider", "error", err)
 		}
 	}
 
@@ -224,9 +227,9 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 
 	if c.UploadSymbols {
 		validSymbolEndpoints = GetValidSymbolEndpoints(c.Site, c.APIKey, c.AppKey, c.AdditionalSymbolEndpoints, func(msg string) {
-			log.Info(msg)
+			slog.Info(msg)
 		}, func(msg string) {
-			log.Warn(msg)
+			slog.Warn(msg)
 		})
 	}
 
@@ -238,13 +241,13 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		}
 		intakeURL, err = config.IntakeURLForSite(c.Site)
 		if err != nil {
-			return failure("Failed to get agentless URL from site %v: %v", c.Site, err)
+			return failure("Failed to get agentless URL from site", "site", c.Site, "error", err)
 		}
 		apiKey = c.APIKey
 	} else {
 		intakeURL, err = config.IntakeURLForAgent(c.AgentURL)
 		if err != nil {
-			return failure("Failed to get intake URL from agent URL %v: %v", c.AgentURL, err)
+			return failure("Failed to get intake URL from agent URL", "agent_url", c.AgentURL, "error", err)
 		}
 	}
 
@@ -252,7 +255,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		return failure("Service name is required when running in non-split-by-service mode")
 	}
 	if c.HostServiceName != "" && c.EnableSplitByService {
-		log.Warning("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
+		slog.Warn("Running in split-by-service mode with a host service name, the values of --host-service flag and DD_HOST_PROFILING_SERVICE environment variable will be discarded")
 	}
 
 	useRuntimeIDInServiceEntityKey := c.EnableSplitByService && c.CollectContext
@@ -287,12 +290,12 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		},
 	}, containerMetadataProvider)
 	if err != nil {
-		return failure("Failed to create Datadog reporter: %v", err)
+		return failure("Failed to create Datadog reporter", "error", err)
 	}
 
 	err = rep.Start(mainCtx)
 	if err != nil {
-		return failure("Failed to start reporting: %v", err)
+		return failure("Failed to start reporting", "error", err)
 	}
 
 	includeEnvVars := libpf.Set[string]{}
@@ -320,55 +323,55 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 		IncludeEnvVars:         includeEnvVars,
 	})
 	if err != nil {
-		return failure("Failed to load eBPF tracer: %v", err)
+		return failure("Failed to load eBPF tracer", "error", err)
 	}
-	log.Printf("eBPF tracer loaded")
+	slog.Info("eBPF tracer loaded")
 	defer trc.Close()
 
 	now := time.Now()
 	trc.StartPIDEventProcessor(mainCtx)
 
 	metrics.Add(metrics.IDProcPIDStartupMs, metrics.MetricValue(time.Since(now).Milliseconds()))
-	log.Debug("Completed initial PID listing")
+	slog.Debug("Completed initial PID listing")
 
 	// Attach our tracer to the perf event
 	if err := trc.AttachTracer(); err != nil {
-		return failure("Failed to attach to perf event: %v", err)
+		return failure("Failed to attach to perf event", "error", err)
 	}
-	log.Info("Attached tracer program")
+	slog.Info("Attached tracer program")
 
 	if c.ProbabilisticThreshold < tracer.ProbabilisticThresholdMax {
 		trc.StartProbabilisticProfiling(mainCtx)
-		log.Printf("Enabled probabilistic profiling")
+		slog.Info("Enabled probabilistic profiling")
 	} else {
 		if err := trc.EnableProfiling(); err != nil {
-			return failure("Failed to enable perf events: %v", err)
+			return failure("Failed to enable perf events", "error", err)
 		}
 	}
 
 	if err := trc.AttachSchedMonitor(); err != nil {
-		return failure("Failed to attach scheduler monitor: %v", err)
+		return failure("Failed to attach scheduler monitor", "error", err)
 	}
 	// This log line is used in our system tests to verify if that the agent has started. So if you
 	// change this log line update also the system test.
-	log.Printf("Attached sched monitor")
+	slog.Info("Attached sched monitor")
 
 	if err := startTraceHandling(mainCtx, trc); err != nil {
-		return failure("Failed to start trace handling: %v", err)
+		return failure("Failed to start trace handling", "error", err)
 	}
 
 	if c.VerboseeBPF {
-		log.Info("Reading from trace_pipe...")
+		slog.Info("Reading from trace_pipe...")
 		go readTracePipe(mainCtx)
 	}
 
 	// Block waiting for a signal to indicate the program should terminate
 	<-mainCtx.Done()
 
-	log.Info("Stop processing ...")
+	slog.Info("Stop processing ...")
 	rep.Stop()
 
-	log.Info("Exiting ...")
+	slog.Info("Exiting ...")
 	return ExitSuccess
 }
 
@@ -409,16 +412,16 @@ func GetValidSymbolEndpoints(
 
 func sanityCheck(c *config.Config, kernVersion kernelVersion) ExitCode {
 	if c.SamplesPerSecond < 1 {
-		return ParseError("Invalid sampling frequency: %d", c.SamplesPerSecond)
+		return ParseError("Invalid sampling frequency", "samples_per_second", c.SamplesPerSecond)
 	}
 
 	if c.MapScaleFactor > 8 {
-		return ParseError("eBPF map scaling factor %d exceeds limit (max: %d)",
-			c.MapScaleFactor, config.MaxArgMapScaleFactor)
+		return ParseError("eBPF map scaling factor exceeds limit",
+			"map_scale_factor", c.MapScaleFactor, "max", config.MaxArgMapScaleFactor)
 	}
 
 	if c.BPFVerifierLogLevel > 2 {
-		return ParseError("Invalid eBPF verifier log level: %d", c.BPFVerifierLogLevel)
+		return ParseError("Invalid eBPF verifier log level", "level", c.BPFVerifierLogLevel)
 	}
 
 	if c.ProbabilisticInterval < 1*time.Minute || c.ProbabilisticInterval > 5*time.Minute {
@@ -428,8 +431,10 @@ func sanityCheck(c *config.Config, kernVersion kernelVersion) ExitCode {
 
 	if c.ProbabilisticThreshold < 1 ||
 		c.ProbabilisticThreshold > tracer.ProbabilisticThresholdMax {
-		return ParseError("Invalid argument for probabilistic-threshold. Value "+
-			"should be between 1 and %d", tracer.ProbabilisticThresholdMax)
+		return ParseError("Invalid argument for probabilistic-threshold",
+			"value", c.ProbabilisticThreshold,
+			"min", 1,
+			"max", tracer.ProbabilisticThresholdMax)
 	}
 
 	if !c.NoKernelVersionCheck {
@@ -442,12 +447,16 @@ func sanityCheck(c *config.Config, kernVersion kernelVersion) ExitCode {
 			// https://github.com/torvalds/linux/commit/6ae08ae3dea2cfa03dd3665a3c8475c2d429ef47
 			minMajor, minMinor = 5, 5
 		default:
-			return failure("Unsupported architecture: %s", runtime.GOARCH)
+			return failure("Unsupported architecture", "arch", runtime.GOARCH)
 		}
 
 		if kernVersion.major < minMajor || (kernVersion.major == minMajor && kernVersion.minor < minMinor) {
-			return failure("Host Agent requires kernel version "+
-				"%d.%d or newer but got %d.%d.%d", minMajor, minMinor, kernVersion.major, kernVersion.minor, kernVersion.patch)
+			return failure("Host Agent requires kernel version or newer",
+				"min_major", minMajor,
+				"min_minor", minMinor,
+				"actual_major", kernVersion.major,
+				"actual_minor", kernVersion.minor,
+				"actual_patch", kernVersion.patch)
 		}
 	}
 
@@ -462,7 +471,7 @@ func getTracePipe() (*os.File, error) {
 		if err == nil {
 			return t, nil
 		}
-		log.Infof("Could not open trace_pipe at %s: %s", mnt, err)
+		slog.Info("Could not open trace_pipe", slog.String("mount", mnt), slog.String("error", err.Error()))
 	}
 	return nil, os.ErrNotExist
 }
@@ -470,7 +479,7 @@ func getTracePipe() (*os.File, error) {
 func readTracePipe(ctx context.Context) {
 	tp, err := getTracePipe()
 	if err != nil {
-		log.Warning("Could not open trace_pipe, check that debugfs is mounted")
+		slog.Warn("Could not open trace_pipe, check that debugfs is mounted")
 		return
 	}
 
@@ -487,23 +496,23 @@ func readTracePipe(ctx context.Context) {
 			if errors.Is(err, io.EOF) {
 				continue
 			}
-			log.Error(err)
+			slog.Error("error reading trace_pipe", slog.String("error", err.Error()))
 			return
 		}
 		line = strings.TrimSpace(line)
 		if line != "" {
-			log.Infof("ebpf-profiler: %s", line)
+			slog.Info("ebpf-profiler output", slog.String("line", line))
 		}
 	}
 }
 
 func ParseError(msg string, args ...any) ExitCode {
-	log.Errorf(msg, args...)
+	slog.Error(msg, args...)
 	return exitParseError
 }
 
 func failure(msg string, args ...any) ExitCode {
-	log.Errorf(msg, args...)
+	slog.Error(msg, args...)
 	return exitFailure
 }
 

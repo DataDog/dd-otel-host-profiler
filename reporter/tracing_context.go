@@ -10,11 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strconv"
 	"sync"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"go.opentelemetry.io/ebpf-profiler/libpf"
@@ -61,13 +61,13 @@ func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []by
 
 	vaddr, err := strconv.ParseUint(addrs[0], 16, 64)
 	if err != nil {
-		log.Debugf("vaddr: failed to convert %s to uint64: %v", addrs[0], err)
+		slog.Debug("vaddr: failed to convert to uint64", slog.String("value", addrs[0]), slog.String("error", err.Error()))
 		return nil
 	}
 
 	vend, err := strconv.ParseUint(addrs[1], 16, 64)
 	if err != nil {
-		log.Debugf("vend: failed to convert %s to uint64: %v", addrs[1], err)
+		slog.Debug("vend: failed to convert to uint64", slog.String("value", addrs[1]), slog.String("error", err.Error()))
 		return nil
 	}
 
@@ -80,7 +80,7 @@ func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []by
 	// CodeQL complains about the conversion from uint64 to libpf.Address, but it's safe since we target only 64-bit architectures
 	err = rm.Read(libpf.Address(vaddr), pfunsafe.FromPointer(&header))
 	if err != nil {
-		log.Debugf("failed to read context mapping: %v", err)
+		slog.Debug("failed to read context mapping", slog.String("error", err.Error()))
 		return nil
 	}
 	if pfunsafe.ToString(header.Signature[:]) != otelContextSignature {
@@ -96,7 +96,7 @@ func getContextFromMapping(fields *[6]string, rm remotememory.RemoteMemory) []by
 	payload := make([]byte, header.PayloadSize)
 	err = rm.Read(libpf.Address(header.PayloadAddr), payload)
 	if err != nil {
-		log.Debugf("failed to read context payload: %v", err)
+		slog.Debug("failed to read context payload", slog.String("error", err.Error()))
 		return nil
 	}
 	return payload
@@ -150,7 +150,7 @@ func readProcessContext(mapsFile io.Reader, rm remotememory.RemoteMemory, useMap
 	var ctx samples.ProcessContext
 	err = msgpack.Unmarshal(data, &ctx)
 	if err != nil {
-		log.Warnf("failed to unmarshal context mapping: %v", err)
+		slog.Warn("failed to unmarshal context mapping", slog.String("error", err.Error()))
 		return nil, err
 	}
 	return &ctx, nil
@@ -159,7 +159,7 @@ func readProcessContext(mapsFile io.Reader, rm remotememory.RemoteMemory, useMap
 func ReadProcessLevelContext(pid libpf.PID, useMappingNames bool) (*samples.ProcessContext, error) {
 	mapsFile, err := os.Open(fmt.Sprintf("/proc/%d/maps", pid))
 	if err != nil {
-		log.Debugf("failed to open maps file: %v", err)
+		slog.Debug("failed to open maps file", slog.String("error", err.Error()))
 		return nil, err
 	}
 	defer mapsFile.Close()
