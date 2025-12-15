@@ -6,6 +6,7 @@
 package oom
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strconv"
@@ -24,6 +25,8 @@ func GetOOMScoreAdj(pid int) (int, error) {
 		return -1, fmt.Errorf("failed to read oom_score_adj to %s for PID %d: %w", procPath, pid, err)
 	}
 
+	// trim the trailing newline
+	data = bytes.TrimSuffix(data, []byte("\n"))
 	score, err := strconv.Atoi(string(data))
 
 	if err != nil {
