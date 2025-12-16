@@ -28,10 +28,10 @@ This will create a `dd-otel-host-profiler` binary in the current directory.
 
 ## Running the profiler
 
-To run the profiler, you need to make sure that debugfs is mounted. If it's not, you can run:
+To run the profiler, you need to make sure that tracefs is mounted. If it's not, you can run:
 
 ```
-sudo mount -t debugfs none /sys/kernel/debug
+sudo mount -t tracefs tracefs /sys/kernel/tracing
 ```
 
 After that, you can start the profiler as shown below (make sure you run it as root):

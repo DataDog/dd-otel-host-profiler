@@ -479,7 +479,7 @@ func getTracePipe() (*os.File, error) {
 func readTracePipe(ctx context.Context) {
 	tp, err := getTracePipe()
 	if err != nil {
-		slog.Warn("Could not open trace_pipe, check that debugfs is mounted")
+		slog.Warn("Could not open trace_pipe, check that tracefs is mounted")
 		return
 	}
 
