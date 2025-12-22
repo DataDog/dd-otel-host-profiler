@@ -662,9 +662,7 @@ func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFilePat
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer pipeW.Close()
 		innerErr := streamRequestBody(symbolFile, e, mw)
 		if innerErr != nil {
@@ -684,7 +682,7 @@ func (d *DatadogSymbolUploader) uploadSymbols(ctx context.Context, symbolFilePat
 				return
 			}
 		}
-	}()
+	})
 
 	resp, err := d.client.Do(req)
 	wg.Wait()

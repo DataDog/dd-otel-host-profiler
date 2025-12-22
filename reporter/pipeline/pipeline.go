@@ -103,9 +103,7 @@ func NewBatchingStageWithClock[In any](inputChan <-chan In, batchInterval time.D
 
 func (w *ConsumerWorker[In]) Start(ctx context.Context) {
 	for range w.concurrency {
-		w.wg.Add(1)
-		go func() {
-			defer w.wg.Done()
+		w.wg.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -117,7 +115,7 @@ func (w *ConsumerWorker[In]) Start(ctx context.Context) {
 					w.processingFunc(ctx, input)
 				}
 			}
-		}()
+		})
 	}
 }
 
@@ -136,9 +134,7 @@ func (w *StageWorker[In, Out]) GetOutputChannel() <-chan Out {
 
 func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
 	for range w.concurrency {
-		w.wg.Add(1)
-		go func() {
-			defer w.wg.Done()
+		w.wg.Go(func() {
 			var batch []In
 			var tickerChan <-chan time.Time
 			var ticker clockwork.Ticker
@@ -173,7 +169,7 @@ func (w *BatchingStageWorker[In]) Start(ctx context.Context) {
 					}
 				}
 			}
-		}()
+		})
 	}
 }
 
