@@ -1,6 +1,6 @@
 module github.com/DataDog/dd-otel-host-profiler
 
-go 1.24.9
+go 1.25.0
 
 toolchain go1.25.5
 
