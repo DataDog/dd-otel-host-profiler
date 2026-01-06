@@ -88,5 +88,5 @@ type SymbolUploaderConfig struct {
 	// This is only used for testing purposes.
 	DisableDebugSectionCompression bool `mapstructure:"disable_debug_section_compression"`
 	// Version is the version of the profiler.
-	Version string
+	Version string `mapstructure:"-"`
 }
