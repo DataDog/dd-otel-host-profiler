@@ -29,6 +29,7 @@ func main() {
 
 func mainWithExitCode() runner.ExitCode {
 	args, err := config.ParseArgs()
+	fmt.Println("hello")
 	if err != nil {
 		return runner.ParseError("Failure to parse arguments", "error", err)
 	}
