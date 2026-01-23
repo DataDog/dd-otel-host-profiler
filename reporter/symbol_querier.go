@@ -76,7 +76,9 @@ func (d *datadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []stri
 	}
 
 	req.Header.Set("Dd-Api-Key", d.ddAPIKey)
-	req.Header.Set("Dd-Application-Key", d.ddAPPKey)
+	if d.ddAPPKey != "" {
+		req.Header.Set("Dd-Application-Key", d.ddAPPKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := d.client.Do(req)

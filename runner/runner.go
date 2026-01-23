@@ -517,13 +517,13 @@ func failure(msg string, args ...any) ExitCode {
 }
 
 func validateSymbolEndpoint(site, apiKey, appKey string) error {
-	if site == "" || apiKey == "" || appKey == "" {
-		return fmt.Errorf("site, API key and application key should all be set and non-empty strings for site %s", site)
+	if site == "" || apiKey == "" {
+		return fmt.Errorf("site and API key should be set and non-empty strings for site %s", site)
 	}
 	if !config.IsAPIKeyValid(apiKey) {
 		return fmt.Errorf("API key for site %s is not valid", site)
 	}
-	if !config.IsAPPKeyValid(appKey) {
+	if appKey != "" && !config.IsAPPKeyValid(appKey) {
 		return fmt.Errorf("application key for site %s is not valid", site)
 	}
 	return nil
