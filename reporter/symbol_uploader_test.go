@@ -341,7 +341,6 @@ func newTestUploader(ctx context.Context, opts uploaderOpts) (*DatadogSymbolUplo
 		endpoints = append(endpoints, SymbolEndpoint{
 			Site:   e,
 			APIKey: "api_key",
-			AppKey: "app_key",
 		})
 	}
 
@@ -613,7 +612,7 @@ func TestTransport(t *testing.T) {
 		SymbolUploaderOptions: SymbolUploaderOptions{
 			Enabled:         true,
 			UseHTTP2:        false, // This forces creation of custom transport
-			SymbolEndpoints: []SymbolEndpoint{{Site: "test.com", APIKey: "key", AppKey: "app"}},
+			SymbolEndpoints: []SymbolEndpoint{{Site: "test.com", APIKey: "key"}},
 		},
 		Version: "test",
 	}

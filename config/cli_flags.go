@@ -306,17 +306,9 @@ func parseCLIArgs(osArgs []string) (*Arguments, error) {
 				},
 			},
 			&cli.StringFlag{
-				Name:        "app-key",
-				Usage:       "Datadog APP key.",
-				Hidden:      true,
-				Destination: &args.AppKey,
-				Sources:     cli.EnvVars("DD_HOST_PROFILING_APP_KEY", "DD_APP_KEY"),
-				Validator: func(s string) error {
-					if s == "" || IsAPPKeyValid(s) {
-						return nil
-					}
-					return errors.New("APP key is not valid")
-				},
+				Name:   "app-key",
+				Usage:  "Deprecated, no longer used.",
+				Hidden: true,
 			},
 			&cli.StringFlag{
 				Name:        "site",

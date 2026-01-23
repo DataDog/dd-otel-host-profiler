@@ -66,19 +66,6 @@ func IsAPIKeyValid(key string) bool {
 	return true
 }
 
-// IsAPPKeyValid reports whether the given string is a structurally valid APP key
-func IsAPPKeyValid(key string) bool {
-	if len(key) != 40 {
-		return false
-	}
-	for _, c := range key {
-		if c > unicode.MaxASCII || (!unicode.IsLower(c) && !unicode.IsNumber(c)) {
-			return false
-		}
-	}
-	return true
-}
-
 func IntakeURLForSite(site string) (string, error) {
 	u := fmt.Sprintf("https://intake.profile.%s/api/v2/profile", site)
 	_, err := url.Parse(u)
