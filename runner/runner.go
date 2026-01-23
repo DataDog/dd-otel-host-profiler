@@ -83,14 +83,14 @@ func startTraceHandling(ctx context.Context, trc *tracer.Tracer) error {
 	return nil
 }
 
-func appendEndpoint(symbolEndpoints []reporter.SymbolEndpoint, site, apiKey, appKey string) []reporter.SymbolEndpoint {
+func appendEndpoint(symbolEndpoints []reporter.SymbolEndpoint, site, apiKey string) []reporter.SymbolEndpoint {
 	// Ensure this exact endpoint has not already been added.
 	for _, endpoint := range symbolEndpoints {
-		if site == endpoint.Site && apiKey == endpoint.APIKey && appKey == endpoint.AppKey {
+		if site == endpoint.Site && apiKey == endpoint.APIKey {
 			return symbolEndpoints
 		}
 	}
-	return append(symbolEndpoints, reporter.SymbolEndpoint{Site: site, APIKey: apiKey, AppKey: appKey})
+	return append(symbolEndpoints, reporter.SymbolEndpoint{Site: site, APIKey: apiKey})
 }
 
 func getKernelVersion() (kernelVersion, error) {
@@ -226,7 +226,7 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 	var validSymbolEndpoints []reporter.SymbolEndpoint
 
 	if c.UploadSymbols {
-		validSymbolEndpoints = GetValidSymbolEndpoints(c.Site, c.APIKey, c.AppKey, c.AdditionalSymbolEndpoints, func(msg string) {
+		validSymbolEndpoints = GetValidSymbolEndpoints(c.Site, c.APIKey, c.AdditionalSymbolEndpoints, func(msg string) {
 			slog.Info(msg)
 		}, func(msg string) {
 			slog.Warn(msg)
@@ -380,7 +380,6 @@ func Run(mainCtx context.Context, c *config.Config) ExitCode {
 func GetValidSymbolEndpoints(
 	site string,
 	apiKey string,
-	appKey string,
 	additionalSymbolEndpoints []reporter.SymbolEndpoint,
 	info func(string),
 	warn func(string)) []reporter.SymbolEndpoint {
@@ -389,10 +388,10 @@ func GetValidSymbolEndpoints(
 
 	var symbolEndpoints []reporter.SymbolEndpoint
 	symbolEndpoints = append(symbolEndpoints, additionalSymbolEndpoints...)
-	symbolEndpoints = appendEndpoint(symbolEndpoints, site, apiKey, appKey)
+	symbolEndpoints = appendEndpoint(symbolEndpoints, site, apiKey)
 
 	for _, e := range symbolEndpoints {
-		validationErr := validateSymbolEndpoint(e.Site, e.APIKey, e.AppKey)
+		validationErr := validateSymbolEndpoint(e.Site, e.APIKey)
 		if validationErr != nil {
 			warn(fmt.Sprintf("Error to validate symbol endpoint: %v", validationErr))
 		} else {
@@ -516,15 +515,12 @@ func failure(msg string, args ...any) ExitCode {
 	return exitFailure
 }
 
-func validateSymbolEndpoint(site, apiKey, appKey string) error {
-	if site == "" || apiKey == "" || appKey == "" {
-		return fmt.Errorf("site, API key and application key should all be set and non-empty strings for site %s", site)
+func validateSymbolEndpoint(site, apiKey string) error {
+	if site == "" || apiKey == "" {
+		return fmt.Errorf("site and API key should be set and non-empty strings for site %s", site)
 	}
 	if !config.IsAPIKeyValid(apiKey) {
 		return fmt.Errorf("API key for site %s is not valid", site)
-	}
-	if !config.IsAPPKeyValid(appKey) {
-		return fmt.Errorf("application key for site %s is not valid", site)
 	}
 	return nil
 }

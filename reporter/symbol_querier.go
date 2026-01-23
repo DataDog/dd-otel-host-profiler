@@ -36,18 +36,16 @@ type SymbolQuerier interface {
 
 type datadogSymbolQuerier struct {
 	ddAPIKey       string
-	ddAPPKey       string
 	symbolQueryURL string
 
 	client *http.Client
 }
 
-func NewDatadogSymbolQuerier(ddSite, ddAPIKey, ddAPPKey string) (SymbolQuerier, error) {
+func NewDatadogSymbolQuerier(ddSite, ddAPIKey string) (SymbolQuerier, error) {
 	symbolQueryURL := buildSymbolQueryURL(ddSite)
 
 	return &datadogSymbolQuerier{
 		ddAPIKey:       ddAPIKey,
-		ddAPPKey:       ddAPPKey,
 		symbolQueryURL: symbolQueryURL,
 		client:         &http.Client{Timeout: uploadTimeout},
 	}, nil
@@ -76,7 +74,6 @@ func (d *datadogSymbolQuerier) QuerySymbols(ctx context.Context, buildIDs []stri
 	}
 
 	req.Header.Set("Dd-Api-Key", d.ddAPIKey)
-	req.Header.Set("Dd-Application-Key", d.ddAPPKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := d.client.Do(req)

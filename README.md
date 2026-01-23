@@ -36,7 +36,6 @@ For compiled languages (such as Rust, C, C++, Go, etc.), the profiler uploads lo
 This requires to configure:
 1. The `DD_SITE` environment variable to [your Datadog site](https://docs.datadoghq.com/getting_started/site/#access-the-datadog-site) (e.g. `datadoghq.com`, `datadoghq.eu`, `us5.datadoghq.com`, ...).
 2. The `DD_API_KEY` environment variable to your Datadog API key.
-3. The `DD_APP_KEY` environment variable to your Datadog APP key. The APP key needs the `continuous_profiler_read` permission, which is available by default for the Datadog Read Only role (see [here](https://docs.datadoghq.com/account_management/rbac/permissions/#apm) for more information).
 
 To disable local symbol upload, set the `DD_HOST_PROFILING_UPLOAD_SYMBOLS` environment variable to `false`.
 
@@ -60,8 +59,7 @@ First, create a `.env` file with the following content:
 ```
 DD_SITE=datad0g.com # optional (required on a Datadog workspace), defaults to "datadoghq.com"
 DD_HOST_PROFILING_UPLOAD_PERIOD=10s # optional, defaults to 60s
-DD_API_KEY=your-api-key # required (not needed on a Datadog workspace) 
-DD_APP_KEY=your-app-key # required (not needed on a Datadog workspace) 
+DD_API_KEY=your-api-key # required (not needed on a Datadog workspace)
 DD_HOST_PROFILING_TAGS="workspace:YOUR_WORKSPACE_NAME" # recommended on Datadog workspace
 UID=1234 # required on Datadog workspace, set it to the output of `id -u` on the workspace
 GID=1234 # required on Datadog workspace, set it to the output of `id -g` on the workspace

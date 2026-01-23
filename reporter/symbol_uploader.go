@@ -101,7 +101,7 @@ func NewDatadogSymbolUploader(ctx context.Context, cfg *SymbolUploaderConfig) (*
 		var symbolQuerier SymbolQuerier
 		intakeURLs[i] = buildSourcemapIntakeURL(endpoints.Site)
 
-		if symbolQuerier, err = NewDatadogSymbolQuerier(endpoints.Site, endpoints.APIKey, endpoints.AppKey); err != nil {
+		if symbolQuerier, err = NewDatadogSymbolQuerier(endpoints.Site, endpoints.APIKey); err != nil {
 			return nil, fmt.Errorf("failed to create Datadog symbol querier: %w", err)
 		}
 		symbolQueriers[i] = symbolQuerier

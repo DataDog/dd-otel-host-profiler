@@ -73,7 +73,6 @@ type Config struct {
 	Tracers                       string
 	VerboseeBPF                   bool
 	APIKey                        string
-	AppKey                        string
 	Site                          string
 	AdditionalSymbolEndpoints     additionalSymbolEndpoints
 	Agentless                     bool

@@ -8,5 +8,4 @@ package reporter
 type SymbolEndpoint struct {
 	Site   string `mapstructure:"site" json:"site"`
 	APIKey string `mapstructure:"api_key" json:"api_key"`
-	AppKey string `mapstructure:"app_key" json:"app_key"`
 }
