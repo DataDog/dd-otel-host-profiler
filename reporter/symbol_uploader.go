@@ -616,6 +616,12 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 			args = append(args, "--strip-symbol", "go:func.*",
 				"--add-symbol", fmt.Sprintf("go:func.*=.gopclntab:%d", goPCLnTabInfo.GoFuncAddr-goPCLnTabInfo.Address))
 		}
+
+		if goPCLnTabInfo.TextStart.Address != 0 && goPCLnTabInfo.TextStart.Origin == pclntab.TextStartOriginModuleData {
+			// If the text start can only be found in moduledata, we need to add a symbol so that we can find it easily later.
+			args = append(args, "--strip-symbol", "runtime.text", "--add-symbol",
+				fmt.Sprintf("runtime.text=.go.module:%d", goPCLnTabInfo.TextStart.Address-goPCLnTabInfo.TextStart.TextSectionAddress))
+		}
 	}
 
 	for _, section := range sectionsToKeep {

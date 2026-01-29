@@ -48,8 +48,9 @@ type GoPCLnTabInfo struct {
 	Data       []byte        // goPCLnTab data
 	Version    HeaderVersion // gopclntab header version
 	Offsets    TableOffsets
-	GoFuncAddr uint64 // goFunc address
-	GoFuncData []byte // goFunc data
+	TextStart  TextStartInfo // text start information
+	GoFuncAddr uint64        // goFunc address
+	GoFuncData []byte        // goFunc data
 
 	numFuncs            int
 	funcSize            int
@@ -126,6 +127,20 @@ type rawInlinedCall120 struct {
 	StartLine int32 // line number of start of function (func keyword/TEXT directive)
 }
 
+type TextStartOrigin int
+
+const (
+	TextStartOriginPCLnTab TextStartOrigin = iota
+	TextStartOriginRuntimeTextSymbol
+	TextStartOriginModuleData
+)
+
+type TextStartInfo struct {
+	Origin             TextStartOrigin
+	Address            uint64
+	TextSectionAddress uint64
+}
+
 func (h HeaderVersion) String() string {
 	switch h {
 	case ver12:
@@ -177,6 +192,7 @@ func sectionContaining(elfFile *pfelf.File, addr uint64) *pfelf.Section {
 	return nil
 }
 
+// goFuncOffset returns the offset of the goFunc field in moduledata.
 func goFuncOffset(v HeaderVersion) (uint32, error) {
 	if v < ver118 {
 		return 0, fmt.Errorf("unsupported pclntab version: %v", v.String())
@@ -185,6 +201,14 @@ func goFuncOffset(v HeaderVersion) (uint32, error) {
 		return 38 * ptrSize, nil
 	}
 	return 40 * ptrSize, nil
+}
+
+// textStartOffset returns the offset of the textStart field in moduledata.
+func textStartOffset(v HeaderVersion) (uint32, error) {
+	if v < ver118 {
+		return 0, fmt.Errorf("unsupported pclntab version: %v", v.String())
+	}
+	return 22 * ptrSize, nil
 }
 
 func FindModuleData(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, runtimeFirstModuleDataSymbolValue libpf.SymbolValue) (data []byte, address uint64, returnedErr error) {
@@ -477,6 +501,7 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 	var version HeaderVersion
 	var offsets TableOffsets
 	var funcSize, funcNpcdataOffset int
+	var textStart uint64
 	hdrSize := uintptr(pclntabHeaderSize())
 
 	dataLen := uintptr(len(data))
@@ -564,6 +589,7 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 			PcTabOffset:       uint64(hdr118.pctabOffset),
 			FuncTabOffset:     uint64(hdr118.pclnOffset),
 		}
+		textStart = uint64(hdr118.textStart)
 	default:
 		return nil, fmt.Errorf(".gopclntab format (0x%x) not supported", hdr.magic)
 	}
@@ -575,9 +601,13 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 	funcNfuncdataOffset := funcSize - 1
 
 	return &GoPCLnTabInfo{
-		Data:                data,
-		Version:             version,
-		Offsets:             offsets,
+		Data:    data,
+		Version: version,
+		Offsets: offsets,
+		TextStart: TextStartInfo{
+			Origin:  TextStartOriginPCLnTab,
+			Address: textStart,
+		},
 		numFuncs:            int(hdr.numFuncs),
 		funcSize:            funcSize,
 		fieldSize:           fieldSize,
@@ -661,6 +691,21 @@ func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLn
 		return nil, fmt.Errorf("failed to parse .gopclntab: %w", err)
 	}
 
+	if goPCLnTabInfo.TextStart.Address == 0 && goPCLnTabInfo.Version >= ver118 {
+		// Starting from Go 1.26, textStart address in pclntab is always set to 0.
+		// Therefore we need to get it from either `runtime.text` symbol or moduledata.
+		// Note that it does not always match the address of `.text` section
+		// (for example with cgo binaries or when built with -linkmode=external).
+		textStartInfo, err := findTextStart(ef)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find text start: %w", err)
+		}
+		textSection := ef.Section(".text")
+		if textSection != nil {
+			textStartInfo.TextSectionAddress = textSection.Addr
+		}
+		goPCLnTabInfo.TextStart = textStartInfo
+	}
 	goPCLnTabInfo.Address = goPCLnTabAddr
 
 	// Only search for goFunc if the version is 1.18 or later and heuristic search is enabled.
@@ -727,4 +772,49 @@ func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLn
 	}
 
 	return goPCLnTabInfo, nil
+}
+
+func findTextStart(ef *pfelf.File) (TextStartInfo, error) {
+	// First try to get it from `runtime.text` symbol.
+	var textStart uint64
+	_ = ef.VisitSymbols(func(sym libpf.Symbol) bool {
+		if sym.Name == "runtime.text" {
+			textStart = uint64(sym.Address)
+			return false
+		}
+		return true
+	})
+	if textStart != 0 {
+		return TextStartInfo{
+			Origin:  TextStartOriginRuntimeTextSymbol,
+			Address: textStart,
+		}, nil
+	}
+
+	// If `runtime.text` symbol is not found, try to get it from moduledata.
+	// Starting from Go 1.26, moduledata has its own `.go.module` section.
+	moduleDataSection := ef.Section(".go.module")
+	if moduleDataSection == nil {
+		// Stop here and do not try to locate moduledata with other means because this function is expected to be called only for Go 1.26+ binaries
+		// and for those cases moduledata is always in .go.module section.
+		return TextStartInfo{}, errors.New("could not find .go.module section")
+	}
+	moduleData, err := moduleDataSection.Data(maxBytesGoPclntab)
+	if err != nil {
+		return TextStartInfo{}, fmt.Errorf("could not read .go.module section: %w", err)
+	}
+
+	textStartOff, err := textStartOffset(ver118)
+	if err != nil {
+		return TextStartInfo{}, fmt.Errorf("could not get text start offset: %w", err)
+	}
+	if textStartOff+ptrSize >= uint32(len(moduleData)) {
+		return TextStartInfo{}, fmt.Errorf("invalid text start offset: %v", textStartOff)
+	}
+	textStart = binary.LittleEndian.Uint64(moduleData[textStartOff:])
+
+	return TextStartInfo{
+		Origin:  TextStartOriginModuleData,
+		Address: textStart,
+	}, nil
 }
