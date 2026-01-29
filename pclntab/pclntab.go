@@ -188,7 +188,17 @@ func goFuncOffset(v HeaderVersion) (uint32, error) {
 }
 
 func FindModuleData(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, runtimeFirstModuleDataSymbolValue libpf.SymbolValue) (data []byte, address uint64, returnedErr error) {
-	// First try to locate module data by looking for runtime.firstmoduledata symbol.
+	// First: try to use the 'go.module' section introduced in Go 1.26.
+	moduleSection := ef.Section(".go.module")
+	if moduleSection != nil {
+		data, err := moduleSection.Data(maxBytesGoPclntab)
+		if err != nil {
+			return nil, 0, fmt.Errorf("could not read .go.module section: %w", err)
+		}
+		return data, moduleSection.Addr, nil
+	}
+
+	// Second: try to locate module data by looking for runtime.firstmoduledata symbol.
 	if runtimeFirstModuleDataSymbolValue != 0 {
 		addr := uint64(runtimeFirstModuleDataSymbolValue)
 		section := sectionContaining(ef, addr)
@@ -653,23 +663,6 @@ func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLn
 
 	goPCLnTabInfo.Address = goPCLnTabAddr
 
-	if (!goPCLnTabEndKnown || additionalChecks) && goPCLnTabInfo.Version >= ver116 {
-		// Do not try to find the size of the .gopclntab for older versions because pclntab layout is different.
-		// Failure to find the size of the .gopclntab is not critical because gopclntab is in .data.rel.ro which
-		// most likely does not contain sensitive information.
-		goPCLnTabSize := goPCLnTabInfo.computePCLnTabSize()
-		if additionalChecks && goPCLnTabEndKnown {
-			// check that the computed size matches the known size
-			if len(goPCLnTabInfo.Data) != goPCLnTabSize {
-				return nil, fmt.Errorf("invalid computed .gopclntab size: %v (computed) vs %v (expected)", goPCLnTabSize, len(goPCLnTabInfo.Data))
-			}
-		}
-
-		if goPCLnTabSize != -1 && goPCLnTabSize < len(goPCLnTabInfo.Data) {
-			goPCLnTabInfo.Data = goPCLnTabInfo.Data[:goPCLnTabSize]
-		}
-	}
-
 	// Only search for goFunc if the version is 1.18 or later and heuristic search is enabled.
 	if goPCLnTabInfo.Version >= ver118 {
 		var runtimeFirstModuleDataSymbolValue, goFuncSymbolValue, runtimeGcbitsSymbolValue libpf.SymbolValue
@@ -690,6 +683,12 @@ func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLn
 
 		goFuncData, goFuncAddr, err := FindGoFunc(ef, goPCLnTabInfo, runtimeFirstModuleDataSymbolValue, goFuncSymbolValue)
 		if err == nil {
+			// Starting from Go 1.26, goFunc is stored in gopclntab, so if we know the end of gopclntab, we don't need to trim goFunc.
+			if goPCLnTabEndKnown && goFuncAddr > goPCLnTabInfo.Address && goFuncAddr < goPCLnTabInfo.Address+uint64(len(goPCLnTabInfo.Data)) {
+				goPCLnTabInfo.GoFuncAddr = goFuncAddr
+				// Do not set goPCLnTabInfo.GoFuncData since goFunc is already in gopclntab.
+				return goPCLnTabInfo, nil
+			}
 			goFuncData, err = goPCLnTabInfo.trimGoFunc(goFuncData, goFuncAddr, runtimeGcbitsSymbolValue)
 			if err == nil {
 				goPCLnTabInfo.GoFuncAddr = goFuncAddr
@@ -703,5 +702,29 @@ func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLn
 			}
 		}
 	}
+
+	if (!goPCLnTabEndKnown || additionalChecks) && goPCLnTabInfo.Version >= ver116 {
+		// Do not try to find the size of the .gopclntab for older versions because pclntab layout is different.
+		// Failure to find the size of the .gopclntab is not critical because when gopclntab does not have
+		// its own section, it is stored in .data.rel.ro  most likely does not contain sensitive information.
+		// This happens with buildmode=pie and cgo or external linkmode because in that case gopclntab is in
+		// .data.rel.ro.gopclntab which is then merged with .data.rel.ro section by system linker
+		// (that does not happen if there is no cgo or external linkmode because in that case Go uses its own
+		// internal linker which does not merge the .data.rel.ro* sections).
+		//
+		// Starting from Go 1.26, .gopclntab has no more relocation and therefore stays in its own .gopclntab section even with buildmode=pie.
+		goPCLnTabSize := goPCLnTabInfo.computePCLnTabSize()
+		if additionalChecks && goPCLnTabEndKnown {
+			// check that the computed size matches the known size
+			if len(goPCLnTabInfo.Data) != goPCLnTabSize {
+				return nil, fmt.Errorf("invalid computed .gopclntab size: %v (computed) vs %v (expected)", goPCLnTabSize, len(goPCLnTabInfo.Data))
+			}
+		}
+
+		if goPCLnTabSize != -1 && goPCLnTabSize < len(goPCLnTabInfo.Data) {
+			goPCLnTabInfo.Data = goPCLnTabInfo.Data[:goPCLnTabSize]
+		}
+	}
+
 	return goPCLnTabInfo, nil
 }

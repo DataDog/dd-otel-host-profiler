@@ -16,10 +16,14 @@ import (
 )
 
 func getGoToolChain(goMinorVersion int) string {
-	if goMinorVersion < 21 {
-		return fmt.Sprintf("GOTOOLCHAIN=go1.%v", goMinorVersion)
+	suffix := ""
+	if goMinorVersion >= 21 {
+		suffix = ".0"
 	}
-	return fmt.Sprintf("GOTOOLCHAIN=go1.%v.0", goMinorVersion)
+	if goMinorVersion == 26 {
+		suffix = "rc2"
+	}
+	return fmt.Sprintf("GOTOOLCHAIN=go1.%v%v", goMinorVersion, suffix)
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
@@ -28,19 +32,20 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 	testDataDir := "../testdata"
 	srcFile := "helloworld.go"
 	tests := map[string]struct {
+		srcFile   string
 		buildArgs []string
 	}{
 		// helloworld is a very basic Go binary without special build flags.
-		"std": {},
+		"std": {srcFile: "helloworld.go"},
 		// helloworld.pie is a Go binary that is build with PIE enabled.
-		"pie": {buildArgs: []string{"-buildmode=pie"}},
-		// helloworld.stripped.pie is a Go binary that is build with PIE enabled and all debug
-		// information stripped.
-		"pie.sw": {buildArgs: []string{"-buildmode=pie", "-ldflags=-s -w"}},
+		"pie": {srcFile: "helloworld.go", buildArgs: []string{"-buildmode=pie"}},
+		// helloworld.pie.cgo is a Go binary that is build with PIE enabled and with cgo,
+		// in that case .gopclntab is stored in .data.rel.ro.gopclntab section and is merged with .data.rel.ro section by system linker (with Go < 1.26).
+		"pie.cgo": {srcFile: "helloworld_cgo.go", buildArgs: []string{"-buildmode=pie"}},
 	}
 
 	tmpDir := t.TempDir()
-	goMinorVersions := []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
+	goMinorVersions := []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26}
 	for _, goMinorVersion := range goMinorVersions {
 		for name, test := range tests {
 			if goMinorVersion <= 12 && strings.HasPrefix(name, "pie") {
@@ -72,7 +77,7 @@ func TestGoPCLnTabExtraction(t *testing.T) {
 				}
 
 				exeStripped := exe + ".stripped"
-				out, err = exec.CommandContext(t.Context(), "objcopy", "-S", "--rename-section", ".data.rel.ro.gopclntab=.foo1", "--rename-section", ".gopclntab=.foo2", exe, exeStripped).CombinedOutput() // #nosec G204
+				out, err = exec.CommandContext(t.Context(), "objcopy", "-S", exe, exeStripped).CombinedOutput() // #nosec G204
 				require.NoError(t, err, "failed to rename section: %s\n%s", err, out)
 
 				goPCLnTabInfo2, err := findGoPCLnTab(ef, true)

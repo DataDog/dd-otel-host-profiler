@@ -610,6 +610,11 @@ func CopySymbols(ctx context.Context, inputPath, outputPath string, goPCLnTabInf
 				fmt.Sprintf("--change-section-address=.gofunc=%d", goPCLnTabInfo.GoFuncAddr),
 				"--strip-symbol", "go:func.*",
 				"--add-symbol", "go:func.*=.gofunc:0")
+		} else if goPCLnTabInfo.GoFuncAddr != 0 {
+			// Gofunc is in .gopclntab, no need to add a new section for it.
+			// Just add a symbol so that we can find it easily later.
+			args = append(args, "--strip-symbol", "go:func.*",
+				"--add-symbol", fmt.Sprintf("go:func.*=.gopclntab:%d", goPCLnTabInfo.GoFuncAddr-goPCLnTabInfo.Address))
 		}
 	}
 

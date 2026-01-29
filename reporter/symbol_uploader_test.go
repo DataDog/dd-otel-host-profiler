@@ -167,9 +167,6 @@ func checkGoPCLnTab(t *testing.T, f *elf.File, checkGoFunc bool) {
 	assert.Equal(t, expectedHeader, data[:8])
 
 	if checkGoFunc {
-		section = f.Section(".gofunc")
-		require.NotNil(t, section)
-		require.Equal(t, elf.SHT_PROGBITS, section.Type)
 		require.NotNil(t, findSymbol(f, "go:func.*"))
 	}
 }
