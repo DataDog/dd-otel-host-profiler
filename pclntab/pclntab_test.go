@@ -1,7 +1,7 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2024 Datadog, Inc.
 
-package pclntab
+package pclntab_test
 
 import (
 	"fmt"
@@ -11,9 +11,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/ebpf-profiler/libpf/pfelf"
+
+	"github.com/DataDog/dd-otel-host-profiler/pclntab"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/symbolcopier"
 )
 
 func getGoToolChain(goMinorVersion int) string {
@@ -27,93 +31,162 @@ func getGoToolChain(goMinorVersion int) string {
 	return fmt.Sprintf("GOTOOLCHAIN=go1.%v%v", goMinorVersion, suffix)
 }
 
-func getTextStart(ef *pfelf.File) uint64 {
-	var textStart uint64
-	_ = ef.VisitSymbols(func(sym libpf.Symbol) bool {
-		if sym.Name == "runtime.text" {
-			textStart = uint64(sym.Address)
+func findSymbol(ef *pfelf.File, name string) *libpf.Symbol {
+	var sym *libpf.Symbol
+	_ = ef.VisitSymbols(func(s libpf.Symbol) bool {
+		if string(s.Name) == name {
+			sym = &s
 			return false
 		}
 		return true
 	})
-	return textStart
+	return sym
+}
+
+func getTextStart(ef *pfelf.File) uint64 {
+	sym := findSymbol(ef, "runtime.text")
+	if sym != nil {
+		return uint64(sym.Address)
+	}
+	return 0
+}
+
+func getPIEStr(pie bool) string {
+	if pie {
+		return ".pie"
+	}
+	return ".pde"
+}
+
+func getStripDebugInfoStr(stripDebugInfo bool) string {
+	if stripDebugInfo {
+		return ".sw"
+	}
+	return ""
+}
+
+func getLinkexternalStr(linkexternal bool) string {
+	if linkexternal {
+		return ".linkexternal"
+	}
+	return ""
+}
+
+func checkGoPCLnTab(t *testing.T, ef *pfelf.File, goPCLnTabInfoRef *pclntab.GoPCLnTabInfo) {
+	goPCLnTabInfo, err := pclntab.FindGoPCLnTabWithChecks(ef)
+	require.NoError(t, err)
+	assert.NotNil(t, goPCLnTabInfo)
+
+	require.Equal(t, goPCLnTabInfoRef.GoFuncAddr, goPCLnTabInfo.GoFuncAddr)
+	require.Equal(t, goPCLnTabInfoRef.Address, goPCLnTabInfo.Address)
+	require.Equal(t, goPCLnTabInfoRef.TextStart.Address, goPCLnTabInfo.TextStart.Address)
+	require.GreaterOrEqual(t, len(goPCLnTabInfo.Data), len(goPCLnTabInfoRef.Data))
+	require.GreaterOrEqual(t, len(goPCLnTabInfo.GoFuncData), len(goPCLnTabInfoRef.GoFuncData))
+}
+
+func checkGoPCLnTabExtraction(t *testing.T, exe string, goMinorVersion int) {
+	ef, err := pfelf.Open(exe)
+	require.NoError(t, err)
+	defer ef.Close()
+
+	goPCLnTabInfo, err := pclntab.FindGoPCLnTabWithChecks(ef)
+	require.NoError(t, err)
+	assert.NotNil(t, goPCLnTabInfo)
+
+	textStart := getTextStart(ef)
+
+	if goMinorVersion >= 18 {
+		require.NotNil(t, goPCLnTabInfo.GoFuncAddr)
+		if textStart != 0 {
+			require.Equal(t, textStart, goPCLnTabInfo.TextStart.Address)
+		}
+	}
+
+	symbolFile := exe + ".dbg"
+	err = symbolcopier.CopySymbols(t.Context(), exe, symbolFile, goPCLnTabInfo, nil, false)
+	require.NoError(t, err)
+	efSymbol, err := pfelf.Open(symbolFile)
+	require.NoError(t, err)
+	defer efSymbol.Close()
+
+	checkGoPCLnTab(t, efSymbol, goPCLnTabInfo)
+
+	exeStripped := exe + ".stripped"
+	out, err := exec.CommandContext(t.Context(), "objcopy", "-S", exe, exeStripped).CombinedOutput() // #nosec G204
+	require.NoError(t, err, "failed to rename section: %s\n%s", err, out)
+
+	ef2, err := pfelf.Open(exeStripped)
+	require.NoError(t, err)
+	defer ef2.Close()
+
+	goPCLnTabInfo2, err := pclntab.FindGoPCLnTabWithChecks(ef2)
+	require.NoError(t, err)
+	require.NotNil(t, goPCLnTabInfo2)
+
+	checkGoPCLnTab(t, ef2, goPCLnTabInfo2)
+
+	symbolFile2 := exeStripped + ".dbg"
+	err = symbolcopier.CopySymbols(t.Context(), exeStripped, symbolFile2, goPCLnTabInfo2, nil, false)
+	require.NoError(t, err)
+	efSymbol2, err := pfelf.Open(symbolFile2)
+	require.NoError(t, err)
+	defer efSymbol2.Close()
+
+	checkGoPCLnTab(t, efSymbol2, goPCLnTabInfo)
 }
 
 func TestGoPCLnTabExtraction(t *testing.T) {
 	t.Parallel()
-	disableRecover = true
+	pclntab.DisableRecoverFromPanic()
 	testDataDir := "../testdata"
-	tests := map[string]struct {
-		srcFile string
-		pie     bool
-		cgo     bool
-	}{
-		// helloworld is a very basic Go binary without special build flags.
-		"std":     {srcFile: "helloworld.go"},
-		"std.cgo": {srcFile: "helloworld_cgo.go", cgo: true},
-		// helloworld.pie is a Go binary that is build with PIE enabled.
-		"pie": {srcFile: "helloworld.go", pie: true},
-		// helloworld.pie.cgo is a Go binary that is build with PIE enabled and with cgo,
-		// in that case .gopclntab is stored in .data.rel.ro.gopclntab section and is merged with .data.rel.ro section by system linker (with Go < 1.26).
-		"pie.cgo": {srcFile: "helloworld_cgo.go", pie: true, cgo: true},
-	}
+	srcFile := "helloworld.go"
 
 	tmpDir := t.TempDir()
 	goMinorVersions := []int{3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26}
 	for _, goMinorVersion := range goMinorVersions {
-		for name, test := range tests {
-			if goMinorVersion <= 12 && test.pie {
-				continue
-			}
-			if runtime.GOARCH == "arm64" && goMinorVersion <= 8 {
-				continue
-			}
-			if test.cgo && goMinorVersion <= 5 {
-				continue
-			}
-			t.Run(fmt.Sprintf("go1.%v#%v", goMinorVersion, name), func(t *testing.T) {
-				t.Parallel()
-				exe := filepath.Join(tmpDir, fmt.Sprintf("%v.v1_%v.%v", strings.TrimRight(test.srcFile, ".go"), goMinorVersion, name))
-				buildArgs := []string{"build", "-o", exe}
-				if test.pie {
-					buildArgs = append(buildArgs, "-buildmode=pie")
+		for _, pie := range []bool{false, true} {
+			for _, linkexternal := range []bool{false, true} {
+				for _, stripDebugInfo := range []bool{false, true} {
+					if pie && goMinorVersion <= 12 {
+						continue
+					}
+					if runtime.GOARCH == "arm64" && goMinorVersion <= 8 {
+						continue
+					}
+					if linkexternal && goMinorVersion <= 3 {
+						continue
+					}
+					name := fmt.Sprintf("go1.%v%v%v%v",
+						goMinorVersion, getPIEStr(pie), getStripDebugInfoStr(stripDebugInfo), getLinkexternalStr(linkexternal))
+
+					t.Run(name, func(t *testing.T) {
+						t.Parallel()
+						exe := filepath.Join(tmpDir, "test."+name)
+						buildArgs := []string{"build", "-o", exe}
+						if pie {
+							buildArgs = append(buildArgs, "-buildmode=pie")
+						}
+						ldflags := []string{}
+						if stripDebugInfo {
+							ldflags = append(ldflags, "-s", "-w")
+						}
+						if linkexternal {
+							ldflags = append(ldflags, "-linkmode=external")
+						}
+						if len(ldflags) > 0 {
+							buildArgs = append(buildArgs, "-ldflags="+strings.Join(ldflags, " "))
+						}
+						cmd := exec.CommandContext(t.Context(), "go", buildArgs...) // #nosec G204
+						cmd.Args = append(cmd.Args, srcFile)
+						cmd.Dir = testDataDir
+						cmd.Env = append(cmd.Environ(), getGoToolChain(goMinorVersion))
+						out, err := cmd.CombinedOutput()
+						require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.String(), err, out)
+
+						checkGoPCLnTabExtraction(t, exe, goMinorVersion)
+					})
 				}
-				cmd := exec.CommandContext(t.Context(), "go", buildArgs...) // #nosec G204
-				cmd.Args = append(cmd.Args, test.srcFile)
-				cmd.Dir = testDataDir
-				cmd.Env = append(cmd.Environ(), getGoToolChain(goMinorVersion))
-				out, err := cmd.CombinedOutput()
-				require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.String(), err, out)
-
-				ef, err := pfelf.Open(exe)
-				require.NoError(t, err)
-				defer ef.Close()
-
-				goPCLnTabInfo, err := findGoPCLnTab(ef, true)
-				require.NoError(t, err)
-				require.NotNil(t, goPCLnTabInfo)
-
-				if goMinorVersion >= 18 {
-					require.NotNil(t, goPCLnTabInfo.GoFuncAddr)
-					textStart := getTextStart(ef)
-					require.NotZero(t, textStart)
-					require.Equal(t, textStart, goPCLnTabInfo.TextStart.Address)
-				}
-
-				exeStripped := exe + ".stripped"
-				out, err = exec.CommandContext(t.Context(), "objcopy", "-S", exe, exeStripped).CombinedOutput() // #nosec G204
-				require.NoError(t, err, "failed to rename section: %s\n%s", err, out)
-
-				goPCLnTabInfo2, err := findGoPCLnTab(ef, true)
-				require.NoError(t, err)
-				require.NotNil(t, goPCLnTabInfo2)
-
-				require.Equal(t, goPCLnTabInfo.GoFuncAddr, goPCLnTabInfo2.GoFuncAddr)
-				require.Equal(t, goPCLnTabInfo.Address, goPCLnTabInfo2.Address)
-				require.Equal(t, goPCLnTabInfo.TextStart.Address, goPCLnTabInfo2.TextStart.Address)
-				require.GreaterOrEqual(t, len(goPCLnTabInfo2.Data), len(goPCLnTabInfo.Data))
-				require.GreaterOrEqual(t, len(goPCLnTabInfo2.GoFuncData), len(goPCLnTabInfo.GoFuncData))
-			})
+			}
 		}
 	}
 }

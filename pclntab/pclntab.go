@@ -494,6 +494,15 @@ func (g *GoPCLnTabInfo) trimGoFunc(goFuncData []byte, goFuncAddr uint64, runtime
 	goFuncEndOffset := findGoFuncEnd(goFuncData[maxInlineTreeOffset:], g.Version)
 	goFuncSize := maxInlineTreeOffset + goFuncEndOffset
 
+	// Starting from Go 1.19, Go linker appears to align some symbols to ptrSize bytes.
+	// https://github.com/golang/go/commit/c2c76c6f198480f3c9aece4aa5d9b8de044d8457
+	// Cannot check explicitly for Go 1.19 as the version is not available in the pclntab header.
+	if g.Version >= ver118 {
+		goFuncSize = alignUp(goFuncSize, ptrSize)
+		// Just to be safe (and for Go 1.18)
+		goFuncSize = min(goFuncSize, len(goFuncData))
+	}
+
 	return goFuncData[:goFuncSize], nil
 }
 
@@ -618,8 +627,16 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 	}, nil
 }
 
+func DisableRecoverFromPanic() {
+	disableRecover = true
+}
+
 func FindGoPCLnTab(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
 	return findGoPCLnTab(ef, false)
+}
+
+func FindGoPCLnTabWithChecks(ef *pfelf.File) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
+	return findGoPCLnTab(ef, true)
 }
 
 func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLnTabInfo, err error) {
