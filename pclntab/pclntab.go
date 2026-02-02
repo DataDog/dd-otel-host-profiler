@@ -314,7 +314,7 @@ func findGoFuncVal(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, runtimeFirstMod
 	if goFuncOff+ptrSize >= uint32(len(moduleData)) {
 		return 0, fmt.Errorf("invalid go func offset: %v", goFuncOff)
 	}
-	goFuncVal := binary.LittleEndian.Uint64(moduleData[goFuncOff:])
+	goFuncVal := binary.NativeEndian.Uint64(moduleData[goFuncOff:])
 
 	return goFuncVal, nil
 }
@@ -393,7 +393,7 @@ func SearchGoPclntab(ef *pfelf.File) (data []byte, address uint64, err error) {
 			// Check the 'magic' against supported list, and if valid, use this
 			// location as the .gopclntab base. Otherwise, continue just search
 			// for next candidate location.
-			magic := binary.LittleEndian.Uint32(data[i:])
+			magic := binary.NativeEndian.Uint32(data[i:])
 			switch magic {
 			case magicGo1_2, magicGo1_16, magicGo1_18, magicGo1_20:
 				return data[i:], uint64(i) + p.Vaddr, nil
@@ -594,7 +594,7 @@ func parseGoPCLnTab(data []byte) (*GoPCLnTabInfo, error) {
 	default:
 		return nil, fmt.Errorf(".gopclntab format (0x%x) not supported", hdr.magic)
 	}
-	if hdr.pad != 0 || hdr.ptrSize != 8 {
+	if hdr.pad != 0 || hdr.ptrSize != ptrSize {
 		return nil, fmt.Errorf(".gopclntab header: %x, %x", hdr.pad, hdr.ptrSize)
 	}
 
