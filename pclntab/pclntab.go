@@ -131,8 +131,8 @@ type TextStartOrigin int
 
 const (
 	TextStartOriginPCLnTab TextStartOrigin = iota
-	TextStartOriginRuntimeTextSymbol
 	TextStartOriginModuleData
+	TextStartOriginRuntimeTextSymbol
 )
 
 type TextStartInfo struct {
@@ -201,14 +201,6 @@ func goFuncOffset(v HeaderVersion) (uint32, error) {
 		return 38 * ptrSize, nil
 	}
 	return 40 * ptrSize, nil
-}
-
-// textStartOffset returns the offset of the textStart field in moduledata.
-func textStartOffset(v HeaderVersion) (uint32, error) {
-	if v < ver118 {
-		return 0, fmt.Errorf("unsupported pclntab version: %v", v.String())
-	}
-	return 22 * ptrSize, nil
 }
 
 func FindModuleData(ef *pfelf.File, goPCLnTabInfo *GoPCLnTabInfo, runtimeFirstModuleDataSymbolValue libpf.SymbolValue) (data []byte, address uint64, returnedErr error) {
@@ -791,9 +783,35 @@ func findGoPCLnTab(ef *pfelf.File, additionalChecks bool) (goPCLnTabInfo *GoPCLn
 	return goPCLnTabInfo, nil
 }
 
+func findTextStartFromModuleData(ef *pfelf.File) (uint64, error) {
+	// Starting from Go 1.26, moduledata has its own `.go.module` section.
+	moduleDataSection := ef.Section(".go.module")
+	if moduleDataSection == nil || moduleDataSection.Type == elf.SHT_NOBITS {
+		// Stop here and do not try to locate moduledata with other means because this function is expected to be called only for Go 1.26+ binaries
+		// and for those cases moduledata is always in .go.module section.
+		return 0, errors.New("could not find .go.module section")
+	}
+	const textStartOff = 22 * ptrSize
+	var textStartBytes [ptrSize]byte
+	_, err := moduleDataSection.ReadAt(textStartBytes[:], textStartOff)
+	if err != nil {
+		return 0, fmt.Errorf("could not read .go.module section at offset %v: %w", textStartOff, err)
+	}
+
+	return binary.NativeEndian.Uint64(textStartBytes[:]), nil
+}
+
 func findTextStart(ef *pfelf.File) (TextStartInfo, error) {
-	// First try to get it from `runtime.text` symbol.
-	var textStart uint64
+	// Use moduledata to find textstart, since it's more efficient than iterating over symbols.
+	textStart, err := findTextStartFromModuleData(ef)
+	if err == nil {
+		return TextStartInfo{
+			Origin:  TextStartOriginModuleData,
+			Address: textStart,
+		}, nil
+	}
+
+	// Use `runtime.text` symbol to find textstart, this is only for tests where moduledata is not available.
 	_ = ef.VisitSymbols(func(sym libpf.Symbol) bool {
 		if sym.Name == "runtime.text" {
 			textStart = uint64(sym.Address)
@@ -801,6 +819,7 @@ func findTextStart(ef *pfelf.File) (TextStartInfo, error) {
 		}
 		return true
 	})
+
 	if textStart != 0 {
 		return TextStartInfo{
 			Origin:  TextStartOriginRuntimeTextSymbol,
@@ -808,30 +827,5 @@ func findTextStart(ef *pfelf.File) (TextStartInfo, error) {
 		}, nil
 	}
 
-	// If `runtime.text` symbol is not found, try to get it from moduledata.
-	// Starting from Go 1.26, moduledata has its own `.go.module` section.
-	moduleDataSection := ef.Section(".go.module")
-	if moduleDataSection == nil {
-		// Stop here and do not try to locate moduledata with other means because this function is expected to be called only for Go 1.26+ binaries
-		// and for those cases moduledata is always in .go.module section.
-		return TextStartInfo{}, errors.New("could not find .go.module section")
-	}
-	moduleData, err := moduleDataSection.Data(maxBytesGoPclntab)
-	if err != nil {
-		return TextStartInfo{}, fmt.Errorf("could not read .go.module section: %w", err)
-	}
-
-	textStartOff, err := textStartOffset(ver118)
-	if err != nil {
-		return TextStartInfo{}, fmt.Errorf("could not get text start offset: %w", err)
-	}
-	if textStartOff+ptrSize >= uint32(len(moduleData)) {
-		return TextStartInfo{}, fmt.Errorf("invalid text start offset: %v", textStartOff)
-	}
-	textStart = binary.LittleEndian.Uint64(moduleData[textStartOff:])
-
-	return TextStartInfo{
-		Origin:  TextStartOriginModuleData,
-		Address: textStart,
-	}, nil
+	return TextStartInfo{}, errors.New("could not find text start")
 }
