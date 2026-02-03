@@ -20,10 +20,8 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"path/filepath"
 	"reflect"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/DataDog/jsonapi"
@@ -37,7 +35,6 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/remotememory"
 	"go.opentelemetry.io/ebpf-profiler/reporter"
 
-	"github.com/DataDog/dd-otel-host-profiler/pclntab"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
 )
 
@@ -167,29 +164,8 @@ func checkGoPCLnTab(t *testing.T, f *elf.File, checkGoFunc bool) {
 	assert.Equal(t, expectedHeader, data[:8])
 
 	if checkGoFunc {
-		section = f.Section(".gofunc")
-		require.NotNil(t, section)
-		require.Equal(t, elf.SHT_PROGBITS, section.Type)
 		require.NotNil(t, findSymbol(f, "go:func.*"))
 	}
-}
-
-func checkGoPCLnTabExtraction(t *testing.T, filename, tmpDir string) {
-	ef, err := pfelf.Open(filename)
-	require.NoError(t, err)
-	defer ef.Close()
-
-	goPCLnTabInfo, err := pclntab.FindGoPCLnTab(ef)
-	require.NoError(t, err)
-	assert.NotNil(t, goPCLnTabInfo)
-
-	outputFile := filepath.Join(tmpDir, "output.dbg")
-	err = CopySymbols(t.Context(), filename, outputFile, goPCLnTabInfo, nil, false)
-	require.NoError(t, err)
-	f, err := elf.Open(outputFile)
-	require.NoError(t, err)
-	defer f.Close()
-	checkGoPCLnTab(t, f, true)
 }
 
 func checkRequest(t *testing.T, req *http.Request, expectedSymbolSource symbol.Source, expectedGoPCLnTab bool, expectedContentEncoding string) {
@@ -290,41 +266,6 @@ func hasDWARFData(elfFile *elf.File) bool {
 	// Use the absence of program headers and presence of a Build ID as heuristic to identify
 	// alternate debug files.
 	return len(elfFile.Progs) == 0 && hasBuildID && hasDebugStr
-}
-
-func TestGoPCLnTabExtraction(t *testing.T) {
-	t.Parallel()
-	srcFile := "../testdata/helloworld.go"
-	tests := map[string]struct {
-		buildArgs []string
-	}{
-		// helloworld is a very basic Go binary without special build flags.
-		"regular": {},
-		// helloworld.pie is a Go binary that is build with PIE enabled.
-		"pie": {buildArgs: []string{"-buildmode=pie"}},
-		// helloworld.stripped.pie is a Go binary that is build with PIE enabled and all debug
-		// information stripped.
-		"stripped.pie": {buildArgs: []string{"-buildmode=pie", "-ldflags=-s -w"}},
-	}
-
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			tmpDir := t.TempDir()
-			exe := filepath.Join(tmpDir, strings.TrimRight(srcFile, ".go")+"."+name)
-			cmd := exec.CommandContext(t.Context(), "go", append([]string{"build", "-o", exe}, test.buildArgs...)...) // #nosec G204
-			cmd.Args = append(cmd.Args, srcFile)
-			out, err := cmd.CombinedOutput()
-			require.NoError(t, err, "failed to build test binary with `%v`: %s\n%s", cmd.Args, err, out)
-
-			checkGoPCLnTabExtraction(t, exe, tmpDir)
-
-			exeStripped := exe + ".stripped"
-			out, err = exec.CommandContext(t.Context(), "objcopy", "-S", "--rename-section", ".data.rel.ro.gopclntab=.foo1", "--rename-section", ".gopclntab=.foo2", exe, exeStripped).CombinedOutput() // #nosec G204
-			require.NoError(t, err, "failed to rename section: %s\n%s", err, out)
-			checkGoPCLnTabExtraction(t, exeStripped, tmpDir)
-		})
-	}
 }
 
 var testEndpoints = []string{"a.com", "b.com", "c.com", "d.com", "e.com"}

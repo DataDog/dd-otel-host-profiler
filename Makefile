@@ -1,4 +1,4 @@
-.PHONY: all build extract_symbols
+.PHONY: all build extract_symbols lint linter-version test check-copyrights licenses check-licenses docker-image profiler-in-docker
 
 VERSION ?= v0.0.0
 VERSION_LD_FLAGS := -X github.com/DataDog/dd-otel-host-profiler/version.version=$(VERSION)
