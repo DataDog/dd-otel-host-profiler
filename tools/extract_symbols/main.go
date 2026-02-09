@@ -10,6 +10,7 @@ import (
 
 	"github.com/DataDog/dd-otel-host-profiler/reporter"
 	"github.com/DataDog/dd-otel-host-profiler/reporter/symbol"
+	"github.com/DataDog/dd-otel-host-profiler/reporter/symbolcopier"
 )
 
 func extractDebugInfos(elfFile, outFile string) error {
@@ -34,7 +35,7 @@ func extractDebugInfos(elfFile, outFile string) error {
 		sectionsToKeep = ef.GetSectionsRequiredForDynamicSymbols()
 	}
 
-	return reporter.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo, sectionsToKeep, reporter.CheckObjcopyZstdSupport(context.Background()))
+	return symbolcopier.CopySymbols(context.Background(), elfFile, outFile, goPCLnTabInfo, sectionsToKeep, reporter.CheckObjcopyZstdSupport(context.Background()))
 }
 
 func main() {
