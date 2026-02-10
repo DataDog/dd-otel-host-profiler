@@ -42,8 +42,8 @@ github.com/DataDog/gostackparse v0.7.0 h1:i7dLkXHvYzHV308hnkvVGDL3BR4FWl7IsXNPz/
 github.com/DataDog/gostackparse v0.7.0/go.mod h1:lTfqcJKqS9KnXQGnyQMCugq3u1FP6UZMfWR0aitKFMM=
 github.com/DataDog/jsonapi v0.12.0 h1:N4e9RpmUflcV5hzceltSz8XUpM3PMtQr5C9Bhv0g87s=
 github.com/DataDog/jsonapi v0.12.0/go.mod h1:FUSGF3bwMARlVfXEoFo9R/CVlYYy9BGL4C/Prf6Ke3M=
-github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20251209111023-a403a55f78da h1:ZBmMIv7/Xqdmw6WSs4lRXF75TOQCrnQdvnL5k8uk/t8=
-github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20251209111023-a403a55f78da/go.mod h1:6Y2/ixrHEY2qmt0eJVdG6pP7CPb9p5ypxnKj2t3kPJU=
+github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20251216153641-c5cfeab6c2ae h1:rLlQmxG1F9okpcReDnN7wdjPdRrg39Hwey8JUfJAM7I=
+github.com/DataDog/opentelemetry-ebpf-profiler v0.0.0-20251216153641-c5cfeab6c2ae/go.mod h1:6Y2/ixrHEY2qmt0eJVdG6pP7CPb9p5ypxnKj2t3kPJU=
 github.com/DataDog/opentelemetry-mapping-go/pkg/otlp/attributes v0.27.0 h1:5US5SqqhfkZkg/E64uvn7YmeTwnudJHtlPEH/LOT99w=
 github.com/DataDog/opentelemetry-mapping-go/pkg/otlp/attributes v0.27.0/go.mod h1:VRo4D6rj92AExpVBlq3Gcuol9Nm1bber12KyxRjKGWw=
 github.com/DataDog/sketches-go v1.4.7 h1:eHs5/0i2Sdf20Zkj0udVFWuCrXGRFig2Dcfm5rtcTxc=
