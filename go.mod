@@ -21,7 +21,7 @@ require (
 	go.opentelemetry.io/ebpf-profiler v0.0.0-20241114112653-6d846a2023a0
 	go.opentelemetry.io/otel/metric v1.39.0
 	golang.org/x/sync v0.19.0
-	golang.org/x/sys v0.39.0
+	golang.org/x/sys v0.40.0
 	k8s.io/api v0.32.3
 	k8s.io/apimachinery v0.32.3
 	k8s.io/client-go v0.32.3
