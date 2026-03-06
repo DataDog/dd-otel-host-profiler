@@ -24,7 +24,7 @@ require (
 	golang.org/x/sys v0.39.0
 	k8s.io/api v0.32.3
 	k8s.io/apimachinery v0.32.3
-	k8s.io/client-go v0.32.3
+	k8s.io/client-go v1.5.2
 )
 
 require (
