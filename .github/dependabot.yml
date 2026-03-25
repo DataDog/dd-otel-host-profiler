@@ -1,0 +1,19 @@
+version: 2
+updates:
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: daily
+  groups:
+    GitHub Actions:
+      applies-to: version-updates
+  cooldown:
+    default-days: 14
+- package-ecosystem: docker
+  directories:
+  - /
+  - /docker
+  schedule:
+    interval: daily
+  cooldown:
+    default-days: 14
