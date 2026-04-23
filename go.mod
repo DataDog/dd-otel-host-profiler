@@ -6,7 +6,7 @@ toolchain go1.25.5
 
 require (
 	github.com/DataDog/dd-trace-go/v2 v2.2.2
-	github.com/DataDog/jsonapi v0.12.0
+	github.com/DataDog/jsonapi v0.13.0
 	github.com/DataDog/zstd v1.5.7
 	github.com/containerd/containerd v1.7.29
 	github.com/docker/docker v28.0.0+incompatible
