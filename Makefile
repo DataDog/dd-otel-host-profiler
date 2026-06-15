@@ -1,4 +1,5 @@
 .PHONY: all build extract_symbols lint linter-version test check-copyrights licenses check-licenses docker-image profiler-in-docker
+.PHONY: crashtracker-generate crashtracker-build crashtracker-test
 
 VERSION ?= v0.0.0
 VERSION_LD_FLAGS := -X github.com/DataDog/dd-otel-host-profiler/version.version=$(VERSION)
@@ -41,3 +42,15 @@ profiler-in-docker: docker-image
 
 extract_symbols:
 	go build $(GO_FLAGS) ./tools/extract_symbols
+
+# --- Crashtracker targets ---
+
+crashtracker-generate:
+	go generate ./crashtracker/collector/...
+
+crashtracker-build: crashtracker-generate
+	go build $(GO_FLAGS) ./crashtracker/cmd/crashtrackerd
+	go build $(GO_FLAGS) ./crashtracker/cmd/core-handler
+
+crashtracker-test:
+	go test -v -race ./crashtracker/...
