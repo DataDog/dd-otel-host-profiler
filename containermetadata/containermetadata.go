@@ -22,8 +22,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,6 +44,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -53,6 +56,12 @@ const (
 	kubernetesServiceHost = "KUBERNETES_SERVICE_HOST"
 	kubernetesNodeName    = "KUBERNETES_NODE_NAME"
 	genericNodeName       = "NODE_NAME"
+
+	// amplifiedWatchesEnv, when set to a positive integer, switches the provider
+	// into watch-benchmark mode: it issues that many raw pod watches and no List
+	// calls at all, so the apiserver's resource cost can be attributed purely to
+	// watches. Unset (or 0) means normal operation. Benchmarking only.
+	amplifiedWatchesEnv = "DD_AMPLIFIED_WATCHES"
 
 	// There is a limit of 110 Pods per node (but can be overridden)
 	kubernetesPodsPerNode = 110
@@ -123,6 +132,14 @@ type containerMetadataProvider struct {
 
 	containerdClient *containerd.Client
 
+	// listDisabled short-circuits the kubernetes pod List fallback. Set only in
+	// the watch-benchmark mode so the apiserver sees watches and no List calls.
+	listDisabled bool
+
+	// watchStats holds counters for the watch-benchmark mode. Non-nil only in
+	// that mode. Used to make watch churn observable from the client side.
+	watchStats *watchBenchStats
+
 	// deferredPID prevents busy loops for PIDs where the cgroup extraction fails.
 	deferredPID *lru.SyncedLRU[libpf.PID, libpf.Void]
 
@@ -136,6 +153,26 @@ type ContainerMetadata struct {
 	ContainerID   string
 	PodName       string
 	ContainerName string
+}
+
+// watchBenchStats holds client-side counters for the watch-benchmark mode.
+// Their purpose is to make otherwise-silent watch churn observable: a healthy
+// run keeps `active` flat at the target and `opened` growing only slowly, while
+// churn shows up as `opened` and `closes` climbing fast even though `active`
+// stays put. Benchmarking only.
+type watchBenchStats struct {
+	// opened counts every Watch() call that succeeded (initial + all reopens).
+	opened atomic.Int64
+	// active is a gauge of watches currently being drained by this process.
+	active atomic.Int64
+	// startErrors counts Watch() calls that returned an error.
+	startErrors atomic.Int64
+	// closes counts streams the server closed under us (the reconnect trigger).
+	closes atomic.Int64
+	// errorEvents counts watch.Error events received on a stream.
+	errorEvents atomic.Int64
+	// events counts non-error watch events received (should stay low when idle).
+	events atomic.Int64
 }
 
 // hashString is a helper function for containerMetadataCache
@@ -297,6 +334,182 @@ func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) e
 		return fmt.Errorf("failed to create container metadata cache: %w", err)
 	}
 
+	// Kubernetes serves a utility to handle API crashes
+	defer runtime.HandleCrash()
+
+	// Watch-benchmark mode: when DD_AMPLIFIED_WATCHES > 0, isolate watch load so
+	// its cost on the apiserver can be measured independently of List. We issue
+	// exactly that many raw pod watches and suppress every List path:
+	//   - the normal informer is not started (a reflector does List+Watch), and
+	//   - the per-miss metadata List fallback is disabled (listDisabled).
+	// A plain Watch with no resourceVersion starts the stream at the current
+	// version without replaying existing objects, so each watch is a near-idle
+	// channel: the apiserver then sees N watches and effectively no List calls.
+	if count := amplifiedWatchCount(); count > 0 {
+		p.listDisabled = true
+		log.Infof("watch benchmark: issuing %d raw pod watches, List calls disabled", count)
+		go p.startAmplifiedWatches(ctx, config, count)
+		return nil
+	}
+
+	// Normal operation: a single informer populates the metadata cache. Its
+	// watch establishes synchronously so real setup errors (RBAC, connectivity)
+	// surface here rather than being logged in the background.
+	if err := p.startPodInformer(ctx, k); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// startAmplifiedWatches runs n raw pod watches, each on its own connection so it
+// behaves like a separate profiler's watch. Starts are paced by startRampInterval
+// so N watches don't authenticate against the apiserver in the same instant.
+// Benchmarking only.
+func (p *containerMetadataProvider) startAmplifiedWatches(ctx context.Context,
+	base *rest.Config, n int) {
+	p.watchStats = &watchBenchStats{}
+	go p.reportWatchStats(ctx, n)
+
+	// ~50 watches/sec: fast enough to reach steady state quickly, slow enough
+	// that the apiserver authentication path isn't stampeded.
+	const startRampInterval = 20 * time.Millisecond
+	for i := 0; i < n; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(startRampInterval):
+		}
+		clientset, err := newIndependentClientset(base)
+		if err != nil {
+			if ctx.Err() == nil {
+				log.Errorf("amplified watch %d: failed to create client: %v", i, err)
+			}
+			continue
+		}
+		go p.runAmplifiedWatch(ctx, clientset, i)
+	}
+	log.Infof("watch benchmark: started %d raw pod watches", n)
+}
+
+// reportWatchStats periodically logs the watch-benchmark counters so churn is
+// visible. Healthy: active stays ~target and open_rate/close_rate stay near 0.
+// Churn: open_rate and close_rate climb (server closing and client reopening)
+// even while active holds at target — that is the client side of a server-side
+// gauge overshoot. Benchmarking only.
+func (p *containerMetadataProvider) reportWatchStats(ctx context.Context, target int) {
+	const interval = 10 * time.Second
+	s := p.watchStats
+	var prevOpened, prevCloses int64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+		opened := s.opened.Load()
+		closes := s.closes.Load()
+		openRate := float64(opened-prevOpened) / interval.Seconds()
+		closeRate := float64(closes-prevCloses) / interval.Seconds()
+		prevOpened, prevCloses = opened, closes
+		log.Infof("watch benchmark stats: target=%d active=%d opened_total=%d closes_total=%d "+
+			"open_rate=%.1f/s close_rate=%.1f/s start_errors=%d error_events=%d events=%d",
+			target, s.active.Load(), opened, closes, openRate, closeRate,
+			s.startErrors.Load(), s.errorEvents.Load(), s.events.Load())
+	}
+}
+
+// runAmplifiedWatch maintains a single persistent pod watch, re-establishing it
+// with backoff whenever it closes, until ctx is cancelled. Benchmarking only.
+func (p *containerMetadataProvider) runAmplifiedWatch(ctx context.Context,
+	clientset kubernetes.Interface, idx int) {
+	// Minimum time between (re)connection attempts, so a watch that closes
+	// quickly can't turn into a tight reconnect loop that hammers the apiserver.
+	const reconnectInterval = time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		w, err := clientset.CoreV1().Pods("").Watch(ctx, v1.ListOptions{
+			FieldSelector: "spec.nodeName=" + p.nodeName,
+		})
+		if err != nil {
+			p.watchStats.startErrors.Add(1)
+			if ctx.Err() == nil {
+				log.Errorf("amplified watch %d failed to start: %v", idx, err)
+			}
+		} else {
+			p.watchStats.opened.Add(1)
+			p.watchStats.active.Add(1)
+			p.drainWatch(ctx, w)
+			p.watchStats.active.Add(-1)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(reconnectInterval):
+		}
+	}
+}
+
+// drainWatch consumes a watch stream until it closes or ctx is cancelled.
+func (p *containerMetadataProvider) drainWatch(ctx context.Context, w watch.Interface) {
+	defer w.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-w.ResultChan():
+			if !ok {
+				// Server closed the stream; caller re-establishes it. This is
+				// the churn trigger, and normally silent — count it so it shows.
+				p.watchStats.closes.Add(1)
+				return
+			}
+			if ev.Type == watch.Error {
+				// Broken watch (e.g. expired resource version); stop draining so
+				// the caller backs off instead of spinning on a failing stream.
+				p.watchStats.errorEvents.Add(1)
+				log.Errorf("amplified watch received error event: %#v", ev.Object)
+				return
+			}
+			p.watchStats.events.Add(1)
+		}
+	}
+}
+
+// newIndependentClientset builds a clientset with its own transport, and hence
+// its own HTTP/2 connection, rather than reusing client-go's TLS-config-keyed
+// transport cache. Setting a custom Dial defeats that cache. HTTP/2 is left
+// enabled so each simulated profiler talks to the apiserver exactly as a real
+// one does. Benchmarking only.
+func newIndependentClientset(base *rest.Config) (*kubernetes.Clientset, error) {
+	cfg := rest.CopyConfig(base)
+	cfg.Dial = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	return kubernetes.NewForConfig(cfg)
+}
+
+// amplifiedWatchCount returns how many raw pod watches the watch-benchmark mode
+// should open. 0 (the default, when DD_AMPLIFIED_WATCHES is unset) means normal
+// operation. Benchmarking only.
+func amplifiedWatchCount() int {
+	v := os.Getenv(amplifiedWatchesEnv)
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		log.Errorf("invalid %s value %q, disabling watch benchmark", amplifiedWatchesEnv, v)
+		return 0
+	}
+	return n
+}
+
+// startPodInformer creates and runs a single shared pod informer, filtered to
+// this node, that populates the container metadata cache. This is the exact
+// mechanism used in normal operation; the benchmark simply runs many of them.
+func (p *containerMetadataProvider) startPodInformer(ctx context.Context,
+	k kubernetes.Interface) error {
 	// Create the shared informer factory and use the client to connect to
 	// Kubernetes and get notified of new pods that are created in the specified node.
 	factory := informers.NewSharedInformerFactoryWithOptions(k, 0,
@@ -304,9 +517,6 @@ func createKubernetesClient(ctx context.Context, p *containerMetadataProvider) e
 			options.FieldSelector = "spec.nodeName=" + p.nodeName
 		}))
 	informer := factory.Core().V1().Pods().Informer()
-
-	// Kubernetes serves a utility to handle API crashes
-	defer runtime.HandleCrash()
 
 	handle, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
@@ -465,11 +675,16 @@ func (p *containerMetadataProvider) GetContainerMetadata(pid libpf.PID) (Contain
 	// client.
 	switch {
 	case isContainerEnvironment(env, envKubernetes) && p.kubeClientSet != nil:
-		data, err = p.getKubernetesPodMetadata(pidContainerID)
+		// Benchmark amplification: issue the pod List multiple times per miss.
+		// for i := 0; i < 50; i++ {
+		// data, err = p.getKubernetesPodMetadata(pidContainerID)
+		// fmt.Println("FALLBACK PATH 00000000000000000000000000005X")
+		// }
 	case isContainerEnvironment(env, envDocker) && p.dockerClient != nil:
-		data, err = p.getDockerContainerMetadata(pidContainerID)
+		// data, err = p.getDockerContainerMetadata(pidContainerID)
 	case isContainerEnvironment(env, envContainerd) && p.containerdClient != nil:
-		data, err = p.getContainerdContainerMetadata(pidContainerID)
+		// fmt.Println("FALLBACK PATH 0000000000000000000000000000")
+		// data, err = p.getContainerdContainerMetadata(pidContainerID)
 	case isContainerEnvironment(env, envDockerBuildkit):
 		// If DOCKER_BUILDKIT is set we can not retrieve information about this container
 		// from the docker socket. Therefore, we populate container ID and container name
@@ -509,6 +724,12 @@ func (p *containerMetadataProvider) GetContainerMetadata(pid libpf.PID) (Contain
 func (p *containerMetadataProvider) getKubernetesPodMetadata(pidContainerID string) (
 	ContainerMetadata, error) {
 	log.Debugf("Get kubernetes pod metadata for container id %v", pidContainerID)
+
+	if p.listDisabled {
+		// Watch-benchmark mode: never issue a pod List, so the apiserver's
+		// resource cost is attributable to watches alone.
+		return ContainerMetadata{}, errors.New("kubernetes pod List disabled (watch benchmark mode)")
+	}
 
 	p.kubernetesClientQueryCount.Add(1)
 	pods, err := p.kubeClientSet.CoreV1().Pods("").List(context.TODO(), v1.ListOptions{
