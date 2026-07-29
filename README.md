@@ -5,6 +5,9 @@
 
 Datadog OTEL eBPF profiler.
 
+> [!CAUTION]
+> dd-otel-host-profiler is deprecated. Please use the [Datadog Host Profiler](https://github.com/DataDog/datadog-agent/tree/main/cmd/host-profiler/deploy) instead, an OpenTelemetry Collector distribution for eBPF profiling, currently in preview.
+
 # Overview
 
 dd-otel-host-profiler is an experimental profiler based on [open-telemetry/opentelemetry-ebpf-profiler](https://github.com/open-telemetry/opentelemetry-ebpf-profiler). Please refer to our [documentation](https://docs.datadoghq.com/profiler/) for a list of officially supported Datadog profilers.
