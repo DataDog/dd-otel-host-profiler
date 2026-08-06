@@ -378,7 +378,11 @@ func (p *containerMetadataProvider) GetContainerMetadata(pid libpf.PID) (Contain
 	// client.
 	switch {
 	case isContainerEnvironment(env, envKubernetes) && p.kubeClientSet != nil:
-		data, err = p.getKubernetesPodMetadata(pidContainerID)
+		// Benchmark amplification: issue the pod List multiple times per miss.
+		for i := 0; i < 50; i++ {
+			data, err = p.getKubernetesPodMetadata(pidContainerID)
+			fmt.Println("FALLBACK PATH 0000000000000000000000000000")
+		}
 	case isContainerEnvironment(env, envDocker) && p.dockerClient != nil:
 		data, err = p.getDockerContainerMetadata(pidContainerID)
 	case isContainerEnvironment(env, envContainerd) && p.containerdClient != nil:
