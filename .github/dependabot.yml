@@ -9,9 +9,12 @@ updates:
       GitHub Actions:
         applies-to: version-updates
 
+    cooldown:
+      default-days: 2
   - package-ecosystem: "docker"
     directories:
       - "/"
       - "/docker"
     schedule:
-      interval: "daily"
+      interval: "daily"    cooldown:
+      default-days: 2
