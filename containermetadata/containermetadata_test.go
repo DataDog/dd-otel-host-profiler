@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/containerd/containerd"
+	"github.com/containerd/containerd/v2"
 	"github.com/docker/docker/client"
 	lru "github.com/elastic/go-freelru"
 	"github.com/stretchr/testify/assert"
